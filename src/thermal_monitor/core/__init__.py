@@ -1,0 +1,1 @@
+"""Core domain: lifecycle, state, shared models, logging, validated configuration."""

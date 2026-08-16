@@ -1,0 +1,1 @@
+"""Offline domain: saved raw data as a frame source."""
