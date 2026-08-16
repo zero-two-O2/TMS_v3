@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    {
+      "action": "edit",
+      "resource": "reference/TMS_v2/**",
+      "effect": "deny"
+    }
+  ]
+}

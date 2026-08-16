@@ -77,3 +77,6 @@ reports/generated/
 
 Thumbs.db
 .DS_Store
+
+# V2 reference copy - never commit into V3
+reference/
