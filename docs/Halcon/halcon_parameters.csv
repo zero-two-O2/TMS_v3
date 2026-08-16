@@ -1,0 +1,287 @@
+name,access,value,type,error
+AcquisitionMode,Read / Write,Continuous,string,
+DeviceManufacturerInfo,Read Only,,string,
+DeviceModelName,Read Only,TV46L-1-26010002@9Hz,string,
+DeviceSFNCVersionMajor,Read Only,2,int,
+DeviceSFNCVersionMinor,Read Only,2,int,
+DeviceSFNCVersionSubMinor,Read Only,0,int,
+DeviceStreamChannelCount,Read Only,1,int,
+DeviceType,Read / Write,Transmitter,string,
+DeviceVendorName,Read Only,Fluke Process Instruments,string,
+FLK_TI_CalibrationInfo,Read Only,0x016d69520200000003000000b0d000000000a0c10000a0420000b4c10000a542000020400000a040070000005f7089305f7089305f708930cd8c88c3000034c340704344cc0e134180bfdc3c000034c30000f0c2113f2e456dce34427c38403e0000f0c20000f0c100803b458a1261425e57a43e0000f0c10000000000803b4570105f427baac03e000000000000a042e2af2d45f4126f4216bbb83e0000a042000048430a3ca3c4f4c2c642189c873e000048430000af4300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a0c1000096440000b4c100509644000020400000a0400b0000005f7089305f7089305f708930cd8c88c3000034c3d54a8242ba13443f552a133b000034c30000f0c2175468433c137140a825803c0000f0c20000f0c100007a435c0c9640281fdb3c0000f0c10000000000007a43a0b59440a871003d000000000000a0422e956743f8619f40c84ef63c0000a0420000484362a5d9c2f881044120d0b43c000048430000af43ec0b94c45fe965415d805c3c0000af43008009440f743dc578d9a8410bb4ef3b0080094400004844b73db1c59ae9dc411daa583b0000484400409c44f8840fc60bc704422fed8e3a00409c44004003450000a0c100803b450000b4c100a83b45000020400000a0400b0000005f7089305f7089305f708930cd8c88c3000034c35a538942048b4e3f54f11a3b000034c30000f0c2ec066a43deb3704036ee7d3c0000f0c20000f0c100007a43b6df9240d8e6cf3c0000f0c10000000000007a4374199240cddaeb3c000000000000a0426ed161435a99a1407835d93c0000a042000048439acec0c2600d0341898d9a3c000048430000af43c35282c418df58417f92383c0000af4300800944e92c23c58a3a9a41e3fcc53b0080094400004844f63096c55e88c541b557313b0000484400409c44a846f0c5f72bea41f289683a00409c4400400345672dfe10,string,
+FLK_TI_ControlFeature_CurrentFocusDistanceMm,Read Only,367,int,
+FLK_TI_ControlFeature_FocusDistanceMm_Max,Read Only,1000000,int,
+FLK_TI_ControlFeature_FocusDistanceMm_Min,Read Only,150,int,
+FLK_TI_ControlFeature_REControlCmd,Read Only,FLK_TI_ControlFeature_REControlCmd_SelectCommandToExecute,string,
+FLK_TI_ControlFeature_SetFocusDistanceMm,Write Only,1,command,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter FLK_TI_ControlFeature_SetFocusDistanceMm is not (currently) readable.
+(GetValueFromNode:23453)"
+FLK_TI_ControlFeature_SetFrameRate,Read Only,9,int,
+FLK_TI_InfoSelector,Read / Write,FLK_TI_FirmwareVersion,string,
+FLK_TI_InfoString,Read Only,1.0.8,string,
+FLK_TI_Info_CalibrationRangeInfoQuery,Read Only,FLK_TI_Info_CalibrationRangeInfoQuery_CalRange1,string,
+FLK_TI_Info_CalibrationRangeInfo_RangeSpan_LowerBoundary,Read Only,-20.0,double,
+FLK_TI_Info_CalibrationRangeInfo_RangeSpan_UpperBoundary,Read Only,80.0,double,
+FLK_TI_Info_CriticalDeviceTemperatureC,Read Only,82.0,double,
+FLK_TI_Info_CurrentDeviceTemperatureC,Read Only,41.900001525878906,double,
+FLK_TI_Info_PlatformId,Read Only,256,int,
+FLK_TI_Info_REDataProviderAvailable,Read Only,1,int,
+FLK_TI_Info_REDataRate,Read Only,9,int,
+FLK_TI_Info_REDataSize,Read Only,41943520,int,
+FLK_TI_Info_RE_Capabilities0,Read Only,15,int,
+FLK_TI_Info_RE_Platform_Id,Read Only,263,int,
+FLK_TI_Info_RE_TPM_Validity_Code,Read Only,0,int,
+FLK_TI_Info_SecuredDataStreamingOnly,Read Only,0,int,
+FLK_TI_Info_VLDataProviderAvailable,Read Only,1,int,
+FLK_TI_Info_VLDataSize,Read Only,41943520,int,
+FLK_TI_StreamDataSourceSelector,Read / Write,VL_Data,string,
+GevCurrentPhysicalLinkConfiguration,Read Only,SingleLink,string,
+GevPrimaryApplicationIPAddress,Read Only,2852044881,int,
+GevPrimaryApplicationSocket,Read Only,64085,int,
+GevSupportedOption,Read Only,1,int,
+GevSupportedOptionSelector,Read / Write,SingleLink,string,
+Height,Read Only,480,int,
+HeightMax,Read Only,480,int,
+HeightMin,Read Only,480,int,
+ImageCompressionMode,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter ImageCompressionMode is not (currently) readable.
+(GetValueFromNode:23453)"
+PayloadSize,Read Only,1572864,int,
+PixelFormat,Read Only,YUV422_8,string,
+SensorHeight,Read Only,480,int,
+SensorWidth,Read Only,640,int,
+TransmitAs,Read / Write,GigE_Image_Payload,string,
+Width,Read Only,640,int,
+WidthMax,Read Only,640,int,
+WidthMin,Read Only,640,int,
+[Consumer]exposure,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam exposure not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]exposure_auto,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam exposure_auto not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]gain,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam gain not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]gain_auto,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam gain_auto not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]info_general,Read Only,"HHandle{type: dict, id: 0x1dd3100cfa0}",HHandle,
+[Consumer]trigger,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam trigger not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]trigger_activation,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam trigger_activation not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]trigger_delay,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam trigger_delay not implemented.
+(GetInternalBaseParam:23793)"
+[Consumer]trigger_software,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Exception getting EasyParam value: MVTec EasyParam trigger_software not implemented.
+(GetInternalBaseParam:23793)"
+[Device]DeviceAccessStatus,Read Only,OpenReadWrite,string,
+[Device]DeviceEndianessMechanism,Read / Write,Standard,string,
+[Device]DeviceID,Read Only,3408e1db21f2_FlukeProcessInstruments_TV46L1260100029Hz,string,
+[Device]DeviceLinkHeartbeatMode,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter DeviceLinkHeartbeatMode is not (currently) readable.
+(GetValueFromNode:23453)"
+[Device]DeviceLinkHeartbeatTimeout,Read / Write,3000000.0,double,
+[Device]DeviceManufacturerInfo,Read Only,,string,
+[Device]DeviceMessageChannelKeepAliveTimeout,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter DeviceMessageChannelKeepAliveTimeout is not (currently) readable.
+(GetValueFromNode:23453)"
+[Device]DeviceModelName,Read Only,TV46L-1-26010002@9Hz,string,
+[Device]DeviceSerialNumber,Read Only,HB25100004,string,
+[Device]DeviceType,Read Only,GigEVision,string,
+[Device]DeviceUserID,Read Only,,string,
+[Device]DeviceVendorName,Read Only,Fluke Process Instruments,string,
+[Device]DeviceVersion,Read Only,1.0.8,string,
+[Device]EventDeviceLost,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter EventDeviceLost is not (currently) readable.
+(GetValueFromNode:23453)"
+[Device]EventNotification,Read / Write,Off,string,
+[Device]EventSelector,Read / Write,DeviceLost,string,
+[Device]ForceSocketDriver,Read / Write,0,int,
+[Device]GevDeviceGateway,Read Only,0,int,
+[Device]GevDeviceIPAddress,Read Only,2852001861,int,
+[Device]GevDeviceMACAddress,Read Only,57212753617394,int,
+[Device]GevDeviceSubnetMask,Read Only,4294901760,int,
+[Device]LinkCommandRetryCount,Read Only,3,int,
+[Device]LinkCommandTimeout,Read / Write,2000000.0,double,
+[Device]StreamID,Read Only,Esen_DS0_3408e1db21f2,string,
+[Device]StreamSelector,Read / Write,0,int,
+[Interface]ActionCommand,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter ActionCommand is not (currently) readable.
+(GetValueFromNode:23453)"
+[Interface]ActionDeviceKey,Read / Write,0,int,
+[Interface]ActionGroupKey,Read / Write,0,int,
+[Interface]ActionGroupMask,Read / Write,0,int,
+[Interface]ActionScheduledTime,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter ActionScheduledTime is not (currently) readable.
+(GetValueFromNode:23453)"
+[Interface]ActionScheduledTimeEnable,Read / Write,0,int,
+[Interface]DeviceAccessStatus,Read Only,OpenReadWrite,string,
+[Interface]DeviceID,Read Only,3408e1db21f2_FlukeProcessInstruments_TV46L1260100029Hz,string,
+[Interface]DeviceModelName,Read Only,TV46L-1-26010002@9Hz,string,
+[Interface]DeviceSelector,Read / Write,0,int,
+[Interface]DeviceSerialNumber,Read Only,HB25100004,string,
+[Interface]DeviceTLVersionMajor,Read Only,2,int,
+[Interface]DeviceTLVersionMinor,Read Only,0,int,
+[Interface]DeviceUpdateList,Write Only,1,command,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter DeviceUpdateList is not (currently) readable.
+(GetValueFromNode:23453)"
+[Interface]DeviceUpdateTimeout,Read / Write,0,int,
+[Interface]DeviceUserID,Read Only,,string,
+[Interface]DeviceVendorName,Read Only,Fluke Process Instruments,string,
+[Interface]GevActionDestinationIPAddress,Read Only,0,int,
+[Interface]GevDeviceForceGateway,Read Only,0,int,
+[Interface]GevDeviceForceIP,Read / Write,1,int,
+[Interface]GevDeviceForceIPAddress,Read Only,0,int,
+[Interface]GevDeviceForceIPTimeout,Read Only,7000000,int,
+[Interface]GevDeviceForceSubnetMask,Read Only,0,int,
+[Interface]GevDeviceGateway,Read Only,0,int,
+[Interface]GevDeviceIPAddress,Read Only,2852001861,int,
+[Interface]GevDeviceLastForceIPSuccess,Read Only,1,int,
+[Interface]GevDeviceMACAddress,Read Only,57212753617394,int,
+[Interface]GevDeviceProposeIP,Read / Write,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter GevDeviceProposeIP is not (currently) readable.
+(GetValueFromNode:23453)"
+[Interface]GevDeviceSubnetMask,Read Only,4294901760,int,
+[Interface]GevInterfaceGateway,Read Only,0,int,
+[Interface]GevInterfaceGatewaySelector,Read Only,0,int,
+[Interface]GevInterfaceMACAddress,Read Only,215938449915984,int,
+[Interface]GevInterfaceMTU,Read Only,9000,int,
+[Interface]GevInterfaceSubnetIPAddress,Read Only,2852044881,int,
+[Interface]GevInterfaceSubnetMask,Read Only,4294901760,int,
+[Interface]GevInterfaceSubnetSelector,Read Only,0,int,
+[Interface]InterfaceID,Read Only,Esen_ITF_c4651699c050a9fec051ffff0000,string,
+[Interface]InterfaceTLVersionMajor,Read Only,2,int,
+[Interface]InterfaceTLVersionMinor,Read Only,1,int,
+[Interface]InterfaceType,Read Only,GigEVision,string,
+[Stream]DeviceStreamChannelKeepAliveTimeout,Read / Write,30000.0,double,
+[Stream]DeviceStreamChannelNegotiatePacketSize,Write Only,1,command,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter DeviceStreamChannelNegotiatePacketSize is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]DeviceStreamChannelPacketSize,Read Only,1500,int,
+[Stream]DeviceStreamChannelPacketSizeInc,Read Only,4,int,
+[Stream]DeviceStreamChannelPacketSizeMax,Read Only,9000,int,
+[Stream]DeviceStreamChannelPacketSizeMin,Read Only,576,int,
+[Stream]EventNotification,Read / Write,Off,string,
+[Stream]EventSelector,Read / Write,TransferEnd,string,
+[Stream]EventTransferEnd,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter EventTransferEnd is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]EventTransferEndBufferUndeliverable,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter EventTransferEndBufferUndeliverable is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]EventTransferEndFrameID,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter EventTransferEndFrameID is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]EventTransferEndUndeliverabilityReason,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter EventTransferEndUndeliverabilityReason is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]GevStreamAbortCheckPeriod,Read / Write,300000.0,double,
+[Stream]GevStreamActiveEngine,Read Only,FilterDriver,string,
+[Stream]GevStreamDeliverIncompleteBlocks,Read / Write,1,int,
+[Stream]GevStreamDeliveredPacketCount,Read Only,0,int,
+[Stream]GevStreamDiscardedBlockCount,Read Only,0,int,
+[Stream]GevStreamDuplicatePacketCount,Read Only,0,int,
+[Stream]GevStreamEngineUnderrunCount,Read Only,0,int,
+[Stream]GevStreamFullBlockTerminatesPrev,Read / Write,0,int,
+[Stream]GevStreamIncompleteBlockCount,Read Only,0,int,
+[Stream]GevStreamLostPacketCount,Read Only,0,int,
+[Stream]GevStreamMaxBlockDuration,Read / Write,0.0,double,
+[Stream]GevStreamMaxPacketGaps,Read / Write,30,int,
+[Stream]GevStreamOversizedBlockCount,Read Only,0,int,
+[Stream]GevStreamPacketOrderDelay,Read / Write,10.0,double,
+[Stream]GevStreamReceiveSocketSize,Read Only,131072,int,
+[Stream]GevStreamResendCommandCount,Read Only,0,int,
+[Stream]GevStreamResendPacketCount,Read Only,0,int,
+[Stream]GevStreamRingBufferSize,Read Only,262144,int,
+[Stream]GevStreamSeenPacketCount,Read Only,0,int,
+[Stream]GevStreamSkippedBlockCount,Read Only,0,int,
+[Stream]GevStreamUnavailablePacketCount,Read Only,0,int,
+[Stream]PayloadSize,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter PayloadSize is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]StreamAnnounceBufferMinimum,Read Only,1,int,
+[Stream]StreamAnnouncedBufferCount,Read Only,0,int,
+[Stream]StreamAuxiliaryBufferCount,Read Only,0,int,
+[Stream]StreamBufferHandlingMode,Read / Write,OldestFirst,string,
+[Stream]StreamID,Read Only,Esen_DS0_3408e1db21f2,string,
+[Stream]StreamThreadApplyPriority,Write Only,1,command,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter StreamThreadApplyPriority is not (currently) readable.
+(GetValueFromNode:23453)"
+[Stream]StreamThreadPriority,Read / Write,2,int,
+[Stream]StreamType,Read Only,GigEVision,string,
+[System]GenTLSFNCVersionMajor,Read Only,1,int,
+[System]GenTLSFNCVersionMinor,Read Only,1,int,
+[System]GenTLVersionMajor,Read Only,1,int,
+[System]GenTLVersionMinor,Read Only,6,int,
+[System]GevInterfaceDefaultIPAddress,Read Only,2852044881,int,
+[System]GevInterfaceDefaultSubnetMask,Read Only,4294901760,int,
+[System]GevInterfaceMACAddress,Read Only,215938449915984,int,
+[System]GevTLSubsystemInfo,Read Only,filter driver: 2020804/2020804,string,
+[System]InterfaceID,Read Only,Esen_ITF_c4651699c050a9fec051ffff0000,string,
+[System]InterfaceSelector,Read / Write,0,int,
+[System]InterfaceUpdateList,Write Only,1,command,"HALCON error #5330: Image acquisition: could not query parameter setting: Parameter InterfaceUpdateList is not (currently) readable.
+(GetValueFromNode:23453)"
+[System]InterfaceUpdateTimeout,Read / Write,0,int,
+[System]TLFileName,Read Only,hAcqGigEVision2.dll,string,
+[System]TLID,Read Only,C:\Program Files\MVTec\HALCON-24.11-Progress-Steady\bin\x64-win64\hAcqGigEVision2.dll,string,
+[System]TLModelName,Read Only,GigEVision,string,
+[System]TLPath,Read Only,C:\Program Files\MVTec\HALCON-24.11-Progress-Steady\bin\x64-win64\hAcqGigEVision2.dll,string,
+[System]TLType,Read Only,GigEVision,string,
+[System]TLVendorName,Read Only,MVTec Software GmbH,string,
+[System]TLVersion,Read Only,1.0.0,string,
+add_objectmodel3d_overlay_attrib,Read Only,disable,string,
+available_callback_types,Read Only,"['DeviceVendorName', 'DeviceModelName', 'DeviceManufacturerInfo', 'FLK_TI_Info_PlatformId', 'FLK_TI_Info_VLDataProviderAvailable', 'FLK_TI_Info_VLDataSize', 'FLK_TI_Info_REDataProviderAvailable', 'FLK_TI_Info_REDataSize', 'FLK_TI_Info_REDataRate', 'FLK_TI_Info_RE_TPM_Validity_Code', 'FLK_TI_Info_RE_Platform_Id', 'FLK_TI_Info_RE_Capabilities0', 'FLK_TI_Info_CurrentDeviceTemperatureC', 'FLK_TI_Info_CriticalDeviceTemperatureC', 'FLK_TI_Info_SecuredDataStreamingOnly', 'FLK_TI_InfoSelector', 'FLK_TI_InfoString', 'FLK_TI_Info_CalibrationRangeInfoQuery', 'FLK_TI_Info_CalibrationRangeInfo_RangeSpan_LowerBoundary', 'FLK_TI_Info_CalibrationRangeInfo_RangeSpan_UpperBoundary', 'FLK_TI_CalibrationInfo', 'FLK_TI_ControlFeature_SetFocusDistanceMm', 'FLK_TI_ControlFeature_CurrentFocusDistanceMm', 'FLK_TI_ControlFeature_FocusDistanceMm_Min', 'FLK_TI_ControlFeature_FocusDistanceMm_Max', 'FLK_TI_ControlFeature_REControlCmd', 'FLK_TI_ControlFeature_SetFrameRate', 'DeviceSFNCVersionMajor', 'DeviceSFNCVersionMinor', 'DeviceSFNCVersionSubMinor', 'DeviceType', 'DeviceStreamChannelCount', 'FLK_TI_StreamDataSourceSelector', 'TransmitAs', 'ImageCompressionMode', 'SensorWidth', 'SensorHeight', 'WidthMin', 'WidthMax', 'Width', 'HeightMin', 'HeightMax', 'Height', 'PixelFormat', 'AcquisitionMode', 'PayloadSize', 'GevCurrentPhysicalLinkConfiguration', 'GevPrimaryApplicationIPAddress', 'GevPrimaryApplicationSocket', 'GevSupportedOptionSelector', 'GevSupportedOption', '[System]TLID', '[System]TLVendorName', '[System]TLModelName', '[System]TLVersion', '[System]TLFileName', '[System]TLPath', '[System]TLType', '[System]GenTLVersionMajor', '[System]GenTLVersionMinor', '[System]GenTLSFNCVersionMajor', '[System]GenTLSFNCVersionMinor', '[System]GevTLSubsystemInfo', '[System]InterfaceUpdateList', '[System]InterfaceUpdateTimeout', '[System]InterfaceSelector', '[System]InterfaceID', '[System]GevInterfaceMACAddress', '[System]GevInterfaceDefaultIPAddress', '[System]GevInterfaceDefaultSubnetMask', '[Interface]InterfaceID', '[Interface]InterfaceType', '[Interface]InterfaceTLVersionMajor', '[Interface]InterfaceTLVersionMinor', '[Interface]GevInterfaceMACAddress', '[Interface]GevInterfaceSubnetSelector', '[Interface]GevInterfaceSubnetIPAddress', '[Interface]GevInterfaceSubnetMask', '[Interface]GevInterfaceMTU', '[Interface]GevInterfaceGatewaySelector', '[Interface]GevInterfaceGateway', '[Interface]DeviceUpdateList', '[Interface]DeviceUpdateTimeout', '[Interface]DeviceSelector', '[Interface]DeviceID', '[Interface]DeviceVendorName', '[Interface]DeviceModelName', '[Interface]DeviceAccessStatus', '[Interface]DeviceSerialNumber', '[Interface]DeviceUserID', '[Interface]DeviceTLVersionMajor', '[Interface]DeviceTLVersionMinor', '[Interface]GevDeviceIPAddress', '[Interface]GevDeviceSubnetMask', '[Interface]GevDeviceGateway', '[Interface]GevDeviceMACAddress', '[Interface]GevDeviceForceIPAddress', '[Interface]GevDeviceForceSubnetMask', '[Interface]GevDeviceForceGateway', '[Interface]GevDeviceForceIPTimeout', '[Interface]GevDeviceProposeIP', '[Interface]GevDeviceForceIP', '[Interface]GevDeviceLastForceIPSuccess', '[Interface]ActionCommand', '[Interface]ActionDeviceKey', '[Interface]ActionGroupKey', '[Interface]ActionGroupMask', '[Interface]ActionScheduledTimeEnable', '[Interface]ActionScheduledTime', '[Interface]GevActionDestinationIPAddress', '[Device]DeviceID', '[Device]DeviceSerialNumber', '[Device]DeviceUserID', '[Device]DeviceVendorName', '[Device]DeviceModelName', '[Device]DeviceVersion', '[Device]DeviceManufacturerInfo', '[Device]DeviceType', '[Device]DeviceAccessStatus', '[Device]GevDeviceIPAddress', '[Device]GevDeviceSubnetMask', '[Device]GevDeviceMACAddress', '[Device]GevDeviceGateway', '[Device]StreamSelector', '[Device]StreamID', '[Device]DeviceEndianessMechanism', '[Device]LinkCommandTimeout', '[Device]LinkCommandRetryCount', '[Device]DeviceLinkHeartbeatMode', '[Device]DeviceLinkHeartbeatTimeout', '[Device]ForceSocketDriver', '[Device]EventSelector', '[Device]EventNotification', '[Device]EventDeviceLost', '[Device]DeviceMessageChannelKeepAliveTimeout', '[Stream]StreamID', '[Stream]StreamType', '[Stream]StreamAnnouncedBufferCount', '[Stream]StreamBufferHandlingMode', '[Stream]StreamAnnounceBufferMinimum', '[Stream]PayloadSize', '[Stream]StreamThreadPriority', '[Stream]StreamThreadApplyPriority', '[Stream]StreamAuxiliaryBufferCount', '[Stream]GevStreamMaxPacketGaps', '[Stream]GevStreamMaxBlockDuration', '[Stream]GevStreamDeliverIncompleteBlocks', '[Stream]GevStreamFullBlockTerminatesPrev', '[Stream]GevStreamPacketOrderDelay', '[Stream]GevStreamAbortCheckPeriod', '[Stream]GevStreamActiveEngine', '[Stream]GevStreamRingBufferSize', '[Stream]GevStreamReceiveSocketSize', '[Stream]DeviceStreamChannelPacketSize', '[Stream]DeviceStreamChannelPacketSizeMin', '[Stream]DeviceStreamChannelPacketSizeMax', '[Stream]DeviceStreamChannelPacketSizeInc', '[Stream]DeviceStreamChannelNegotiatePacketSize', '[Stream]DeviceStreamChannelKeepAliveTimeout', '[Stream]GevStreamSeenPacketCount', '[Stream]GevStreamLostPacketCount', '[Stream]GevStreamDeliveredPacketCount', '[Stream]GevStreamUnavailablePacketCount', '[Stream]GevStreamDuplicatePacketCount', '[Stream]GevStreamResendCommandCount', '[Stream]GevStreamResendPacketCount', '[Stream]GevStreamSkippedBlockCount', '[Stream]GevStreamEngineUnderrunCount', '[Stream]GevStreamDiscardedBlockCount', '[Stream]GevStreamIncompleteBlockCount', '[Stream]GevStreamOversizedBlockCount', '[Stream]EventSelector', '[Stream]EventNotification', '[Stream]EventTransferEnd', '[Stream]EventTransferEndFrameID', '[Stream]EventTransferEndBufferUndeliverable', '[Stream]EventTransferEndUndeliverabilityReason', 'available_callback_types', 'available_event_names', 'available_param_names', 'do_abort_grab', 'do_write_configuration', 'grab_timeout', 'image_available', 'revision', 'start_async_after_grab_async', 'volatile', 'image_width', 'image_height', 'bits_per_channel', 'color_space', 'num_buffers', 'tl_id', 'tl_model', 'tl_filename', 'tl_pathname', 'tl_displayname', 'delay_after_stop', 'buffer_timestamp', 'buffer_timestamp_ns', 'device_timestamp_frequency', 'buffer_is_incomplete', 'num_buffers_underrun', 'num_buffers_await_delivery', 'clear_buffer', 'split_param_values_into_dwords', 'direct_connection', 'streaming_mode', 'device_event_handling', 'device_access', 'workarounds', 'force_ip', 'force_sockdrv', 'buffer_reallocation_mode', 'settings_selector', 'do_write_settings', 'do_load_settings', 'image_contents', 'image_source_id', 'image_region_id', 'image_purpose_id', 'image_raw_buffer_type', 'image_raw_buffer_padding_bytes', 'data_contents', 'data_source_id', 'data_region_id', 'data_purpose_id', 'create_objectmodel3d', 'coordinate_transform_mode', 'confidence_mode', 'confidence_threshold', 'add_objectmodel3d_overlay_attrib', 'buffer_frameid', 'image_pixel_format', 'event_notification_helper', 'fileaccess_remote_name', 'fileaccess_file_path', 'do_fileaccess_download', 'do_fileaccess_upload', 'do_fileaccess_delete', 'event_data', 'event_message_queue', 'event_selector', 'available_easyparam_names', 'event_new_buffer']",list[str],
+available_easyparam_names,Read Only,"['[Consumer]exposure_auto', '[Consumer]exposure', '[Consumer]gain_auto', '[Consumer]gain', '[Consumer]info_general', '[Consumer]trigger', '[Consumer]trigger_activation', '[Consumer]trigger_delay', '[Consumer]trigger_software']",list[str],
+available_event_names,Read Only,"['DeviceVendorName', 'DeviceModelName', 'DeviceManufacturerInfo', 'FLK_TI_Info_PlatformId', 'FLK_TI_Info_VLDataProviderAvailable', 'FLK_TI_Info_VLDataSize', 'FLK_TI_Info_REDataProviderAvailable', 'FLK_TI_Info_REDataSize', 'FLK_TI_Info_REDataRate', 'FLK_TI_Info_RE_TPM_Validity_Code', 'FLK_TI_Info_RE_Platform_Id', 'FLK_TI_Info_RE_Capabilities0', 'FLK_TI_Info_CurrentDeviceTemperatureC', 'FLK_TI_Info_CriticalDeviceTemperatureC', 'FLK_TI_Info_SecuredDataStreamingOnly', 'FLK_TI_InfoSelector', 'FLK_TI_InfoString', 'FLK_TI_Info_CalibrationRangeInfoQuery', 'FLK_TI_Info_CalibrationRangeInfo_RangeSpan_LowerBoundary', 'FLK_TI_Info_CalibrationRangeInfo_RangeSpan_UpperBoundary', 'FLK_TI_CalibrationInfo', 'FLK_TI_ControlFeature_SetFocusDistanceMm', 'FLK_TI_ControlFeature_CurrentFocusDistanceMm', 'FLK_TI_ControlFeature_FocusDistanceMm_Min', 'FLK_TI_ControlFeature_FocusDistanceMm_Max', 'FLK_TI_ControlFeature_REControlCmd', 'FLK_TI_ControlFeature_SetFrameRate', 'DeviceSFNCVersionMajor', 'DeviceSFNCVersionMinor', 'DeviceSFNCVersionSubMinor', 'DeviceType', 'DeviceStreamChannelCount', 'FLK_TI_StreamDataSourceSelector', 'TransmitAs', 'ImageCompressionMode', 'SensorWidth', 'SensorHeight', 'WidthMin', 'WidthMax', 'Width', 'HeightMin', 'HeightMax', 'Height', 'PixelFormat', 'AcquisitionMode', 'PayloadSize', 'GevCurrentPhysicalLinkConfiguration', 'GevPrimaryApplicationIPAddress', 'GevPrimaryApplicationSocket', 'GevSupportedOptionSelector', 'GevSupportedOption', '[System]TLID', '[System]TLVendorName', '[System]TLModelName', '[System]TLVersion', '[System]TLFileName', '[System]TLPath', '[System]TLType', '[System]GenTLVersionMajor', '[System]GenTLVersionMinor', '[System]GenTLSFNCVersionMajor', '[System]GenTLSFNCVersionMinor', '[System]GevTLSubsystemInfo', '[System]InterfaceUpdateList', '[System]InterfaceUpdateTimeout', '[System]InterfaceSelector', '[System]InterfaceID', '[System]GevInterfaceMACAddress', '[System]GevInterfaceDefaultIPAddress', '[System]GevInterfaceDefaultSubnetMask', '[Interface]InterfaceID', '[Interface]InterfaceType', '[Interface]InterfaceTLVersionMajor', '[Interface]InterfaceTLVersionMinor', '[Interface]GevInterfaceMACAddress', '[Interface]GevInterfaceSubnetSelector', '[Interface]GevInterfaceSubnetIPAddress', '[Interface]GevInterfaceSubnetMask', '[Interface]GevInterfaceMTU', '[Interface]GevInterfaceGatewaySelector', '[Interface]GevInterfaceGateway', '[Interface]DeviceUpdateList', '[Interface]DeviceUpdateTimeout', '[Interface]DeviceSelector', '[Interface]DeviceID', '[Interface]DeviceVendorName', '[Interface]DeviceModelName', '[Interface]DeviceAccessStatus', '[Interface]DeviceSerialNumber', '[Interface]DeviceUserID', '[Interface]DeviceTLVersionMajor', '[Interface]DeviceTLVersionMinor', '[Interface]GevDeviceIPAddress', '[Interface]GevDeviceSubnetMask', '[Interface]GevDeviceGateway', '[Interface]GevDeviceMACAddress', '[Interface]GevDeviceForceIPAddress', '[Interface]GevDeviceForceSubnetMask', '[Interface]GevDeviceForceGateway', '[Interface]GevDeviceForceIPTimeout', '[Interface]GevDeviceProposeIP', '[Interface]GevDeviceForceIP', '[Interface]GevDeviceLastForceIPSuccess', '[Interface]ActionCommand', '[Interface]ActionDeviceKey', '[Interface]ActionGroupKey', '[Interface]ActionGroupMask', '[Interface]ActionScheduledTimeEnable', '[Interface]ActionScheduledTime', '[Interface]GevActionDestinationIPAddress', '[Device]DeviceID', '[Device]DeviceSerialNumber', '[Device]DeviceUserID', '[Device]DeviceVendorName', '[Device]DeviceModelName', '[Device]DeviceVersion', '[Device]DeviceManufacturerInfo', '[Device]DeviceType', '[Device]DeviceAccessStatus', '[Device]GevDeviceIPAddress', '[Device]GevDeviceSubnetMask', '[Device]GevDeviceMACAddress', '[Device]GevDeviceGateway', '[Device]StreamSelector', '[Device]StreamID', '[Device]DeviceEndianessMechanism', '[Device]LinkCommandTimeout', '[Device]LinkCommandRetryCount', '[Device]DeviceLinkHeartbeatMode', '[Device]DeviceLinkHeartbeatTimeout', '[Device]ForceSocketDriver', '[Device]EventSelector', '[Device]EventNotification', '[Device]EventDeviceLost', '[Device]DeviceMessageChannelKeepAliveTimeout', '[Stream]StreamID', '[Stream]StreamType', '[Stream]StreamAnnouncedBufferCount', '[Stream]StreamBufferHandlingMode', '[Stream]StreamAnnounceBufferMinimum', '[Stream]PayloadSize', '[Stream]StreamThreadPriority', '[Stream]StreamThreadApplyPriority', '[Stream]StreamAuxiliaryBufferCount', '[Stream]GevStreamMaxPacketGaps', '[Stream]GevStreamMaxBlockDuration', '[Stream]GevStreamDeliverIncompleteBlocks', '[Stream]GevStreamFullBlockTerminatesPrev', '[Stream]GevStreamPacketOrderDelay', '[Stream]GevStreamAbortCheckPeriod', '[Stream]GevStreamActiveEngine', '[Stream]GevStreamRingBufferSize', '[Stream]GevStreamReceiveSocketSize', '[Stream]DeviceStreamChannelPacketSize', '[Stream]DeviceStreamChannelPacketSizeMin', '[Stream]DeviceStreamChannelPacketSizeMax', '[Stream]DeviceStreamChannelPacketSizeInc', '[Stream]DeviceStreamChannelNegotiatePacketSize', '[Stream]DeviceStreamChannelKeepAliveTimeout', '[Stream]GevStreamSeenPacketCount', '[Stream]GevStreamLostPacketCount', '[Stream]GevStreamDeliveredPacketCount', '[Stream]GevStreamUnavailablePacketCount', '[Stream]GevStreamDuplicatePacketCount', '[Stream]GevStreamResendCommandCount', '[Stream]GevStreamResendPacketCount', '[Stream]GevStreamSkippedBlockCount', '[Stream]GevStreamEngineUnderrunCount', '[Stream]GevStreamDiscardedBlockCount', '[Stream]GevStreamIncompleteBlockCount', '[Stream]GevStreamOversizedBlockCount', '[Stream]EventSelector', '[Stream]EventNotification', '[Stream]EventTransferEnd', '[Stream]EventTransferEndFrameID', '[Stream]EventTransferEndBufferUndeliverable', '[Stream]EventTransferEndUndeliverabilityReason', 'available_callback_types', 'available_event_names', 'available_param_names', 'do_abort_grab', 'do_write_configuration', 'grab_timeout', 'image_available', 'revision', 'start_async_after_grab_async', 'volatile', 'image_width', 'image_height', 'bits_per_channel', 'color_space', 'num_buffers', 'tl_id', 'tl_model', 'tl_filename', 'tl_pathname', 'tl_displayname', 'delay_after_stop', 'buffer_timestamp', 'buffer_timestamp_ns', 'device_timestamp_frequency', 'buffer_is_incomplete', 'num_buffers_underrun', 'num_buffers_await_delivery', 'clear_buffer', 'split_param_values_into_dwords', 'direct_connection', 'streaming_mode', 'device_event_handling', 'device_access', 'workarounds', 'force_ip', 'force_sockdrv', 'buffer_reallocation_mode', 'settings_selector', 'do_write_settings', 'do_load_settings', 'image_contents', 'image_source_id', 'image_region_id', 'image_purpose_id', 'image_raw_buffer_type', 'image_raw_buffer_padding_bytes', 'data_contents', 'data_source_id', 'data_region_id', 'data_purpose_id', 'create_objectmodel3d', 'coordinate_transform_mode', 'confidence_mode', 'confidence_threshold', 'add_objectmodel3d_overlay_attrib', 'buffer_frameid', 'image_pixel_format', 'event_notification_helper', 'fileaccess_remote_name', 'fileaccess_file_path', 'do_fileaccess_download', 'do_fileaccess_upload', 'do_fileaccess_delete', 'event_data', 'event_message_queue', 'event_selector', 'available_easyparam_names', 'event_new_buffer']",list[str],
+available_param_names,Read Only,"['DeviceVendorName', 'DeviceModelName', 'DeviceManufacturerInfo', 'FLK_TI_Info_PlatformId', 'FLK_TI_Info_VLDataProviderAvailable', 'FLK_TI_Info_VLDataSize', 'FLK_TI_Info_REDataProviderAvailable', 'FLK_TI_Info_REDataSize', 'FLK_TI_Info_REDataRate', 'FLK_TI_Info_RE_TPM_Validity_Code', 'FLK_TI_Info_RE_Platform_Id', 'FLK_TI_Info_RE_Capabilities0', 'FLK_TI_Info_CurrentDeviceTemperatureC', 'FLK_TI_Info_CriticalDeviceTemperatureC', 'FLK_TI_Info_SecuredDataStreamingOnly', 'FLK_TI_InfoSelector', 'FLK_TI_InfoString', 'FLK_TI_Info_CalibrationRangeInfoQuery', 'FLK_TI_Info_CalibrationRangeInfo_RangeSpan_LowerBoundary', 'FLK_TI_Info_CalibrationRangeInfo_RangeSpan_UpperBoundary', 'FLK_TI_CalibrationInfo', 'FLK_TI_ControlFeature_SetFocusDistanceMm', 'FLK_TI_ControlFeature_CurrentFocusDistanceMm', 'FLK_TI_ControlFeature_FocusDistanceMm_Min', 'FLK_TI_ControlFeature_FocusDistanceMm_Max', 'FLK_TI_ControlFeature_REControlCmd', 'FLK_TI_ControlFeature_SetFrameRate', 'DeviceSFNCVersionMajor', 'DeviceSFNCVersionMinor', 'DeviceSFNCVersionSubMinor', 'DeviceType', 'DeviceStreamChannelCount', 'FLK_TI_StreamDataSourceSelector', 'TransmitAs', 'ImageCompressionMode', 'SensorWidth', 'SensorHeight', 'WidthMin', 'WidthMax', 'Width', 'HeightMin', 'HeightMax', 'Height', 'PixelFormat', 'AcquisitionMode', 'PayloadSize', 'GevCurrentPhysicalLinkConfiguration', 'GevPrimaryApplicationIPAddress', 'GevPrimaryApplicationSocket', 'GevSupportedOptionSelector', 'GevSupportedOption', '[System]TLID', '[System]TLVendorName', '[System]TLModelName', '[System]TLVersion', '[System]TLFileName', '[System]TLPath', '[System]TLType', '[System]GenTLVersionMajor', '[System]GenTLVersionMinor', '[System]GenTLSFNCVersionMajor', '[System]GenTLSFNCVersionMinor', '[System]GevTLSubsystemInfo', '[System]InterfaceUpdateList', '[System]InterfaceUpdateTimeout', '[System]InterfaceSelector', '[System]InterfaceID', '[System]GevInterfaceMACAddress', '[System]GevInterfaceDefaultIPAddress', '[System]GevInterfaceDefaultSubnetMask', '[Interface]InterfaceID', '[Interface]InterfaceType', '[Interface]InterfaceTLVersionMajor', '[Interface]InterfaceTLVersionMinor', '[Interface]GevInterfaceMACAddress', '[Interface]GevInterfaceSubnetSelector', '[Interface]GevInterfaceSubnetIPAddress', '[Interface]GevInterfaceSubnetMask', '[Interface]GevInterfaceMTU', '[Interface]GevInterfaceGatewaySelector', '[Interface]GevInterfaceGateway', '[Interface]DeviceUpdateList', '[Interface]DeviceUpdateTimeout', '[Interface]DeviceSelector', '[Interface]DeviceID', '[Interface]DeviceVendorName', '[Interface]DeviceModelName', '[Interface]DeviceAccessStatus', '[Interface]DeviceSerialNumber', '[Interface]DeviceUserID', '[Interface]DeviceTLVersionMajor', '[Interface]DeviceTLVersionMinor', '[Interface]GevDeviceIPAddress', '[Interface]GevDeviceSubnetMask', '[Interface]GevDeviceGateway', '[Interface]GevDeviceMACAddress', '[Interface]GevDeviceForceIPAddress', '[Interface]GevDeviceForceSubnetMask', '[Interface]GevDeviceForceGateway', '[Interface]GevDeviceForceIPTimeout', '[Interface]GevDeviceProposeIP', '[Interface]GevDeviceForceIP', '[Interface]GevDeviceLastForceIPSuccess', '[Interface]ActionCommand', '[Interface]ActionDeviceKey', '[Interface]ActionGroupKey', '[Interface]ActionGroupMask', '[Interface]ActionScheduledTimeEnable', '[Interface]ActionScheduledTime', '[Interface]GevActionDestinationIPAddress', '[Device]DeviceID', '[Device]DeviceSerialNumber', '[Device]DeviceUserID', '[Device]DeviceVendorName', '[Device]DeviceModelName', '[Device]DeviceVersion', '[Device]DeviceManufacturerInfo', '[Device]DeviceType', '[Device]DeviceAccessStatus', '[Device]GevDeviceIPAddress', '[Device]GevDeviceSubnetMask', '[Device]GevDeviceMACAddress', '[Device]GevDeviceGateway', '[Device]StreamSelector', '[Device]StreamID', '[Device]DeviceEndianessMechanism', '[Device]LinkCommandTimeout', '[Device]LinkCommandRetryCount', '[Device]DeviceLinkHeartbeatMode', '[Device]DeviceLinkHeartbeatTimeout', '[Device]ForceSocketDriver', '[Device]EventSelector', '[Device]EventNotification', '[Device]EventDeviceLost', '[Device]DeviceMessageChannelKeepAliveTimeout', '[Stream]StreamID', '[Stream]StreamType', '[Stream]StreamAnnouncedBufferCount', '[Stream]StreamBufferHandlingMode', '[Stream]StreamAnnounceBufferMinimum', '[Stream]PayloadSize', '[Stream]StreamThreadPriority', '[Stream]StreamThreadApplyPriority', '[Stream]StreamAuxiliaryBufferCount', '[Stream]GevStreamMaxPacketGaps', '[Stream]GevStreamMaxBlockDuration', '[Stream]GevStreamDeliverIncompleteBlocks', '[Stream]GevStreamFullBlockTerminatesPrev', '[Stream]GevStreamPacketOrderDelay', '[Stream]GevStreamAbortCheckPeriod', '[Stream]GevStreamActiveEngine', '[Stream]GevStreamRingBufferSize', '[Stream]GevStreamReceiveSocketSize', '[Stream]DeviceStreamChannelPacketSize', '[Stream]DeviceStreamChannelPacketSizeMin', '[Stream]DeviceStreamChannelPacketSizeMax', '[Stream]DeviceStreamChannelPacketSizeInc', '[Stream]DeviceStreamChannelNegotiatePacketSize', '[Stream]DeviceStreamChannelKeepAliveTimeout', '[Stream]GevStreamSeenPacketCount', '[Stream]GevStreamLostPacketCount', '[Stream]GevStreamDeliveredPacketCount', '[Stream]GevStreamUnavailablePacketCount', '[Stream]GevStreamDuplicatePacketCount', '[Stream]GevStreamResendCommandCount', '[Stream]GevStreamResendPacketCount', '[Stream]GevStreamSkippedBlockCount', '[Stream]GevStreamEngineUnderrunCount', '[Stream]GevStreamDiscardedBlockCount', '[Stream]GevStreamIncompleteBlockCount', '[Stream]GevStreamOversizedBlockCount', '[Stream]EventSelector', '[Stream]EventNotification', '[Stream]EventTransferEnd', '[Stream]EventTransferEndFrameID', '[Stream]EventTransferEndBufferUndeliverable', '[Stream]EventTransferEndUndeliverabilityReason', 'available_callback_types', 'available_event_names', 'available_param_names', 'do_abort_grab', 'do_write_configuration', 'grab_timeout', 'image_available', 'revision', 'start_async_after_grab_async', 'volatile', 'image_width', 'image_height', 'bits_per_channel', 'color_space', 'num_buffers', 'tl_id', 'tl_model', 'tl_filename', 'tl_pathname', 'tl_displayname', 'delay_after_stop', 'buffer_timestamp', 'buffer_timestamp_ns', 'device_timestamp_frequency', 'buffer_is_incomplete', 'num_buffers_underrun', 'num_buffers_await_delivery', 'clear_buffer', 'split_param_values_into_dwords', 'direct_connection', 'streaming_mode', 'device_event_handling', 'device_access', 'workarounds', 'force_ip', 'force_sockdrv', 'buffer_reallocation_mode', 'settings_selector', 'do_write_settings', 'do_load_settings', 'image_contents', 'image_source_id', 'image_region_id', 'image_purpose_id', 'image_raw_buffer_type', 'image_raw_buffer_padding_bytes', 'data_contents', 'data_source_id', 'data_region_id', 'data_purpose_id', 'create_objectmodel3d', 'coordinate_transform_mode', 'confidence_mode', 'confidence_threshold', 'add_objectmodel3d_overlay_attrib', 'buffer_frameid', 'image_pixel_format', 'event_notification_helper', 'fileaccess_remote_name', 'fileaccess_file_path', 'do_fileaccess_download', 'do_fileaccess_upload', 'do_fileaccess_delete', 'event_data', 'event_message_queue', 'event_selector', 'available_easyparam_names']",list[str],
+bits_per_channel,Read / Write,-1,int,
+buffer_frameid,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+buffer_is_incomplete,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+buffer_reallocation_mode,Read / Write,only_increase_size,string,
+buffer_timestamp,Unsupported,<None>,unknown,HALCON error #5331: Image acquisition: parameter not available in current configuration
+buffer_timestamp_ns,Unsupported,<None>,unknown,HALCON error #5331: Image acquisition: parameter not available in current configuration
+clear_buffer,Write Only,disable,string,
+color_space,Read / Write,default,string,
+confidence_mode,Read / Write,off,string,
+confidence_threshold,Read / Write,0.5,double,
+coordinate_transform_mode,Read / Write,reference,string,
+create_objectmodel3d,Read Only,disable,string,
+data_contents,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+data_purpose_id,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+data_region_id,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+data_source_id,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+delay_after_stop,Read / Write,0,int,
+device_access,Read Only,exclusive,string,
+device_event_handling,Read Only,1,int,
+device_timestamp_frequency,Unsupported,<None>,unknown,"HALCON error #5331: Image acquisition: parameter not available in current configuration: Timestamp frequency not known for this device
+(GetInternalBaseParam:24294)"
+direct_connection,Read Only,disable,string,
+do_abort_grab,Write Only,1,command,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+do_fileaccess_delete,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+do_fileaccess_download,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+do_fileaccess_upload,Unsupported,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+do_load_settings,Write Only,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+do_write_configuration,Write Only,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+do_write_settings,Write Only,<None>,unknown,"HALCON error #5330: Image acquisition: could not query parameter setting: Attempt to read a write-only parameter.
+(GetInternalBaseParam:23816)"
+event_data,Read Only,[],list[],
+event_message_queue,Read / Write,<halcon.ffi.HNull object at 0x000001DD3100D090>,HNull,
+event_notification_helper,Read / Write,disable,string,
+event_selector,Read / Write,grab_timeout,string,
+fileaccess_file_path,Read / Write,,string,
+fileaccess_remote_name,Read / Write,,string,
+force_ip,Read Only,,string,
+force_sockdrv,Read Only,0,int,
+grab_timeout,Read / Write,5000,int,
+image_available,Read Only,0,int,
+image_contents,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_height,Read Only,480,int,
+image_pixel_format,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_purpose_id,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_raw_buffer_padding_bytes,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_raw_buffer_type,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_region_id,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_source_id,Unsupported,<None>,unknown,HALCON error #5330: Image acquisition: could not query parameter setting
+image_width,Read Only,640,int,
+num_buffers,Read Only,4,int,
+num_buffers_await_delivery,Read Only,0,int,
+num_buffers_underrun,Read Only,0,int,
+revision,Read Only,24.11.21,string,
+settings_selector,Read / Write,RemoteDevice,string,
+split_param_values_into_dwords,Read / Write,disable,string,
+start_async_after_grab_async,Read / Write,enable,string,
+streaming_mode,Read Only,1,int,
+tl_displayname,Read Only,MVTec GigE Vision GenTL Producer,string,
+tl_filename,Read Only,hAcqGigEVision2.dll,string,
+tl_id,Read Only,C:\Program Files\MVTec\HALCON-24.11-Progress-Steady\bin\x64-win64\hAcqGigEVision2.dll,string,
+tl_model,Read Only,GigEVision,string,
+tl_pathname,Read Only,C:\Program Files\MVTec\HALCON-24.11-Progress-Steady\bin\x64-win64\hAcqGigEVision2.dll,string,
+volatile,Read / Write,disable,string,
+workarounds,Read Only,,string,
