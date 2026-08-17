@@ -59,14 +59,14 @@ struct Segment {
 
 ## 2. Calibration Ranges
 
-| Property | Value | Source |
-|----------|-------|--------|
-| Max ranges per camera | 3 (enabled_mask bits) | `calibration_parser.py:163` |
-| Segments per range | 11 stored, `num_segments` valid | `calibration_parser.py:56, 401` |
-| Temperature units | Degrees Celsius (°C) | All parsing/logging |
-| Calibration range | `calibration_min` → `calibration_max` | Per-range descriptor |
-| Display range | `display_min` → `display_max` | Per-range descriptor |
-| Palette spans | Manual/auto configurable | Per-range descriptor |
+| Property              | Value                                 | Source                          |
+|-----------------------|---------------------------------------|---------------------------------|
+| Max ranges per camera | 3 (enabled_mask bits)                 | `calibration_parser.py:163`     |
+| Segments per range    | 11 stored, `num_segments` valid       | `calibration_parser.py:56, 401` |
+| Temperature units     | Degrees Celsius (°C)                  | All parsing/logging             |
+| Calibration range     | `calibration_min` → `calibration_max` | Per-range descriptor            |
+| Display range         | `display_min` → `display_max`         | Per-range descriptor            |
+| Palette spans         | Manual/auto configurable              | Per-range descriptor            |
 
 **Parsing:** `_parse_ranges()` iterates `enabled_ranges` times, calls `_parse_range()` for each.
 
@@ -127,13 +127,13 @@ _fill_invalid_values(lut)  # linear interpolation
 
 ## 5. Raw Value Assumptions
 
-| Assumption | Value | Source |
-|------------|-------|--------|
-| Raw bit depth | 16-bit (0-65535) | `bits_per_channel=16` in HALCON config |
-| Raw dtype | `uint16` | `raw_image.astype(np.uint16, copy=False)` |
-| Endianness | Native (HALCON → NumPy) | `himage_as_numpy_array` |
-| Range index | 0-based, default 0 | `range_index=0` in all calls |
-| Invalid raw → | NaN in temperature | LUT initialized to NaN |
+| Assumption    | Value                   | Source                                    |
+|---------------|-------------------------|-------------------------------------------|
+| Raw bit depth | 16-bit (0-65535)        | `bits_per_channel=16` in HALCON config    |
+| Raw dtype     | `uint16`                | `raw_image.astype(np.uint16, copy=False)` |
+| Endianness    | Native (HALCON → NumPy) | `himage_as_numpy_array`                   |
+| Range index   | 0-based, default 0      | `range_index=0` in all calls              |
+| Invalid raw → | NaN in temperature      | LUT initialized to NaN                    |
 
 ---
 
@@ -174,38 +174,38 @@ return temperature_to_display(temperature, minimum, maximum)
 
 ## 7. Temperature Units & Valid Range
 
-| Aspect | Value |
-|--------|-------|
-| **Units** | Degrees Celsius (°C) — hardcoded throughout |
+| Aspect                | Value                                                                                 |
+|-----------------------|---------------------------------------------------------------------------------------|
+| **Units**             | Degrees Celsius (°C) — hardcoded throughout                                           |
 | **Calibration range** | Per-range `calibration_min` → `calibration_max` (typically -40°C to +550°C for TV46L) |
-| **Display range** | Per-range `display_min` → `display_max` (configurable palette span) |
-| **NaN** | Invalid/uncalibrated raw values |
-| **Inf** | Not produced (LUT fill guarantees finite) |
+| **Display range**     | Per-range `display_min` → `display_max` (configurable palette span)                   |
+| **NaN**               | Invalid/uncalibrated raw values                                                       |
+| **Inf**               | Not produced (LUT fill guarantees finite)                                             |
 
 ---
 
 ## 8. Invalid Data Handling
 
-| Stage | Handling |
-|-------|----------|
-| **Raw → Temp** | NaN in LUT → NaN in output (no exception) |
-| **Temp statistics** | `np.isfinite()` filter; all NaN → returns dict of NaN |
-| **ROI statistics** | Mask + `np.isfinite()`; empty → NaN dict |
-| **Display conversion** | NaN → 0 (black) |
-| **LUT build** | Interpolation + extension; empty valid → RuntimeError |
-| **Validation** | `validate_temperature_image()` checks `dtype==float32`, non-empty |
+| Stage                  | Handling                                                          |
+|------------------------|-------------------------------------------------------------------|
+| **Raw → Temp**         | NaN in LUT → NaN in output (no exception)                         |
+| **Temp statistics**    | `np.isfinite()` filter; all NaN → returns dict of NaN             |
+| **ROI statistics**     | Mask + `np.isfinite()`; empty → NaN dict                          |
+| **Display conversion** | NaN → 0 (black)                                                   |
+| **LUT build**          | Interpolation + extension; empty valid → RuntimeError             |
+| **Validation**         | `validate_temperature_image()` checks `dtype==float32`, non-empty |
 
 ---
 
 ## 9. Performance Characteristics
 
-| Operation | Complexity | Typical Time (640×480) |
-|-----------|------------|------------------------|
-| LUT build (1 range) | O(65536 × segments) | ~50-100 ms (once at startup) |
-| Raw → Temperature | O(H×W) vectorized | ~0.1-0.3 ms |
-| Temperature → Display | O(H×W) vectorized | ~0.2-0.5 ms |
-| Frame statistics | O(H×W) | ~0.5-1 ms |
-| ROI statistics | O(ROI_pixels) | ~0.01 ms per ROI |
+| Operation             | Complexity          | Typical Time (640×480)       |
+|-----------------------|---------------------|------------------------------|
+| LUT build (1 range)   | O(65536 × segments) | ~50-100 ms (once at startup) |
+| Raw → Temperature     | O(H×W) vectorized   | ~0.1-0.3 ms                  |
+| Temperature → Display | O(H×W) vectorized   | ~0.2-0.5 ms                  |
+| Frame statistics      | O(H×W) | ~0.5-1 ms  |
+| ROI statistics        | O(ROI_pixels)       | ~0.01 ms per ROI             |
 
 **Memory per range:** 65536 × 4 bytes = 256 KB LUT + calibration data
 
@@ -231,28 +231,28 @@ The algorithm **operates identically** on live and offline frames:
 
 ## 11. Exact Class/Function Reference
 
-| Component | File | Key Functions |
-|-----------|------|---------------|
-| **Models** | `calibration/calibration_models.py` | `UniverseSegment`, `CalibrationRange`, `CameraCalibration` |
-| **Parser** | `calibration/calibration_parser.py` | `CalibrationParser.load()`, `_parse_header()`, `_parse_range()`, `_parse_segment()`, `_decode_date()` |
-| **Processor** | `calibration/calibration_processor.py` | `raw_to_temperature()`, `solve_polynomial()`, `raw_value_to_temperature()`, `build_lookup_tables()`, `_build_lookup_table()`, `_fill_invalid_values()`, `temperature_to_display()`, `raw_to_display()`, `get_temperature_statistics()`, `get_roi_statistics()` |
-| **Manager** | `calibration/calibration_manager.py` | `CalibrationManager.initialize()`, `raw_to_temperature()`, `raw_to_display()`, `get_temperature_statistics()`, `get_roi_statistics()`, `get_lookup_table()`, `rebuild_lookup_tables()` |
+| Component     | File                                   | Key Functions                                                                                                                        |
+|-----------    |----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------|
+| **Models**    | `calibration/calibration_models.py`    | `UniverseSegment`, `CalibrationRange`, `CameraCalibration`                                                                           |
+| **Parser**    | `calibration/calibration_parser.py`    | `CalibrationParser.load()`, `_parse_header()`, `_parse_range()`, `_parse_segment()`, `_decode_date()`                                |
+| **Processor** | `calibration/calibration_processor.py` | `raw_to_temperature()`, `solve_polynomial()`, `raw_value_to_temperature()`, `build_lookup_tables()`, `_build_lookup_table()`, `_fill_invalid_values()`, `temperature_to_display()`, `raw_to_display()`, `get_temperature_statistics()`, `get_roi_statistics()`                                                                |
+| **Manager**   | `calibration/calibration_manager.py`   | `CalibrationManager.initialize()`, `raw_to_temperature()`, `raw_to_display()`, `get_temperature_statistics()`, `get_roi_statistics()`, `get_lookup_table()`, `rebuild_lookup_tables()` |
 
 ---
 
 ## 12. Proven vs Theoretical
 
-| Aspect | Status | Evidence |
-|--------|--------|----------|
-| Blob parsing | **PROVEN** | Used in production app, validation tools |
-| LUT generation | **PROVEN** | Hardware-validated in `halcon_roi_validation.py` |
-| Raw→Temp conversion | **PROVEN** | Core pipeline, tested in `test_processing_pipeline.py` |
-| Temp→Display | **PROVEN** | Used in GUI display path |
-| Statistics (frame/ROI) | **PROVEN** | `test_alarm_processor.py`, `test_roi_engine.py` |
-| NaN handling | **PROVEN** | Validation tests cover edge cases |
-| Multi-range support | **PARTIAL** | Parser supports 3 ranges; production uses range 0 only |
-| Thread-safety | **NOT ADDRESSED** | Single-threaded assumption throughout |
-| Offline frame support | **THEORETICAL** | Algorithm is frame-agnostic but not explicitly tested offline |
+| Aspect                             | Status             | Evidence                                                      |
+|--------                            |--------            |---------------------------------------------------------------|
+| Blob parsing                       | **PROVEN**         | Used in production app, validation tools                      |
+| LUT generation                     | **PROVEN**         | Hardware-validated in `halcon_roi_validation.py`              |
+| Raw→Temp conversion                | **PROVEN**         | Core pipeline, tested in `test_processing_pipeline.py`        |
+| Temp→Display                       | **PROVEN**         | Used in GUI display path                                      |
+| Statistics (frame/ROI)             | **PROVEN**         | `test_alarm_processor.py`, `test_roi_engine.py`               |
+| NaN handling                       | **PROVEN**         | Validation tests cover edge cases                             |
+| Multi-range support                | **PARTIAL**        | Parser supports 3 ranges; production uses range 0 only        |
+| Thread-safety                      | **NOT ADDRESSED**  | Single-threaded assumption throughout                         |
+| Offline frame support              | **THEORETICAL**    | Algorithm is frame-agnostic but not explicitly tested offline |
 
 ---
 
