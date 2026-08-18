@@ -1,0 +1,203 @@
+{
+  "report": {
+    "name": "tv46l_halcon_interleaved_pcap_analysis",
+    "version": "1.0.0",
+    "generated_utc": "2026-08-18T00:00:00",
+    "capture_file": "docs/Halcon_Interleaved_IR_VL_Data.pcapng",
+    "capture_sha256": "e2ffb2928c36db2c01b6221aae3bac48054cabe94e15ef0ef63b1881c1bd7e45",
+    "capture_size_bytes": 359976,
+    "packets": 1769,
+    "duration_s": 72.9232811,
+    "start_time": "2026-08-18T12:36:44",
+    "end_time": "2026-08-18T12:37:57",
+    "capture_notes": "Manual Wireshark/Dumpcap capture (4.6.6, nanosecond resolution, no capture filter) taken 2026-08-18 ~12:38 while HALCON was configured for interleaved IR/VL data. Timestamps: capture file created 12:38:59."
+  },
+  "verdict": {
+    "id": "C",
+    "one_line": "THE HALCON PCAP DOES NOT CONTAIN TRUE IR/VL INTERLEAVED GVSP: it contains ZERO GVSP image blocks (no leader/data/trailer, no Mono16, no YUV422_8). HALCON's own GVCP session wrote the dual-mode register 0x10a110=2 at t=21.6128 (ACK success), then repeatedly configured/enabled the stream channel ~14 times, but the camera never delivered a single image packet.",
+    "evidence_chain": [
+      "Protocol hierarchy accounts for all 1769 packets: eth 1769, lldp 10, ip 1749, udp 1749 (gvcp 1726, gvsp 22, dhcp 1), arp 10. No other IP protocol exists; there is no image traffic of any kind.",
+      "All 22 packets Wireshark dissects as 'GVSP' are proprietary FLIR keep-alive / packet-size-negotiation traffic: 18 are ASCII 'stream_keep_alive\\0' from PC:64797 to the camera's current SCSP0 port; 4 are camera:36696->PC:64797 negotiation probes (payload sizes 1068/1332/1464/1472 = 1076/1340/1472/1480 UDP). None has a valid GVSP format byte.",
+      "Zero GVSP LEADER (0x01), DATA (0x02), or TRAILER (0x03) packets. Pixel formats 0x01100007 (Mono16 IR) and 0x02100032 (YUV422_8 visible) never appear.",
+      "Frame-length distribution confirms it: dominated by 54/58/60/566-byte GVCP frames; the only frames >1.1 KB are the four negotiation probes (max 1514 bytes, one frame). No 1514-byte GVSP data-packet burst and no 614400-byte image data.",
+      "HALCON's own GVCP control session (PC:64795, the same port that performed all node-map READMEM and heartbeat reads) wrote WRITEREG 0x10a110=2 at t=21.612785600 (frame 1109); camera ACKed success (frame 1110, status 0x0000). This contradicts the earlier 'HALCON resets the register to 0' finding.",
+      "After the dual-mode write HALCON re-armed the stream channel (SCDA0=0xa9fec051, SCP0=0xfd1d), read SCSP0, sent stream_keep_alive to that port, wrote 0x10a104=1 (stream enable), and ~28 ms later wrote 0x10a108=1, then cleared SCP0/SCDA0. This enable/stop cycle repeated ~14 times (t=27.97..37.19) plus one final 0x10a108=1 at t=62.955. The camera sent no image data on any cycle.",
+      "GVSP stream never delivered: zero blocks, zero frames, no FPS. HALCON is NOT receiving any GVSP stream in this capture."
+    ],
+    "dual_mode_on_wire": true,
+    "image_data_on_wire": false,
+    "ir_data_on_wire": false,
+    "visible_data_on_wire": false,
+    "halcon_received_both": false,
+    "halcon_received_any": false,
+    "answer": "No. This capture shows HALCON ACTIVATING dual mode (0x10a110=2, acked) but receiving ZERO image data. The camera never streams to HALCON at all - not IR, not visible, not interleaved. This pcap cannot demonstrate HALCON receiving interleaved IR/VL GVSP because the interleaved data is not present on the wire."
+  },
+  "question_answers": [
+    {
+      "q": "Does HALCON receive the TV46L native interleaved IR/VL GVSP stream?",
+      "a": "No evidence of it. The capture contains zero GVSP image blocks. HALCON's handle (PC:64795) wrote the dual-mode register and enabled the stream ~14 times, but the camera sent no image data."
+    },
+    {
+      "q": "Is IR (Mono16) data present?",
+      "a": "No. No GVSP leader with pixel format 0x01100007; no Mono16 blocks; no 614400-byte payloads."
+    },
+    {
+      "q": "Is visible (YUV422_8) data present?",
+      "a": "No. No GVSP leader with pixel format 0x02100032; no YUV422_8 blocks."
+    },
+    {
+      "q": "Do IR and visible alternate on one stream?",
+      "a": "N/A - neither source is present, so no alternation can be observed. Frame rate is not computable (0 frames)."
+    },
+    {
+      "q": "Which register activates the dual mode, and who writes it?",
+      "a": "Register 0x10a110 = 2 is the dual-mode activation (1=IR only, 2=IR+visible). In THIS capture HALCON's own GVCP session writes it (frame 1109, port 64795) at t=21.6128 and the camera ACKs success (frame 1110). No external process writes it. This contradicts the earlier tv46l-halcon-dual-mode.md finding that HALCON resets it to 0; here HALCON writes 2 directly and it is accepted."
+    },
+    {
+      "q": "What is the exact GVCP sequence HALCON performs?",
+      "a": "Full chronological WRITEREG table below. Summary: CCP 0x0a00=1 @16.3945; GVCP config 0x0954=0 @16.403; GVSP config 0x0960=0x40000000 (64-bit block ID) @16.4047; SCCONF0 0x0d24=0 @16.4058; SCDA0=0xa9fec051 @16.4104; SCP0=0xfd1d @16.4108; SCPS0 negotiation @16.41..17.30 (0x4000xxxx/0xC000xxxx alternating, final ~0x5DC=1500/0x5E0); teardown SCP0/SCDA0=0 @17.30; 0x10a110=2 @21.6128; re-arm SCDA0/SCP0 @21.631; 0x10a104=1 @21.6323; 0x10a108=1 @21.6605; teardown; repeated start/stop cycles @27.97..37.19; final 0x10a108=1 @62.955; CCP release @72.92."
+    },
+    {
+      "q": "How does this compare to the ThermoView capture?",
+      "a": "Both write 0x10a110=2 and both use GVCP code 0x0082 for WRITEREG. ThermoView additionally writes 0x0938 (heartbeat), 0x0d08 SCPD0=0, and the provider/stream config 0x20a134/0x20a138/0x20a148, and it does NOT enable 64-bit block ID (0x0960). HALCON writes 0x0960=0x40000000 (64-bit block ID enabled), 0x0954=0, 0x0d24=0, and never writes 0x20a1xx registers (it only reads them). ThermoView uses SCP0=50554, HALCON SCP0=64797. The decisive difference is behavioral: ThermoView's capture contains 64,542 GVSP image frames (236 blocks); HALCON's capture contains 0."
+    },
+    {
+      "q": "What does HALCON actually expose/return in this session?",
+      "a": "From the app-side report (scripts/tv46l_dual_mode_halcon_test.py, 11:25 run, preopen): HALCON delivers only Mono16 IR frames at ~7.5 FPS (226 IR, 0 visible) even when 0x10a110=2 is written before open. In THIS 12:38 capture HALCON itself wrote 0x10a110=2, but the wire shows zero frames of any format. STEP 11 repo search (tv46l-halcon-dual-mode.md, tv46l_dual_mode_halcon_cam_0004.json) corroborates: HALCON's FLK_TI_StreamDataSourceSelector exposes only IR_Data/VL_Data strings and never surfaces dual-source frames to the app."
+    },
+    {
+      "q": "Why does the camera not stream to HALCON even though 0x10a110=2 is acked?",
+      "a": "Not fully determined from this pcap. Candidate causes, all consistent with the wire: (a) HALCON never writes the provider configuration 0x20a134/0x20a138/0x20a148 that ThermoView writes before dual mode; (b) HALCON enables 64-bit block ID (0x0960=0x40000000) which the camera's dual-source engine may reject while still ACKing the register write; (c) HALCON holds CCP and configures the channel in a way the camera's interleaved mode does not accept (SCPS0 ~1500 with no jumbo, no SCPD0). Any of these would explain the observed start/stop retry loop with no data."
+    },
+    {
+      "q": "What is the recommended next experiment?",
+      "a": "Capture a ThermoView session and a HALCON session back-to-back on the same camera/link with Wireshark, and diff the EXACT WRITEREG/READREG stream (same registers in same order). Specifically: 1) record ThermoView's 0x20a134/0x20a138/0x20a148 values, 2) after writing 0x10a110=2, re-read 0x10a110 (with CCP) to confirm it stays 2, 3) test writing 0x0960=0 (32-bit block ID) on HALCON's channel before enable, 4) test writing the 0x20a1xx provider registers that ThermoView writes. Also test on HALCON whether GVSP config 64-bit block ID is required for its receive path."
+    }
+  ],
+  "gvcp_write_timeline": [
+    {"t_s": 16.394562400, "register": "0x0a00", "name": "CCP", "value": 1},
+    {"t_s": 16.403465400, "register": "0x0954", "name": "GVCP Configuration", "value": 0},
+    {"t_s": 16.404663000, "register": "0x0960", "name": "GVSP Configuration (64-bit block ID)", "value": "0x40000000"},
+    {"t_s": 16.405764300, "register": "0x0d24", "name": "SCCONF0", "value": 0},
+    {"t_s": 16.410446100, "register": "0x0d18", "name": "SCDA0", "value": "0xa9fec051"},
+    {"t_s": 16.410786600, "register": "0x0d00", "name": "SCP0", "value": "0xfd1d (64797)"},
+    {"t_s": "16.41..17.30", "register": "0x0d04", "name": "SCPS0 packet-size negotiation", "value": "0x4000xxxx / 0xC000xxxx alternating; final 0x400005DC/0x400005E0 (~1500)"},
+    {"t_s": 17.297246600, "register": "0x0d04", "name": "SCPS0 final", "value": "0x400005DC"},
+    {"t_s": 17.303888500, "register": "0x0d00", "name": "SCP0 teardown", "value": 0},
+    {"t_s": 17.305499500, "register": "0x0d18", "name": "SCDA0 teardown", "value": 0},
+    {"t_s": 21.612785600, "register": "0x10a110", "name": "DATA SOURCE = IR + VISIBLE (DUAL)", "value": 2},
+    {"t_s": 21.630915200, "register": "0x0d18", "name": "SCDA0 re-arm", "value": "0xa9fec051"},
+    {"t_s": 21.631193500, "register": "0x0d00", "name": "SCP0 re-arm", "value": "0xfd1d (64797)"},
+    {"t_s": 21.632310300, "register": "0x10a104", "name": "stream enable", "value": 1},
+    {"t_s": 21.660469000, "register": "0x10a108", "name": "stream stop/shutdown config", "value": 1},
+    {"t_s": 21.660831500, "register": "0x0d00", "name": "SCP0", "value": 0},
+    {"t_s": 21.661204100, "register": "0x0d18", "name": "SCDA0", "value": 0},
+    {"t_s": "27.97..37.19", "register": "cycle x~14", "name": "SCDA0/SCP0 set, SCSP0 read, stream_keep_alive, 0x10a104=1, 0x10a108=1, SCP0/SCDA0=0", "value": "repeat"},
+    {"t_s": 62.954649000, "register": "0x10a108", "name": "final stream stop", "value": 1},
+    {"t_s": 62.954941200, "register": "0x0d00", "name": "SCP0", "value": 0},
+    {"t_s": 62.955185100, "register": "0x0d18", "name": "SCDA0", "value": 0},
+    {"t_s": 72.921762900, "register": "0x0a00", "name": "CCP release", "value": 0}
+  ],
+  "gvcp_reads_around_dual_write": [
+    {"t_s": 17.816846700, "register": "0x10a110", "value": "0 (before dual write)"},
+    {"t_s": 21.613300000, "register": "0x20a154", "value": "9"},
+    {"t_s": 21.613706100, "register": "0x10c1c4", "value": "1"},
+    {"t_s": 21.614075500, "register": "0x10c1a4", "value": "1"},
+    {"t_s": 21.614379400, "register": "0x10c1a8", "value": "2"},
+    {"t_s": 21.615395300, "register": "0x10c1a0", "value": "1"},
+    {"t_s": 21.615734700, "register": "0x10c120", "value": "1"},
+    {"t_s": 21.617768300, "register": "Heartbeat timeout", "value": "0x0BB8"},
+    {"t_s": 21.618378200, "register": "SCPS0", "value": "~0x05DC"},
+    {"t_s": 21.620113000, "register": "0x20a13c", "value": "0x3B5"},
+    {"t_s": 21.620526100, "register": "0x20a140", "value": "0x96"},
+    {"t_s": 21.620867500, "register": "0x20a144", "value": "0xF4240"}
+  ],
+  "thermoview_comparison": {
+    "common": [
+      "Same camera 169.254.24.69, same PC 169.254.192.81.",
+      "Same GVCP write convention: WRITEREG = 0x0082 in this Wireshark/FLIR decoding.",
+      "Both write 0x10a110=2 for dual mode.",
+      "Both set SCDA0=0xa9fec051 (PC) and hold CCP."
+    ],
+    "thermoview_only": [
+      "Writes 0x0938 (heartbeat timeout) = 0x0BB8",
+      "Writes 0x0d08 (SCPD0 packet delay) = 0",
+      "Writes 0x20a134 (data-source selector) = 0x11 -> 0x01 -> 0x0c",
+      "Writes 0x20a138 = 0x042c",
+      "Writes 0x20a148 = 1 -> 2",
+      "SCP0 = 0xc57a (50554)",
+      "Does NOT write 0x0960 (GVSP config; 32-bit block ID default)",
+      "Delivers 64,542 GVSP image frames / 236 blocks (Mono16 + YUV422_8 alternating) on camera:35530 -> PC:50554"
+    ],
+    "halcon_only": [
+      "Writes 0x0960 = 0x40000000 (GVSP config: 64-bit block ID enabled)",
+      "Writes 0x0954 (GVCP config) = 0",
+      "Writes 0x0d24 (SCCONF0) = 0",
+      "Performs SCPS0 packet-size negotiation (0x4000xxxx/0xC000xxxx)",
+      "Sends 'stream_keep_alive' proprietary keep-alive to camera SCSP0",
+      "SCP0 = 0xfd1d (64797)",
+      "Never writes 0x20a134/0x20a138/0x20a148 (only reads them)",
+      "Delivers ZERO GVSP image frames"
+    ]
+  },
+  "gvsp_stream_evidence": {
+    "gvsp_packet_count": 22,
+    "gvsp_image_blocks": 0,
+    "gvsp_leaders": 0,
+    "gvsp_trailers": 0,
+    "mono16_blocks": 0,
+    "yuv422_blocks": 0,
+    "image_packets_estimated": 0,
+    "keep_alive_packets": 18,
+    "keep_alive_payload": "ASCII 'stream_keep_alive\\0' (26 bytes)",
+    "keep_alive_direction": "PC:64797 -> camera:<SCSP0> (camera's current stream source port)",
+    "negotiation_probes": 4,
+    "negotiation_probe_sizes_payload": [1068, 1332, 1464, 1472],
+    "negotiation_probe_direction": "camera:36696 -> PC:64797",
+    "negotiation_probe_payload": "proprietary; '00 00 00 00 00 00 00 00 f0 47 0a 00 f0 47 0a 00 ...' not a GVSP header",
+    "scsp0_correlation": "keep-alive destination ports equal SCSP0 readback values (36696, 0xA372=41842, 0xB5E1=46561, 0x95AD=38317, ...) - proves keep-alives target the camera's live stream port"
+  },
+  "flows": {
+    "camera": "169.254.24.69 (GVCP :3956), MAC 34:08:e1:db:21:f2",
+    "pc": "169.254.192.81, MAC c4:65:16:99:c0:50",
+    "main_gvcp": "PC:64795 <-> camera:3956 (847 commands + 847 acks)",
+    "other_pc_gvcp_ports": ["64785", "64786", "64791", "64792", "64793", "64794", "60973"],
+    "stream_channel": "camera:<SCSP0> <-> PC:64797 (keep-alive + 4 negotiation probes only)",
+    "unrelated": "192.168.42.50 sent DISCOVERY broadcasts (ignored)"
+  },
+  "protocol_hierarchy": {
+    "frame": 1769,
+    "eth": 1769,
+    "lldp": 10,
+    "ip": 1749,
+    "udp": 1749,
+    "gvcp": 1726,
+    "gvsp": 22,
+    "dhcp": 1,
+    "arp": 10
+  },
+  "gvcp_command_mix": {
+    "READREG_CMD": {"code": "0x0080", "count": 326},
+    "WRITEREG_CMD": {"code": "0x0082", "count": 137},
+    "READMEM_CMD": {"code": "0x0084", "count": 384},
+    "DISCOVERY": {"code": "0x0002", "count": 4}
+  },
+  "frame_length_distribution": [
+    {"len": 42, "count": 5}, {"len": 50, "count": 9}, {"len": 54, "count": 333},
+    {"len": 58, "count": 521}, {"len": 60, "count": 493}, {"len": 70, "count": 1},
+    {"len": 86, "count": 6}, {"len": 102, "count": 2}, {"len": 147, "count": 10},
+    {"len": 298, "count": 9}, {"len": 306, "count": 4}, {"len": 387, "count": 1},
+    {"len": 466, "count": 1}, {"len": 566, "count": 370}, {"len": 1110, "count": 1},
+    {"len": 1374, "count": 1}, {"len": 1506, "count": 1}, {"len": 1514, "count": 1}
+  ],
+  "readmem_targets": [
+    {"range": "0x00000048..0x000000d8", "meaning": "bootstrap register area"},
+    {"range": "0x0000a008..0x0000a304", "meaning": "calibration/provider data"},
+    {"range": "0xff0003fc..0xff02d9fc", "meaning": "GenICam node-map XML (HALCON open_framegrabber)"}
+  ],
+  "interpretation": {
+    "summary": "HALCON opened the camera (node map reads, CCP held), wrote dual-mode register 0x10a110=2 (ACK success), and then entered a ~14-cycle start/stop loop trying to get the stream up. The camera never sent a single GVSP image packet. This pcap is therefore NOT evidence that HALCON can receive interleaved IR/VL data; it is evidence that HALCON ACTIVATES dual mode on the wire but receives nothing.",
+    "why_no_data": "Candidate causes (a) HALCON never writes provider config 0x20a134/0x20a138/0x20a148 that ThermoView uses; (b) 64-bit block ID (0x0960=0x40000000) may not be accepted by the camera's dual-source path despite the ACK; (c) missing SCPD0/heartbeat writes; (d) camera's interleaved engine requires the exact ThermoView write order. All unverified; next experiment list above.",
+    "correction_to_earlier_doc": "tv46l-halcon-dual-mode.md said HALCON's provider resets 0x10a110 to 0 and cannot write it. This capture shows HALCON ITSELF writing 0x10a110=2 successfully (frame 1109/1110). The conclusion 'HALCON cannot receive the dual stream' still holds - but for a different reason: the camera never streams to HALCON even when the register is set by HALCON."
+  }
+}

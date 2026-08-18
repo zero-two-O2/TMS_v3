@@ -1,0 +1,4398 @@
+{
+  "tool": {
+    "name": "tv46l_dual_mode_halcon_test",
+    "version": "1.0.0",
+    "run_utc": "2026-08-18T05:55:12",
+    "camera_ip": "169.254.24.69",
+    "device": "default",
+    "mode": "preopen",
+    "duration_s": 30.0
+  },
+  "verdict": {
+    "dual_mode_on_wire": true,
+    "halcon_received_both": false,
+    "classification": "halcon_single_format_only",
+    "note": "Register was written to dual mode, but the single HALCON handle delivered only Mono16 frames (226 IR frames). HALCON may ignore/reject the YUV422_8 blocks while keeping the IR stream."
+  },
+  "camera": {
+    "spec_version": 2,
+    "ip": "0.6.0.0",
+    "mac": "00:00:00:00:00:00",
+    "vendor": "Process Instruments",
+    "model": "1-26010002@9Hz",
+    "firmware": "",
+    "manufacturer_specific": "",
+    "serial": "0004"
+  },
+  "network": {
+    "camera_ip": "169.254.24.69",
+    "local_ip": "169.254.192.81",
+    "gvcp_port": 3956
+  },
+  "after_halcon_open": {
+    "read_error": "READREG 0x0010a110 status 0x8006"
+  },
+  "summary": {
+    "total_frames": 226,
+    "ir_frames": 226,
+    "visible_frames": 0,
+    "unknown_frames": 0,
+    "timeouts": 0,
+    "errors": 0,
+    "ir_fps": 7.495,
+    "visible_fps": null,
+    "blocks_per_sec": 7.528,
+    "alternating": false,
+    "visible_array_format": null,
+    "first_types": [
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR",
+      "IR"
+    ],
+    "stop_reason": "completed",
+    "elapsed_s": 30.0
+  },
+  "restored": {
+    "restore_ccp_status": 0,
+    "value_before_restore": 0,
+    "restore_write_status": 0,
+    "value_after_restore": 1
+  },
+  "frames": [
+    {
+      "index": 1,
+      "wall": 1787032519.004583,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 6,
+      "grab_s": 0.000463
+    },
+    {
+      "index": 2,
+      "wall": 1787032519.00558,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 7,
+      "grab_s": 0.000314
+    },
+    {
+      "index": 3,
+      "wall": 1787032519.006577,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 8,
+      "grab_s": 0.000319
+    },
+    {
+      "index": 4,
+      "wall": 1787032519.216988,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 24,
+      "grab_s": 0.209804
+    },
+    {
+      "index": 5,
+      "wall": 1787032519.435291,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 26,
+      "grab_s": 0.217083
+    },
+    {
+      "index": 6,
+      "wall": 1787032519.445267,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 27,
+      "grab_s": 0.009932
+    },
+    {
+      "index": 7,
+      "wall": 1787032519.564386,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 28,
+      "grab_s": 0.117508
+    },
+    {
+      "index": 8,
+      "wall": 1787032519.769815,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 29,
+      "grab_s": 0.205215
+    },
+    {
+      "index": 9,
+      "wall": 1787032519.896553,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 30,
+      "grab_s": 0.126078
+    },
+    {
+      "index": 10,
+      "wall": 1787032520.116896,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 33,
+      "grab_s": 0.218731
+    },
+    {
+      "index": 11,
+      "wall": 1787032520.340173,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 34,
+      "grab_s": 0.222516
+    },
+    {
+      "index": 12,
+      "wall": 1787032520.441022,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 35,
+      "grab_s": 0.100078
+    },
+    {
+      "index": 13,
+      "wall": 1787032520.675828,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 37,
+      "grab_s": 0.233883
+    },
+    {
+      "index": 14,
+      "wall": 1787032520.687259,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 38,
+      "grab_s": 0.010267
+    },
+    {
+      "index": 15,
+      "wall": 1787032520.894468,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 39,
+      "grab_s": 0.20592
+    },
+    {
+      "index": 16,
+      "wall": 1787032520.904444,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 40,
+      "grab_s": 0.00929
+    },
+    {
+      "index": 17,
+      "wall": 1787032521.447306,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 44,
+      "grab_s": 0.541737
+    },
+    {
+      "index": 18,
+      "wall": 1787032521.564853,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 45,
+      "grab_s": 0.11731
+    },
+    {
+      "index": 19,
+      "wall": 1787032521.793661,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 48,
+      "grab_s": 0.22707
+    },
+    {
+      "index": 20,
+      "wall": 1787032522.017034,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 49,
+      "grab_s": 0.222572
+    },
+    {
+      "index": 21,
+      "wall": 1787032522.029001,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 50,
+      "grab_s": 0.011632
+    },
+    {
+      "index": 22,
+      "wall": 1787032522.569933,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 54,
+      "grab_s": 0.540415
+    },
+    {
+      "index": 23,
+      "wall": 1787032522.581496,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 55,
+      "grab_s": 0.011076
+    },
+    {
+      "index": 24,
+      "wall": 1787032522.788162,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 56,
+      "grab_s": 0.205202
+    },
+    {
+      "index": 25,
+      "wall": 1787032522.910399,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 57,
+      "grab_s": 0.121982
+    },
+    {
+      "index": 26,
+      "wall": 1787032523.123675,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 59,
+      "grab_s": 0.212195
+    },
+    {
+      "index": 27,
+      "wall": 1787032523.359264,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 61,
+      "grab_s": 0.234345
+    },
+    {
+      "index": 28,
+      "wall": 1787032523.3686,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 62,
+      "grab_s": 0.009033
+    },
+    {
+      "index": 29,
+      "wall": 1787032523.470491,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 63,
+      "grab_s": 0.10067
+    },
+    {
+      "index": 30,
+      "wall": 1787032523.69368,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 64,
+      "grab_s": 0.222341
+    },
+    {
+      "index": 31,
+      "wall": 1787032523.798186,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 65,
+      "grab_s": 0.104342
+    },
+    {
+      "index": 32,
+      "wall": 1787032523.912998,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 66,
+      "grab_s": 0.113295
+    },
+    {
+      "index": 33,
+      "wall": 1787032524.029925,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 67,
+      "grab_s": 0.1168
+    },
+    {
+      "index": 34,
+      "wall": 1787032524.129777,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 68,
+      "grab_s": 0.098935
+    },
+    {
+      "index": 35,
+      "wall": 1787032524.363322,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 70,
+      "grab_s": 0.23257
+    },
+    {
+      "index": 36,
+      "wall": 1787032524.464099,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 71,
+      "grab_s": 0.100005
+    },
+    {
+      "index": 37,
+      "wall": 1787032524.698235,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 73,
+      "grab_s": 0.233875
+    },
+    {
+      "index": 38,
+      "wall": 1787032524.809922,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 75,
+      "grab_s": 0.110745
+    },
+    {
+      "index": 39,
+      "wall": 1787032525.038511,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 76,
+      "grab_s": 0.228138
+    },
+    {
+      "index": 40,
+      "wall": 1787032525.134219,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 77,
+      "grab_s": 0.095131
+    },
+    {
+      "index": 41,
+      "wall": 1787032525.263247,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 79,
+      "grab_s": 0.127719
+    },
+    {
+      "index": 42,
+      "wall": 1787032525.470189,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 80,
+      "grab_s": 0.206852
+    },
+    {
+      "index": 43,
+      "wall": 1787032525.587176,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 81,
+      "grab_s": 0.116541
+    },
+    {
+      "index": 44,
+      "wall": 1787032525.597804,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 82,
+      "grab_s": 0.010124
+    },
+    {
+      "index": 45,
+      "wall": 1787032525.805619,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 83,
+      "grab_s": 0.206855
+    },
+    {
+      "index": 46,
+      "wall": 1787032525.817426,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 84,
+      "grab_s": 0.010294
+    },
+    {
+      "index": 47,
+      "wall": 1787032526.040327,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 85,
+      "grab_s": 0.221836
+    },
+    {
+      "index": 48,
+      "wall": 1787032526.050561,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 86,
+      "grab_s": 0.009949
+    },
+    {
+      "index": 49,
+      "wall": 1787032526.151533,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 87,
+      "grab_s": 0.099948
+    },
+    {
+      "index": 50,
+      "wall": 1787032526.376298,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 88,
+      "grab_s": 0.224091
+    },
+    {
+      "index": 51,
+      "wall": 1787032526.386017,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 89,
+      "grab_s": 0.009357
+    },
+    {
+      "index": 52,
+      "wall": 1787032526.710952,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 91,
+      "grab_s": 0.324313
+    },
+    {
+      "index": 53,
+      "wall": 1787032526.723609,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 92,
+      "grab_s": 0.012091
+    },
+    {
+      "index": 54,
+      "wall": 1787032526.822275,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 93,
+      "grab_s": 0.097809
+    },
+    {
+      "index": 55,
+      "wall": 1787032527.044972,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 94,
+      "grab_s": 0.222934
+    },
+    {
+      "index": 56,
+      "wall": 1787032527.055686,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 95,
+      "grab_s": 0.009804
+    },
+    {
+      "index": 57,
+      "wall": 1787032527.157109,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 96,
+      "grab_s": 0.10049
+    },
+    {
+      "index": 58,
+      "wall": 1787032527.391184,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 98,
+      "grab_s": 0.233949
+    },
+    {
+      "index": 59,
+      "wall": 1787032527.49187,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 99,
+      "grab_s": 0.100322
+    },
+    {
+      "index": 60,
+      "wall": 1787032527.715742,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 100,
+      "grab_s": 0.223516
+    },
+    {
+      "index": 61,
+      "wall": 1787032527.726862,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 101,
+      "grab_s": 0.010145
+    },
+    {
+      "index": 62,
+      "wall": 1787032527.934785,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 102,
+      "grab_s": 0.207162
+    },
+    {
+      "index": 63,
+      "wall": 1787032527.946117,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 103,
+      "grab_s": 0.010585
+    },
+    {
+      "index": 64,
+      "wall": 1787032528.162474,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 105,
+      "grab_s": 0.216675
+    },
+    {
+      "index": 65,
+      "wall": 1787032528.387546,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 106,
+      "grab_s": 0.223494
+    },
+    {
+      "index": 66,
+      "wall": 1787032528.495568,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 107,
+      "grab_s": 0.107653
+    },
+    {
+      "index": 67,
+      "wall": 1787032528.605459,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 108,
+      "grab_s": 0.109535
+    },
+    {
+      "index": 68,
+      "wall": 1787032528.735039,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 110,
+      "grab_s": 0.128108
+    },
+    {
+      "index": 69,
+      "wall": 1787032528.940062,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 111,
+      "grab_s": 0.204786
+    },
+    {
+      "index": 70,
+      "wall": 1787032529.068667,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 113,
+      "grab_s": 0.127297
+    },
+    {
+      "index": 71,
+      "wall": 1787032529.277477,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 114,
+      "grab_s": 0.207769
+    },
+    {
+      "index": 72,
+      "wall": 1787032529.393381,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 115,
+      "grab_s": 0.115174
+    },
+    {
+      "index": 73,
+      "wall": 1787032529.504498,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 117,
+      "grab_s": 0.109892
+    },
+    {
+      "index": 74,
+      "wall": 1787032529.828686,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 119,
+      "grab_s": 0.324007
+    },
+    {
+      "index": 75,
+      "wall": 1787032529.957161,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 121,
+      "grab_s": 0.127538
+    },
+    {
+      "index": 76,
+      "wall": 1787032530.074451,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 122,
+      "grab_s": 0.116732
+    },
+    {
+      "index": 77,
+      "wall": 1787032530.174159,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 123,
+      "grab_s": 0.100003
+    },
+    {
+      "index": 78,
+      "wall": 1787032530.399329,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 124,
+      "grab_s": 0.223909
+    },
+    {
+      "index": 79,
+      "wall": 1787032530.50403,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 126,
+      "grab_s": 0.104097
+    },
+    {
+      "index": 80,
+      "wall": 1787032530.621326,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 127,
+      "grab_s": 0.116649
+    },
+    {
+      "index": 81,
+      "wall": 1787032530.744978,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 128,
+      "grab_s": 0.122471
+    },
+    {
+      "index": 82,
+      "wall": 1787032531.029564,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 129,
+      "grab_s": 0.284464
+    },
+    {
+      "index": 83,
+      "wall": 1787032531.2605,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 130,
+      "grab_s": 0.230962
+    },
+    {
+      "index": 84,
+      "wall": 1787032531.354641,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 131,
+      "grab_s": 0.09355
+    },
+    {
+      "index": 85,
+      "wall": 1787032531.482403,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 133,
+      "grab_s": 0.12726
+    },
+    {
+      "index": 86,
+      "wall": 1787032531.600473,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 134,
+      "grab_s": 0.117326
+    },
+    {
+      "index": 87,
+      "wall": 1787032531.805596,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 135,
+      "grab_s": 0.204443
+    },
+    {
+      "index": 88,
+      "wall": 1787032531.929213,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 137,
+      "grab_s": 0.123336
+    },
+    {
+      "index": 89,
+      "wall": 1787032532.035575,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 138,
+      "grab_s": 0.105612
+    },
+    {
+      "index": 90,
+      "wall": 1787032532.152749,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 139,
+      "grab_s": 0.116725
+    },
+    {
+      "index": 91,
+      "wall": 1787032532.269931,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 140,
+      "grab_s": 0.116514
+    },
+    {
+      "index": 92,
+      "wall": 1787032532.37115,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 141,
+      "grab_s": 0.100289
+    },
+    {
+      "index": 93,
+      "wall": 1787032532.595982,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 142,
+      "grab_s": 0.22453
+    },
+    {
+      "index": 94,
+      "wall": 1787032532.605138,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 143,
+      "grab_s": 0.008617
+    },
+    {
+      "index": 95,
+      "wall": 1787032532.813643,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 144,
+      "grab_s": 0.20824
+    },
+    {
+      "index": 96,
+      "wall": 1787032532.822991,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 145,
+      "grab_s": 0.008973
+    },
+    {
+      "index": 97,
+      "wall": 1787032532.945533,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 146,
+      "grab_s": 0.121672
+    },
+    {
+      "index": 98,
+      "wall": 1787032533.148263,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 147,
+      "grab_s": 0.201572
+    },
+    {
+      "index": 99,
+      "wall": 1787032533.266104,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 148,
+      "grab_s": 0.117111
+    },
+    {
+      "index": 100,
+      "wall": 1787032533.276679,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 149,
+      "grab_s": 0.010215
+    },
+    {
+      "index": 101,
+      "wall": 1787032533.377316,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 150,
+      "grab_s": 0.100551
+    },
+    {
+      "index": 102,
+      "wall": 1787032533.488403,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 151,
+      "grab_s": 0.110006
+    },
+    {
+      "index": 103,
+      "wall": 1787032533.605748,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 152,
+      "grab_s": 0.116809
+    },
+    {
+      "index": 104,
+      "wall": 1787032533.705649,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 153,
+      "grab_s": 0.100052
+    },
+    {
+      "index": 105,
+      "wall": 1787032534.165152,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 157,
+      "grab_s": 0.458038
+    },
+    {
+      "index": 106,
+      "wall": 1787032534.281976,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 158,
+      "grab_s": 0.117026
+    },
+    {
+      "index": 107,
+      "wall": 1787032534.383236,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 159,
+      "grab_s": 0.099852
+    },
+    {
+      "index": 108,
+      "wall": 1787032534.606767,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 160,
+      "grab_s": 0.22334
+    },
+    {
+      "index": 109,
+      "wall": 1787032534.617346,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 161,
+      "grab_s": 0.010035
+    },
+    {
+      "index": 110,
+      "wall": 1787032534.717759,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 162,
+      "grab_s": 0.100102
+    },
+    {
+      "index": 111,
+      "wall": 1787032534.943094,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 163,
+      "grab_s": 0.223606
+    },
+    {
+      "index": 112,
+      "wall": 1787032534.952118,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 164,
+      "grab_s": 0.008913
+    },
+    {
+      "index": 113,
+      "wall": 1787032535.159694,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 165,
+      "grab_s": 0.207088
+    },
+    {
+      "index": 114,
+      "wall": 1787032535.170939,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 166,
+      "grab_s": 0.010122
+    },
+    {
+      "index": 115,
+      "wall": 1787032535.37877,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 167,
+      "grab_s": 0.207157
+    },
+    {
+      "index": 116,
+      "wall": 1787032535.38856,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 168,
+      "grab_s": 0.009484
+    },
+    {
+      "index": 117,
+      "wall": 1787032535.612042,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 169,
+      "grab_s": 0.223657
+    },
+    {
+      "index": 118,
+      "wall": 1787032535.623338,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 170,
+      "grab_s": 0.01025
+    },
+    {
+      "index": 119,
+      "wall": 1787032535.951306,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 172,
+      "grab_s": 0.326012
+    },
+    {
+      "index": 120,
+      "wall": 1787032536.048732,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 173,
+      "grab_s": 0.097436
+    },
+    {
+      "index": 121,
+      "wall": 1787032536.165437,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 174,
+      "grab_s": 0.116263
+    },
+    {
+      "index": 122,
+      "wall": 1787032536.177544,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 175,
+      "grab_s": 0.010772
+    },
+    {
+      "index": 123,
+      "wall": 1787032536.294191,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 176,
+      "grab_s": 0.115921
+    },
+    {
+      "index": 124,
+      "wall": 1787032536.394081,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 177,
+      "grab_s": 0.100027
+    },
+    {
+      "index": 125,
+      "wall": 1787032536.621296,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 178,
+      "grab_s": 0.22635
+    },
+    {
+      "index": 126,
+      "wall": 1787032536.718832,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 179,
+      "grab_s": 0.097274
+    },
+    {
+      "index": 127,
+      "wall": 1787032536.729342,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 180,
+      "grab_s": 0.01007
+    },
+    {
+      "index": 128,
+      "wall": 1787032536.846665,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 181,
+      "grab_s": 0.116712
+    },
+    {
+      "index": 129,
+      "wall": 1787032537.053793,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 182,
+      "grab_s": 0.206734
+    },
+    {
+      "index": 130,
+      "wall": 1787032537.174005,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 183,
+      "grab_s": 0.119385
+    },
+    {
+      "index": 131,
+      "wall": 1787032537.289317,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 184,
+      "grab_s": 0.114892
+    },
+    {
+      "index": 132,
+      "wall": 1787032537.392942,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 185,
+      "grab_s": 0.101985
+    },
+    {
+      "index": 133,
+      "wall": 1787032537.50693,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 186,
+      "grab_s": 0.114395
+    },
+    {
+      "index": 134,
+      "wall": 1787032537.517819,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 187,
+      "grab_s": 0.009619
+    },
+    {
+      "index": 135,
+      "wall": 1787032537.635973,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 188,
+      "grab_s": 0.117377
+    },
+    {
+      "index": 136,
+      "wall": 1787032537.735948,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 189,
+      "grab_s": 0.099156
+    },
+    {
+      "index": 137,
+      "wall": 1787032537.960732,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 190,
+      "grab_s": 0.224561
+    },
+    {
+      "index": 138,
+      "wall": 1787032537.970165,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 191,
+      "grab_s": 0.008752
+    },
+    {
+      "index": 139,
+      "wall": 1787032538.177947,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 192,
+      "grab_s": 0.206907
+    },
+    {
+      "index": 140,
+      "wall": 1787032538.295227,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 193,
+      "grab_s": 0.116794
+    },
+    {
+      "index": 141,
+      "wall": 1787032538.395234,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 194,
+      "grab_s": 0.099875
+    },
+    {
+      "index": 142,
+      "wall": 1787032538.406204,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 195,
+      "grab_s": 0.009922
+    },
+    {
+      "index": 143,
+      "wall": 1787032538.630661,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 196,
+      "grab_s": 0.223648
+    },
+    {
+      "index": 144,
+      "wall": 1787032538.641234,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 197,
+      "grab_s": 0.009927
+    },
+    {
+      "index": 145,
+      "wall": 1787032538.850581,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 198,
+      "grab_s": 0.206607
+    },
+    {
+      "index": 146,
+      "wall": 1787032538.965323,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 199,
+      "grab_s": 0.114978
+    },
+    {
+      "index": 147,
+      "wall": 1787032539.067714,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 200,
+      "grab_s": 0.101233
+    },
+    {
+      "index": 148,
+      "wall": 1787032539.183814,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 201,
+      "grab_s": 0.116481
+    },
+    {
+      "index": 149,
+      "wall": 1787032539.311091,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 203,
+      "grab_s": 0.12674
+    },
+    {
+      "index": 150,
+      "wall": 1787032539.529569,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 205,
+      "grab_s": 0.21725
+    },
+    {
+      "index": 151,
+      "wall": 1787032539.647414,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 206,
+      "grab_s": 0.117122
+    },
+    {
+      "index": 152,
+      "wall": 1787032539.747463,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 207,
+      "grab_s": 0.0988
+    },
+    {
+      "index": 153,
+      "wall": 1787032540.083805,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 209,
+      "grab_s": 0.335894
+    },
+    {
+      "index": 154,
+      "wall": 1787032540.192834,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 210,
+      "grab_s": 0.10914
+    },
+    {
+      "index": 155,
+      "wall": 1787032540.203562,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 211,
+      "grab_s": 0.009854
+    },
+    {
+      "index": 156,
+      "wall": 1787032540.316786,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 212,
+      "grab_s": 0.113008
+    },
+    {
+      "index": 157,
+      "wall": 1787032540.426454,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 213,
+      "grab_s": 0.108351
+    },
+    {
+      "index": 158,
+      "wall": 1787032540.538804,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 214,
+      "grab_s": 0.112013
+    },
+    {
+      "index": 159,
+      "wall": 1787032540.652542,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 215,
+      "grab_s": 0.113366
+    },
+    {
+      "index": 160,
+      "wall": 1787032540.859789,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 216,
+      "grab_s": 0.206825
+    },
+    {
+      "index": 161,
+      "wall": 1787032540.977978,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 217,
+      "grab_s": 0.116674
+    },
+    {
+      "index": 162,
+      "wall": 1787032540.987934,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 218,
+      "grab_s": 0.009319
+    },
+    {
+      "index": 163,
+      "wall": 1787032541.093913,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 219,
+      "grab_s": 0.104533
+    },
+    {
+      "index": 164,
+      "wall": 1787032541.20734,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 220,
+      "grab_s": 0.113115
+    },
+    {
+      "index": 165,
+      "wall": 1787032541.323744,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 221,
+      "grab_s": 0.115958
+    },
+    {
+      "index": 166,
+      "wall": 1787032541.535179,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 222,
+      "grab_s": 0.210886
+    },
+    {
+      "index": 167,
+      "wall": 1787032541.649448,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 223,
+      "grab_s": 0.11318
+    },
+    {
+      "index": 168,
+      "wall": 1787032541.750031,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 224,
+      "grab_s": 0.099271
+    },
+    {
+      "index": 169,
+      "wall": 1787032541.867208,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 225,
+      "grab_s": 0.11706
+    },
+    {
+      "index": 170,
+      "wall": 1787032541.9835,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 226,
+      "grab_s": 0.115477
+    },
+    {
+      "index": 171,
+      "wall": 1787032542.201406,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 228,
+      "grab_s": 0.217085
+    },
+    {
+      "index": 172,
+      "wall": 1787032542.2199,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 229,
+      "grab_s": 0.018762
+    },
+    {
+      "index": 173,
+      "wall": 1787032542.418683,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 230,
+      "grab_s": 0.197868
+    },
+    {
+      "index": 174,
+      "wall": 1787032542.538438,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 231,
+      "grab_s": 0.118258
+    },
+    {
+      "index": 175,
+      "wall": 1787032542.658709,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 232,
+      "grab_s": 0.120029
+    },
+    {
+      "index": 176,
+      "wall": 1787032542.756539,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 233,
+      "grab_s": 0.096683
+    },
+    {
+      "index": 177,
+      "wall": 1787032542.764536,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 234,
+      "grab_s": 0.007471
+    },
+    {
+      "index": 178,
+      "wall": 1787032542.882746,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 235,
+      "grab_s": 0.116929
+    },
+    {
+      "index": 179,
+      "wall": 1787032542.999362,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 236,
+      "grab_s": 0.116784
+    },
+    {
+      "index": 180,
+      "wall": 1787032543.207469,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 237,
+      "grab_s": 0.207472
+    },
+    {
+      "index": 181,
+      "wall": 1787032543.424806,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 239,
+      "grab_s": 0.216962
+    },
+    {
+      "index": 182,
+      "wall": 1787032543.553336,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 241,
+      "grab_s": 0.127996
+    },
+    {
+      "index": 183,
+      "wall": 1787032543.760334,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 242,
+      "grab_s": 0.206066
+    },
+    {
+      "index": 184,
+      "wall": 1787032543.770722,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 243,
+      "grab_s": 0.01039
+    },
+    {
+      "index": 185,
+      "wall": 1787032543.994898,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 244,
+      "grab_s": 0.223264
+    },
+    {
+      "index": 186,
+      "wall": 1787032544.006289,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 245,
+      "grab_s": 0.01027
+    },
+    {
+      "index": 187,
+      "wall": 1787032544.106076,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 246,
+      "grab_s": 0.100073
+    },
+    {
+      "index": 188,
+      "wall": 1787032544.331128,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 247,
+      "grab_s": 0.223704
+    },
+    {
+      "index": 189,
+      "wall": 1787032544.341328,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 248,
+      "grab_s": 0.010328
+    },
+    {
+      "index": 190,
+      "wall": 1787032544.441469,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 249,
+      "grab_s": 0.099157
+    },
+    {
+      "index": 191,
+      "wall": 1787032544.666622,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 250,
+      "grab_s": 0.224094
+    },
+    {
+      "index": 192,
+      "wall": 1787032544.675797,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 251,
+      "grab_s": 0.009524
+    },
+    {
+      "index": 193,
+      "wall": 1787032545.000582,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 253,
+      "grab_s": 0.324147
+    },
+    {
+      "index": 194,
+      "wall": 1787032545.010731,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 254,
+      "grab_s": 0.009857
+    },
+    {
+      "index": 195,
+      "wall": 1787032545.112035,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 255,
+      "grab_s": 0.100116
+    },
+    {
+      "index": 196,
+      "wall": 1787032545.229288,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 256,
+      "grab_s": 0.116809
+    },
+    {
+      "index": 197,
+      "wall": 1787032545.437541,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 257,
+      "grab_s": 0.208158
+    },
+    {
+      "index": 198,
+      "wall": 1787032545.448347,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 258,
+      "grab_s": 0.009345
+    },
+    {
+      "index": 199,
+      "wall": 1787032545.67219,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 259,
+      "grab_s": 0.223345
+    },
+    {
+      "index": 200,
+      "wall": 1787032545.772146,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 260,
+      "grab_s": 0.100212
+    },
+    {
+      "index": 201,
+      "wall": 1787032546.006613,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 262,
+      "grab_s": 0.233792
+    },
+    {
+      "index": 202,
+      "wall": 1787032546.016987,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 263,
+      "grab_s": 0.009578
+    },
+    {
+      "index": 203,
+      "wall": 1787032546.118186,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 264,
+      "grab_s": 0.100945
+    },
+    {
+      "index": 204,
+      "wall": 1787032546.235536,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 265,
+      "grab_s": 0.116303
+    },
+    {
+      "index": 205,
+      "wall": 1787032546.352169,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 266,
+      "grab_s": 0.116765
+    },
+    {
+      "index": 206,
+      "wall": 1787032546.45364,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 267,
+      "grab_s": 0.100172
+    },
+    {
+      "index": 207,
+      "wall": 1787032546.570448,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 268,
+      "grab_s": 0.117022
+    },
+    {
+      "index": 208,
+      "wall": 1787032546.789666,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 270,
+      "grab_s": 0.217755
+    },
+    {
+      "index": 209,
+      "wall": 1787032547.012604,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 271,
+      "grab_s": 0.223285
+    },
+    {
+      "index": 210,
+      "wall": 1787032547.023014,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 272,
+      "grab_s": 0.009767
+    },
+    {
+      "index": 211,
+      "wall": 1787032547.235811,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 273,
+      "grab_s": 0.211622
+    },
+    {
+      "index": 212,
+      "wall": 1787032547.351284,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 274,
+      "grab_s": 0.114729
+    },
+    {
+      "index": 213,
+      "wall": 1787032547.450484,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 275,
+      "grab_s": 0.098602
+    },
+    {
+      "index": 214,
+      "wall": 1787032547.565895,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 276,
+      "grab_s": 0.115317
+    },
+    {
+      "index": 215,
+      "wall": 1787032547.576874,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 277,
+      "grab_s": 0.010279
+    },
+    {
+      "index": 216,
+      "wall": 1787032547.784217,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 278,
+      "grab_s": 0.206591
+    },
+    {
+      "index": 217,
+      "wall": 1787032547.794624,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 279,
+      "grab_s": 0.009805
+    },
+    {
+      "index": 218,
+      "wall": 1787032548.018437,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 280,
+      "grab_s": 0.223398
+    },
+    {
+      "index": 219,
+      "wall": 1787032548.237993,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 282,
+      "grab_s": 0.219474
+    },
+    {
+      "index": 220,
+      "wall": 1787032548.353721,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 283,
+      "grab_s": 0.114744
+    },
+    {
+      "index": 221,
+      "wall": 1787032548.364743,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 284,
+      "grab_s": 0.009778
+    },
+    {
+      "index": 222,
+      "wall": 1787032548.465698,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 285,
+      "grab_s": 0.100237
+    },
+    {
+      "index": 223,
+      "wall": 1787032548.688962,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 286,
+      "grab_s": 0.222813
+    },
+    {
+      "index": 224,
+      "wall": 1787032548.700121,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 287,
+      "grab_s": 0.010092
+    },
+    {
+      "index": 225,
+      "wall": 1787032548.801057,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 288,
+      "grab_s": 0.099996
+    },
+    {
+      "index": 226,
+      "wall": 1787032549.024262,
+      "kind": "frame",
+      "image_type": "IR",
+      "pixel_format_id": 17825799,
+      "pixel_format_name": "Mono16",
+      "shape": [
+        480,
+        640
+      ],
+      "width": 640,
+      "height": 480,
+      "channels": 1,
+      "dtype": "uint16",
+      "byte_count": 614400,
+      "frameid": 289,
+      "grab_s": 0.223652
+    }
+  ],
+  "baseline": {
+    "index": 0,
+    "wall": 1787032519.003609,
+    "mono": 507374.85514,
+    "kind": "frame",
+    "image_type": "IR",
+    "pixel_format_id": 17825799,
+    "pixel_format_name": "Mono16",
+    "shape": [
+      480,
+      640
+    ],
+    "width": 640,
+    "height": 480,
+    "channels": 1,
+    "dtype": "uint16",
+    "byte_count": 614400,
+    "frameid": 4,
+    "grab_s": 0.001143
+  }
+}
