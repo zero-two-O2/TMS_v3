@@ -1,0 +1,44 @@
+{
+  "tool": {
+    "name": "tv46l_dual_stream_probe",
+    "version": "1.0.0",
+    "run_utc": "2026-08-18T03:56:03",
+    "device_requested": "3408e1db21f2_FlukeProcessInstruments_TV46L1260100029Hz",
+    "ip_requested": ""
+  },
+  "verdict": {
+    "simultaneous_dual_stream": null,
+    "classification": "second_handle_failed",
+    "stop_condition": "SIMULTANEOUS DUAL-STREAM CAPABILITY UNRESOLVED",
+    "note": "visible handle open failed for all candidates: '169.254.24.69': HALCON error #5312: Image acquisition: device cannot be initialized: No device matching the specified device string could be found and/or opened.\n(FGOpen:10938); '3408e1db21f2_FlukeProcessInstruments_TV46L1260100029Hz': HALCON error #5312: Image acquisition: device cannot be initialized: No device matching the specified device string could be found and/or opened.\n(FGOpen:10938) (HALCON refuses a second connection to the same camera; V2 observed the same and fell back to time-slicing)"
+  },
+  "ir_baseline": {
+    "shape": [
+      480,
+      640
+    ],
+    "nbytes": 614400,
+    "expected_ir_bytes": 614400,
+    "dtype": "uint16"
+  },
+  "multipart": {
+    "ir": {
+      "image_contents": [
+        "image"
+      ],
+      "image_source_id": [
+        -1
+      ],
+      "image_region_id": [
+        -1
+      ],
+      "image_purpose_id": [
+        -1
+      ]
+    }
+  },
+  "restored": {
+    "stream_source_selector": "IR_Data",
+    "bits_per_channel": 16
+  }
+}
