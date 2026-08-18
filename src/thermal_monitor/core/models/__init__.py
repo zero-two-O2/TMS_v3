@@ -1,17 +1,11 @@
-"""Core domain: lifecycle, state, shared models, logging, validated configuration."""
+"""Core domain models package.
 
-from thermal_monitor.core.modes import (
-    ApplicationMode,
-    ModeCapabilities,
-    ModeManager,
-    ModeState,
-    TransitionError,
-)
+Exports grouped models for camera, inspection, and system domains.
+"""
 
-from thermal_monitor.core.models import (
-    # Camera
-    CameraConnectionState,
+from thermal_monitor.core.models.camera import (
     CameraConfig,
+    CameraConnectionState,
     CameraIdentity,
     CameraInfo,
     CameraStatus,
@@ -19,7 +13,9 @@ from thermal_monitor.core.models import (
     PTZLimits,
     PTZMode,
     PTZPosition,
-    # Inspection
+)
+
+from thermal_monitor.core.models.inspection import (
     AlarmCondition,
     AlarmEvent,
     AlarmRule,
@@ -34,7 +30,9 @@ from thermal_monitor.core.models import (
     ROIType,
     TemperatureLimits,
     TemperatureUnit,
-    # System
+)
+
+from thermal_monitor.core.models.system import (
     ApplicationState,
     RecordingConfig,
     RecordingMetadata,
@@ -45,12 +43,6 @@ from thermal_monitor.core.models import (
 )
 
 __all__ = [
-    # Modes
-    "ApplicationMode",
-    "ModeCapabilities",
-    "ModeManager",
-    "ModeState",
-    "TransitionError",
     # Camera
     "CameraConnectionState",
     "CameraConfig",
