@@ -442,10 +442,17 @@ class GPUTemperatureConverter:
         if self._cp is None:
             return None
         try:
-            name = self._cp.cuda.Device(self._device_id).name()
+            # Use runtime API to get device properties (works across CuPy versions)
+            props = self._cp.cuda.runtime.getDeviceProperties(self._device_id)
+            name = props.name
             return name.decode() if isinstance(name, bytes) else name
         except Exception:
-            return None
+            try:
+                # Fallback: use device attributes
+                dev = self._cp.cuda.Device(self._device_id)
+                return f"CUDA Device {dev.id} (CC {dev.compute_capability})"
+            except Exception:
+                return f"CUDA Device {self._device_id}"
 
     def get_loaded_cameras(self) -> list[str]:
         """Get list of camera IDs with loaded LUTs."""

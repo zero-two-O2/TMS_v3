@@ -191,6 +191,97 @@ def benchmark_gpu_conversion(
     return results
 
 
+def run_multi_camera_gpu_benchmark(
+    converter: GPUTemperatureConverter,
+    frames: List[np.ndarray],
+    lut: np.ndarray,
+    n_frames: int = 100,
+) -> None:
+    """Run concurrent multi-camera GPU benchmark.
+    
+    Loads LUTs for 1, 4, 8 cameras and processes frames concurrently
+    to measure real throughput and verify LUT isolation.
+    """
+    cp = converter._cp
+    test_frames = frames[:min(n_frames, len(frames))]
+    
+    for n_cams in [1, 4, 8]:
+        print(f"\n--- {n_cams} Camera(s) Concurrent ---")
+        
+        # Create distinct LUTs for each camera
+        luts = []
+        for i in range(n_cams):
+            # Slightly different scaling to verify isolation
+            scale = 0.01 + i * 0.005  # 0.01, 0.015, 0.02, ...
+            camera_lut = np.arange(65536, dtype=np.float32) * scale
+            camera_id = f"bench_cam_{i}"
+            converter.load_lut(camera_id, camera_lut)
+            luts.append((camera_id, camera_lut, scale))
+        
+        # Warmup
+        for frame in test_frames[:10]:
+            for camera_id, camera_lut, _ in luts:
+                _ = converter.raw_to_temperature(
+                    raw_data=frame,
+                    calibration=camera_lut,
+                    emissivity=1.0, ambient_temp=25.0, distance=1.0,
+                    humidity=50.0, reflected_temp=25.0,
+                    camera_id=camera_id
+                )
+        cp.cuda.Stream.null.synchronize()
+        
+        # Benchmark concurrent processing
+        # Process frames round-robin across cameras
+        total_start = time.perf_counter()
+        frame_count = 0
+        
+        for frame in test_frames:
+            for camera_id, camera_lut, scale in luts:
+                # Time the full conversion
+                start = time.perf_counter()
+                result = converter.raw_to_temperature(
+                    raw_data=frame,
+                    calibration=camera_lut,
+                    emissivity=1.0, ambient_temp=25.0, distance=1.0,
+                    humidity=50.0, reflected_temp=25.0,
+                    camera_id=camera_id
+                )
+                cp.cuda.Stream.null.synchronize()
+                elapsed = (time.perf_counter() - start) * 1000
+                
+                # Verify correctness: check that the correct LUT was used
+                expected_temp = camera_lut[frame.flat[0]]  # First pixel
+                actual_temp = result.flat[0]
+                if not np.isnan(expected_temp) and not np.isnan(actual_temp):
+                    diff = abs(actual_temp - expected_temp)
+                    if diff > 1e-4:
+                        print(f"  WARNING: Camera {camera_id} LUT mismatch! "
+                              f"Expected {expected_temp:.3f}, got {actual_temp:.3f}")
+                
+                frame_count += 1
+        
+        total_elapsed = (time.perf_counter() - total_start) * 1000
+        mean_per_conversion = total_elapsed / frame_count
+        aggregate_fps = 1000.0 / mean_per_conversion if mean_per_conversion > 0 else 0
+        per_camera_fps = aggregate_fps / n_cams
+        
+        print(f"  Total conversions: {frame_count}")
+        print(f"  Total time: {total_elapsed:.2f} ms")
+        print(f"  Mean per conversion: {mean_per_conversion:.3f} ms")
+        print(f"  Aggregate throughput: {aggregate_fps:.1f} FPS")
+        print(f"  Per-camera throughput: {per_camera_fps:.1f} FPS")
+        
+        # Verify each camera's LUT is isolated
+        print(f"  Loaded cameras: {converter.get_loaded_cameras()}")
+        
+        # Release test LUTs
+        for camera_id, _, _ in luts:
+            converter.release(camera_id)
+        
+        # Reload default LUT for subsequent tests
+        converter.load_lut("__default__", lut)
+
+
 def calculate_stats(times_ms: List[float]) -> Dict[str, float]:
     """Calculate statistics from timing measurements."""
     if not times_ms:
@@ -387,6 +478,12 @@ def main():
                 print(f"    D2H:   {d2h_mean/total_mean*100:.1f}%")
             else:
                 print(f"GPU Benchmark failed: {gpu_results['error']}")
+        
+        # Multi-camera concurrent GPU benchmark
+        print("\n" + "=" * 70)
+        print("MULTI-CAMERA CONCURRENT GPU BENCHMARK")
+        print("=" * 70)
+        run_multi_camera_gpu_benchmark(gpu_converter, frames, lut)
     else:
         print("\n" + "=" * 70)
         print("GPU BENCHMARKS: SKIPPED (GPU not available on this machine)")
