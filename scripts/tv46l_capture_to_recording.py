@@ -232,6 +232,31 @@ class HalconGrabber:
             0,
             -1,
         )
+        # Proven single-source recipe: force IR_Data at 16 bits.  HALCON's
+        # provider picks the source on open (observed defaulting to VL_Data);
+        # explicitly selecting IR_Data is required to keep the stream on IR.
+        try:
+            ha.set_framegrabber_param(self.fg, "FLK_TI_StreamDataSourceSelector", "IR_Data")
+            ha.set_framegrabber_param(self.fg, "bits_per_channel", 16)
+        except Exception:
+            try:
+                ha.close_framegrabber(self.fg)
+            except Exception:
+                pass
+            self.fg = None
+            raise
+        # Proven transport params: the hardware probe measured 0 lost packets
+        # with a 1 MiB receive socket and 8 buffers (the capture default lost
+        # 2122 packets / 25 incomplete blocks in a 5 s run).
+        for name, value in (
+            ("[Stream]DeviceStreamChannelNegotiatePacketSize", 1),
+            ("[Stream]GevStreamReceiveSocketSize", 1048576),
+            ("num_buffers", 8),
+        ):
+            try:
+                ha.set_framegrabber_param(self.fg, name, value)
+            except Exception:
+                pass
         # Start acquisition
         ha.grab_image_start(self.fg, -1)
 
@@ -401,11 +426,21 @@ class CaptureSession:
             if val != VALUE_DUAL:
                 print("  WARNING: Dual mode register not set to 2!")
 
-            # Enable stream
-            self.gvcp.stream_enable(True)
-            print("  Stream enabled")
+            # Release CCP BEFORE opening HALCON.  Holding CCP while HALCON's
+            # GigEVision2 provider initializes makes HALCON fail with error
+            # 5312 'device cannot be initialized' (verified on hardware
+            # 2026-08-19).  HALCON re-acquires CCP itself on open.
+            try:
+                self.gvcp.release_ccp()
+                print("  CCP released (before HALCON open)")
+            except Exception as exc:
+                print(f"  CCP release warning: {exc}")
 
-            # Open HALCON grabber
+            # Open HALCON grabber.
+            # NOTE: do NOT write stream_enable before HALCON open -- HALCON's
+            # GigEVision2 provider configures the stream channel itself and a
+            # pre-armed external stream (0x10a104=1) breaks device init with
+            # HALCON error 5312 (verified on hardware 2026-08-19).
             print(f"Opening HALCON device '{self.device}'...")
             self.grabber = HalconGrabber(self.device)
             self.grabber.open()
@@ -421,6 +456,7 @@ class CaptureSession:
 
         except Exception as exc:
             print(f"Setup failed: {exc}")
+            self._restore_camera()
             return False
 
     def _create_writer(self) -> None:
@@ -635,26 +671,13 @@ class CaptureSession:
             self.writer.finalize()
             print(f"Recording finalized: {self.recording_dir}")
 
+        # Close HALCON first: it releases the camera's control-channel
+        # privilege, making the register restore possible.
         if self.grabber:
             self.grabber.close()
             print("HALCON grabber closed")
 
-        if self.gvcp:
-            # Always restore IR-only mode
-            print("Restoring camera to IR-only mode...")
-            try:
-                self.gvcp.disable_dual_mode()
-                val = self.gvcp.read_register(REGISTER_DATA_SOURCE)
-                print(f"  Register 0x10a110 = {val} (expected 1)")
-            except Exception as exc:
-                print(f"  Restore warning: {exc}")
-            try:
-                self.gvcp.stream_enable(False)
-            except Exception:
-                pass
-            self.gvcp.release_ccp()
-            self.gvcp.close()
-            print("GVCP connection closed")
+        self._restore_camera()
 
         # Summary
         duration = (self.end_time or time.time()) - (self.start_time or time.time())
@@ -669,6 +692,42 @@ class CaptureSession:
         print(f"Packet stats:      {self.packet_stats}")
         if self.recording_dir:
             print(f"Recording:         {self.recording_dir}")
+
+    def _restore_camera(self) -> None:
+        """Restore the camera to IR-only mode (register 0x10a110 = 1).
+
+        Order: (re)acquire CCP, write 0x10a110 = 1, verify WHILE holding CCP,
+        then release.  Reads of 0x10a110 without CCP are masked and return 0.
+        """
+        if self.gvcp is None:
+            return
+        try:
+            print("Restoring camera to IR-only mode...")
+            try:
+                self.gvcp.acquire_ccp()
+            except Exception as exc:
+                print(f"  CCP acquire warning: {exc}")
+            try:
+                val = self.gvcp.read_register(REGISTER_DATA_SOURCE)
+                print(f"  Register 0x10a110 before = {val}")
+                if val != VALUE_IR_ONLY:
+                    self.gvcp.write_register(REGISTER_DATA_SOURCE, VALUE_IR_ONLY)
+                val = self.gvcp.read_register(REGISTER_DATA_SOURCE)
+                print(f"  Register 0x10a110 after = {val} (expected 1)")
+            except Exception as exc:
+                print(f"  Restore warning: {exc}")
+            try:
+                self.gvcp.stream_enable(False)
+            except Exception:
+                pass
+            try:
+                self.gvcp.release_ccp()
+            except Exception:
+                pass
+            self.gvcp.close()
+            print("GVCP connection closed")
+        except Exception as exc:
+            print(f"  Restore error: {exc}")
 
 
 # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ services.alarm -- Alarm service for coordinating alarm evaluation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from thermal_monitor.core.models import (
@@ -24,10 +24,10 @@ class AlarmService:
     alarm evaluation with analysis results.
     """
 
-    evaluators: dict[str, AlarmEvaluator] = dataclasses.field(default_factory=dict)
-    state_trackers: dict[str, AlarmStateTracker] = dataclasses.field(default_factory=dict)
-    _event_callbacks: dict[str, list[Callable[[AlarmEvent], None]]] = dataclasses.field(default_factory=dict)
-    _evaluation_callbacks: dict[str, list[Callable[[AlarmEvaluationResult], None]]] = dataclasses.field(default_factory=dict)
+    evaluators: dict[str, AlarmEvaluator] = field(default_factory=dict)
+    state_trackers: dict[str, AlarmStateTracker] = field(default_factory=dict)
+    _event_callbacks: dict[str, list[Callable[[AlarmEvent], None]]] = field(default_factory=dict)
+    _evaluation_callbacks: dict[str, list[Callable[[AlarmEvaluationResult], None]]] = field(default_factory=dict)
 
     def __init__(self) -> None:
         pass

@@ -102,6 +102,7 @@ class HalconROIAdapter:
         self,
         regions: HalconRegionHandle,
         temperature_image: np.ndarray,  # float32, °C
+        rois: Sequence[ROIConfig] | None = None,
     ) -> list[ROIStatistics]:
         """
         Compute statistics using proven HALCON operators.
@@ -156,8 +157,8 @@ class HalconROIAdapter:
                 range_val = float(range_vals[0]) if range_vals else 0.0
 
                 results.append(ROIStatistics(
-                    roi_id="",  # Will be filled by caller
-                    roi_name="",  # Will be filled by caller
+                    roi_id="",  # Will be filled by caller (or from rois below)
+                    roi_name="",  # Will be filled by caller (or from rois below)
                     min_temp=min_val,
                     max_temp=max_val,
                     mean_temp=mean_val,
@@ -176,17 +177,31 @@ class HalconROIAdapter:
                     unit=TemperatureUnit.CELSIUS,
                 ))
 
+        if rois is not None:
+            for stat, roi in zip(results, rois):
+                results[results.index(stat)] = ROIStatistics(
+                    roi_id=roi.roi_id,
+                    roi_name=roi.name,
+                    min_temp=stat.min_temp,
+                    max_temp=stat.max_temp,
+                    mean_temp=stat.mean_temp,
+                    deviation=stat.deviation,
+                    unit=stat.unit,
+                )
+
         return results
 
     def release_regions(self, regions: HalconRegionHandle) -> None:
-        """Release HALCON region resources."""
-        # HALCON Python bindings typically use reference counting
-        # Explicit clear helps with deterministic cleanup
-        try:
-            import halcon as ha
-            ha.clear_obj(regions)
-        except Exception:
-            pass
+        """Release HALCON region resources.
+
+        HALCON Python bindings (24.11) use reference counting for HObject
+        handles: dropping the Python reference lets the wrapper free the
+        underlying object exactly once.  Calling clear_obj() here on a handle
+        still referenced by the Python wrapper causes a second delete at
+        garbage-collection time (HALCON error #4051 "object has been deleted
+        already"), so we rely on reference counting instead.
+        """
+        del regions
 
     # ------------------------------------------------------------------
     # Internal region generation methods

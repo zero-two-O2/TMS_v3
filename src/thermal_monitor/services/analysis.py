@@ -4,7 +4,7 @@ services.analysis -- Analysis service for coordinating frame processing.
 
 from __future__ import annotations
 
-import dataclasses
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from thermal_monitor.core.frame import Frame
@@ -28,10 +28,10 @@ class AnalysisService:
     frame processing with the current mode and configuration.
     """
 
-    processing_pipelines: dict[str, ProcessingPipeline] = dataclasses.field(default_factory=dict)
-    frame_sources: dict[str, FrameSource] = dataclasses.field(default_factory=dict)
-    _result_callbacks: dict[str, list[Callable[[AnalysisResult], None]]] = dataclasses.field(default_factory=dict)
-    _error_callbacks: dict[str, list[Callable[[Exception], None]]] = dataclasses.field(default_factory=dict)
+    processing_pipelines: dict[str, ProcessingPipeline] = field(default_factory=dict)
+    frame_sources: dict[str, FrameSource] = field(default_factory=dict)
+    _result_callbacks: dict[str, list[Callable[[AnalysisResult], None]]] = field(default_factory=dict)
+    _error_callbacks: dict[str, list[Callable[[Exception], None]]] = field(default_factory=dict)
 
     def __init__(self) -> None:
         pass

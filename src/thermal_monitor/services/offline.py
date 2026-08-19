@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from thermal_monitor.core.models import AnalysisConfig, CameraConfig
-from thermal_monitor.offline import FrameSource, OfflineFrameSource, OfflineFrameSourceConfig, StreamFilter
+from thermal_monitor.processing import FrameSource
+from thermal_monitor.offline import OfflineFrameSource, OfflineFrameSourceConfig, StreamFilter
 from thermal_monitor.processing.sources import SyntheticFrameSource
 from thermal_monitor.processing.alarms import AlarmEvaluator
 

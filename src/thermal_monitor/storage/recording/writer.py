@@ -179,6 +179,9 @@ class RecordingWriter:
         self._opened = False
         self._finalized = False
 
+        # Track actual streams written per camera (physical records, not declared intent)
+        self._written_streams: dict[str, set[int]] = {}
+
     # -- lifecycle ---------------------------------------------------------
 
     @property
@@ -271,10 +274,21 @@ class RecordingWriter:
 
     def _manifest_document(self, status: str, finalized_at: str | None) -> dict:
         metadata = self._metadata
-        streams = {
-            camera_id: {stream_name: True for stream_name in sorted(names)}
-            for camera_id, names in metadata.streams.items()
-        }
+        # Use actual streams written (physical records), not declared intent
+        if self._written_streams:
+            streams = {
+                camera_id: {
+                    "IR": True if 1 in stream_types else False,
+                    "VL": True if 2 in stream_types else False,
+                }
+                for camera_id, stream_types in self._written_streams.items()
+            }
+        else:
+            # Fall back to declared streams if no frames written yet
+            streams = {
+                camera_id: {stream_name: True for stream_name in sorted(names)}
+                for camera_id, names in metadata.streams.items()
+            }
         if self._start_time is not None and self._end_time is not None:
             duration = max(0.0, self._end_time - self._start_time)
         else:
@@ -342,6 +356,10 @@ class RecordingWriter:
         entries: list[IndexEntry] = []
         thermal = frame.payload.thermal
         visible = frame.payload.visible
+        camera_id = frame.descriptor.camera_id
+        if camera_id not in self._written_streams:
+            self._written_streams[camera_id] = set()
+
         if thermal is not None:
             if not frame.descriptor.thermal.present:
                 raise FormatError("thermal payload present but thermal.present is False")
@@ -355,6 +373,8 @@ class RecordingWriter:
                     sync_group_id=sync_group_id,
                 )
             )
+            self._written_streams[camera_id].add(1)  # IR stream type
+
         if visible is not None:
             if not frame.descriptor.visible.present:
                 raise FormatError("visible payload present but visible.present is False")
@@ -368,6 +388,8 @@ class RecordingWriter:
                     sync_group_id=sync_group_id,
                 )
             )
+            self._written_streams[camera_id].add(2)  # VL stream type
+
         return entries
 
     def _camera_registered(self, camera_id: str) -> bool:
@@ -376,6 +398,8 @@ class RecordingWriter:
     def _register_camera(self, camera_id: str) -> None:
         self._camera_set.add(camera_id)
         self._camera_list.append(camera_id)
+        if camera_id not in self._written_streams:
+            self._written_streams[camera_id] = set()
         assert self._index_writer is not None
         self._index_writer.camera_ref(camera_id)
 

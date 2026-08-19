@@ -7,6 +7,21 @@ name = "thermal-monitoring-system"
 version = "3.0.0"
 description = "Thermal Monitoring System V3"
 requires-python = ">=3.10,<3.11"
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+ui = [
+    "PyQt6>=6.5",
+]
+database = [
+    "pyodbc>=5.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -27,6 +27,12 @@ from thermal_monitor.processing.temperature import (
     CachingCalibrationProvider,
 )
 
+from thermal_monitor.processing.worker import (
+    ProcessingResult,
+    ProcessingWorker,
+    create_processing_worker,
+)
+
 __all__ = [
     "AlarmEvaluationResult",
     "AlarmEvaluator",
@@ -39,8 +45,11 @@ __all__ = [
     "LiveFrameSource",
     "NullAlarmEvaluator",
     "ProcessingPipeline",
+    "ProcessingResult",
     "ProcessingStats",
+    "ProcessingWorker",
     "SimpleProcessingPipeline",
     "SyntheticFrameSource",
     "TemperatureConverter",
+    "create_processing_worker",
 ]

@@ -394,11 +394,16 @@ class TestCachingCalibrationProvider:
         assert calibration.enabled_ranges > 0
 
     def test_unknown_camera_returns_none(self):
+        # With a default calibration file in assets/calibration/, unknown cameras
+        # now return the default calibration instead of None
         lut = self.provider.get_calibration("unknown_camera")
-        assert lut is None
+        # The provider falls back to default calibration when camera not in map
+        assert lut is not None
+        assert lut.dtype == np.float32
+        assert lut.size == 65536
 
         calibration = self.provider.get_camera_calibration("unknown_camera")
-        assert calibration is None
+        assert calibration is not None
 
     def test_cache_works(self):
         lut1 = self.provider.get_calibration("test_camera")

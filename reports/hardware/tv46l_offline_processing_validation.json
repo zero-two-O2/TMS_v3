@@ -1,0 +1,970 @@
+{
+  "tool": {
+    "name": "tv46l_offline_processing_validation",
+    "version": "1.0.0"
+  },
+  "calibration_blob": "D:\\Projects\\TMS_v3\\temporary\\calib_info_camera.txt",
+  "calibration_header": {
+    "magic": "0x52696D01",
+    "enabled_ranges": 2,
+    "calibration_date": "12/01/2026"
+  },
+  "lut_parity_v2_vs_v3": {
+    "max_abs_diff": 0.0,
+    "tolerance": 1e-05,
+    "pass": true
+  },
+  "step_10_v3_offline_chain": {
+    "frames_processed": 5,
+    "recording_dir": "D:\\Projects\\TMS_v3\\recordings\\hardware_test_001",
+    "frame_samples": [
+      {
+        "frame_sequence": 0,
+        "timestamp": 1787118796.920808,
+        "thermal_shape": [
+          480,
+          640
+        ],
+        "thermal_dtype": "uint16",
+        "temp_finite_pct": 100.0,
+        "temp_min": 26.934179,
+        "temp_max": 34.343021,
+        "temp_mean": 28.816725,
+        "stats": {
+          "full_frame": {
+            "min": 26.934179,
+            "max": 34.343021,
+            "mean": 28.816731,
+            "deviation": 1.168947
+          },
+          "center": {
+            "min": 27.681049,
+            "max": 31.638128,
+            "mean": 28.88506,
+            "deviation": 1.078185
+          },
+          "hot_spot": {
+            "min": 28.279823,
+            "max": 30.780132,
+            "mean": 29.156118,
+            "deviation": 0.560546
+          },
+          "corner_ul": {
+            "min": 27.928797,
+            "max": 34.011681,
+            "mean": 29.724989,
+            "deviation": 1.534647
+          },
+          "corner_lr": {
+            "min": 27.511198,
+            "max": 30.881435,
+            "mean": 28.311749,
+            "deviation": 0.506624
+          }
+        }
+      },
+      {
+        "frame_sequence": 1,
+        "timestamp": 1787118797.141888,
+        "thermal_shape": [
+          480,
+          640
+        ],
+        "thermal_dtype": "uint16",
+        "temp_finite_pct": 100.0,
+        "temp_min": 26.828913,
+        "temp_max": 34.440998,
+        "temp_mean": 28.808243,
+        "stats": {
+          "full_frame": {
+            "min": 26.828913,
+            "max": 34.440998,
+            "mean": 28.808246,
+            "deviation": 1.155163
+          },
+          "center": {
+            "min": 27.62882,
+            "max": 31.638128,
+            "mean": 28.884603,
+            "deviation": 1.079152
+          },
+          "hot_spot": {
+            "min": 28.188931,
+            "max": 30.780132,
+            "mean": 29.154705,
+            "deviation": 0.560761
+          },
+          "corner_ul": {
+            "min": 27.928797,
+            "max": 33.457188,
+            "mean": 29.57057,
+            "deviation": 1.36591
+          },
+          "corner_lr": {
+            "min": 27.458879,
+            "max": 30.881435,
+            "mean": 28.309903,
+            "deviation": 0.505891
+          }
+        }
+      },
+      {
+        "frame_sequence": 2,
+        "timestamp": 1787118797.35658,
+        "thermal_shape": [
+          480,
+          640
+        ],
+        "thermal_dtype": "uint16",
+        "temp_finite_pct": 100.0,
+        "temp_min": 26.907871,
+        "temp_max": 34.367523,
+        "temp_mean": 28.809254,
+        "stats": {
+          "full_frame": {
+            "min": 26.907871,
+            "max": 34.367523,
+            "mean": 28.809252,
+            "deviation": 1.154383
+          },
+          "center": {
+            "min": 27.615755,
+            "max": 31.612999,
+            "mean": 28.885929,
+            "deviation": 1.080719
+          },
+          "hot_spot": {
+            "min": 28.188931,
+            "max": 30.792795,
+            "mean": 29.156027,
+            "deviation": 0.560277
+          },
+          "corner_ul": {
+            "min": 27.928797,
+            "max": 33.667,
+            "mean": 29.532859,
+            "deviation": 1.348072
+          },
+          "corner_lr": {
+            "min": 27.511198,
+            "max": 30.84346,
+            "mean": 28.308679,
+            "deviation": 0.505961
+          }
+        }
+      },
+      {
+        "frame_sequence": 3,
+        "timestamp": 1787118797.468706,
+        "thermal_shape": [
+          480,
+          640
+        ],
+        "thermal_dtype": "uint16",
+        "temp_finite_pct": 100.0,
+        "temp_min": 26.973623,
+        "temp_max": 34.355278,
+        "temp_mean": 28.803789,
+        "stats": {
+          "full_frame": {
+            "min": 26.973623,
+            "max": 34.355278,
+            "mean": 28.803794,
+            "deviation": 1.152282
+          },
+          "center": {
+            "min": 27.641878,
+            "max": 31.66326,
+            "mean": 28.8844,
+            "deviation": 1.082725
+          },
+          "hot_spot": {
+            "min": 28.25386,
+            "max": 30.894096,
+            "mean": 29.15647,
+            "deviation": 0.565149
+          },
+          "corner_ul": {
+            "min": 27.95484,
+            "max": 33.765587,
+            "mean": 29.508395,
+            "deviation": 1.337443
+          },
+          "corner_lr": {
+            "min": 27.471956,
+            "max": 30.894096,
+            "mean": 28.308194,
+            "deviation": 0.50823
+          }
+        }
+      },
+      {
+        "frame_sequence": 4,
+        "timestamp": 1787118797.5782242,
+        "thermal_shape": [
+          480,
+          640
+        ],
+        "thermal_dtype": "uint16",
+        "temp_finite_pct": 100.0,
+        "temp_min": 26.999908,
+        "temp_max": 34.343021,
+        "temp_mean": 28.804306,
+        "stats": {
+          "full_frame": {
+            "min": 26.999908,
+            "max": 34.343021,
+            "mean": 28.804307,
+            "deviation": 1.15274
+          },
+          "center": {
+            "min": 27.602697,
+            "max": 31.612999,
+            "mean": 28.885821,
+            "deviation": 1.080686
+          },
+          "hot_spot": {
+            "min": 28.279823,
+            "max": 30.792795,
+            "mean": 29.158005,
+            "deviation": 0.563795
+          },
+          "corner_ul": {
+            "min": 27.902742,
+            "max": 33.777912,
+            "mean": 29.503856,
+            "deviation": 1.346252
+          },
+          "corner_lr": {
+            "min": 27.485043,
+            "max": 30.84346,
+            "mean": 28.299252,
+            "deviation": 0.501873
+          }
+        }
+      }
+    ]
+  },
+  "step_11_roi_v2_vs_v3": [
+    {
+      "sample_index": 0,
+      "tolerance": 0.001,
+      "pass": true,
+      "rois": [
+        {
+          "roi": "full_frame",
+          "v3": {
+            "min_temp": 26.934179,
+            "max_temp": 34.343021,
+            "mean_temp": 28.816731,
+            "deviation": 1.168947
+          },
+          "v2_reference": {
+            "min": 26.934179,
+            "max": 34.343021,
+            "mean": 28.816731,
+            "deviation": 1.168947,
+            "range": 7.408842
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "center",
+          "v3": {
+            "min_temp": 27.681049,
+            "max_temp": 31.638128,
+            "mean_temp": 28.88506,
+            "deviation": 1.078185
+          },
+          "v2_reference": {
+            "min": 27.681049,
+            "max": 31.638128,
+            "mean": 28.88506,
+            "deviation": 1.078185,
+            "range": 3.957079
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "hot_spot",
+          "v3": {
+            "min_temp": 28.279823,
+            "max_temp": 30.780132,
+            "mean_temp": 29.156118,
+            "deviation": 0.560546
+          },
+          "v2_reference": {
+            "min": 28.279823,
+            "max": 30.780132,
+            "mean": 29.156118,
+            "deviation": 0.560546,
+            "range": 2.500309
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_ul",
+          "v3": {
+            "min_temp": 27.928797,
+            "max_temp": 34.011681,
+            "mean_temp": 29.724989,
+            "deviation": 1.534647
+          },
+          "v2_reference": {
+            "min": 27.928797,
+            "max": 34.011681,
+            "mean": 29.724989,
+            "deviation": 1.534647,
+            "range": 6.082884
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_lr",
+          "v3": {
+            "min_temp": 27.511198,
+            "max_temp": 30.881435,
+            "mean_temp": 28.311749,
+            "deviation": 0.506624
+          },
+          "v2_reference": {
+            "min": 27.511198,
+            "max": 30.881435,
+            "mean": 28.311749,
+            "deviation": 0.506624,
+            "range": 3.370237
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        }
+      ]
+    },
+    {
+      "sample_index": 1,
+      "tolerance": 0.001,
+      "pass": true,
+      "rois": [
+        {
+          "roi": "full_frame",
+          "v3": {
+            "min_temp": 26.828913,
+            "max_temp": 34.440998,
+            "mean_temp": 28.808246,
+            "deviation": 1.155163
+          },
+          "v2_reference": {
+            "min": 26.828913,
+            "max": 34.440998,
+            "mean": 28.808246,
+            "deviation": 1.155163,
+            "range": 7.612085
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "center",
+          "v3": {
+            "min_temp": 27.62882,
+            "max_temp": 31.638128,
+            "mean_temp": 28.884603,
+            "deviation": 1.079152
+          },
+          "v2_reference": {
+            "min": 27.62882,
+            "max": 31.638128,
+            "mean": 28.884603,
+            "deviation": 1.079152,
+            "range": 4.009308
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "hot_spot",
+          "v3": {
+            "min_temp": 28.188931,
+            "max_temp": 30.780132,
+            "mean_temp": 29.154705,
+            "deviation": 0.560761
+          },
+          "v2_reference": {
+            "min": 28.188931,
+            "max": 30.780132,
+            "mean": 29.154705,
+            "deviation": 0.560761,
+            "range": 2.591202
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_ul",
+          "v3": {
+            "min_temp": 27.928797,
+            "max_temp": 33.457188,
+            "mean_temp": 29.57057,
+            "deviation": 1.36591
+          },
+          "v2_reference": {
+            "min": 27.928797,
+            "max": 33.457188,
+            "mean": 29.57057,
+            "deviation": 1.36591,
+            "range": 5.528391
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_lr",
+          "v3": {
+            "min_temp": 27.458879,
+            "max_temp": 30.881435,
+            "mean_temp": 28.309903,
+            "deviation": 0.505891
+          },
+          "v2_reference": {
+            "min": 27.458879,
+            "max": 30.881435,
+            "mean": 28.309903,
+            "deviation": 0.505891,
+            "range": 3.422556
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        }
+      ]
+    },
+    {
+      "sample_index": 2,
+      "tolerance": 0.001,
+      "pass": true,
+      "rois": [
+        {
+          "roi": "full_frame",
+          "v3": {
+            "min_temp": 26.907871,
+            "max_temp": 34.367523,
+            "mean_temp": 28.809252,
+            "deviation": 1.154383
+          },
+          "v2_reference": {
+            "min": 26.907871,
+            "max": 34.367523,
+            "mean": 28.809252,
+            "deviation": 1.154383,
+            "range": 7.459652
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "center",
+          "v3": {
+            "min_temp": 27.615755,
+            "max_temp": 31.612999,
+            "mean_temp": 28.885929,
+            "deviation": 1.080719
+          },
+          "v2_reference": {
+            "min": 27.615755,
+            "max": 31.612999,
+            "mean": 28.885929,
+            "deviation": 1.080719,
+            "range": 3.997244
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "hot_spot",
+          "v3": {
+            "min_temp": 28.188931,
+            "max_temp": 30.792795,
+            "mean_temp": 29.156027,
+            "deviation": 0.560277
+          },
+          "v2_reference": {
+            "min": 28.188931,
+            "max": 30.792795,
+            "mean": 29.156027,
+            "deviation": 0.560277,
+            "range": 2.603865
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_ul",
+          "v3": {
+            "min_temp": 27.928797,
+            "max_temp": 33.667,
+            "mean_temp": 29.532859,
+            "deviation": 1.348072
+          },
+          "v2_reference": {
+            "min": 27.928797,
+            "max": 33.667,
+            "mean": 29.532859,
+            "deviation": 1.348072,
+            "range": 5.738203
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_lr",
+          "v3": {
+            "min_temp": 27.511198,
+            "max_temp": 30.84346,
+            "mean_temp": 28.308679,
+            "deviation": 0.505961
+          },
+          "v2_reference": {
+            "min": 27.511198,
+            "max": 30.84346,
+            "mean": 28.308679,
+            "deviation": 0.505961,
+            "range": 3.332262
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        }
+      ]
+    },
+    {
+      "sample_index": 3,
+      "tolerance": 0.001,
+      "pass": true,
+      "rois": [
+        {
+          "roi": "full_frame",
+          "v3": {
+            "min_temp": 26.973623,
+            "max_temp": 34.355278,
+            "mean_temp": 28.803794,
+            "deviation": 1.152282
+          },
+          "v2_reference": {
+            "min": 26.973623,
+            "max": 34.355278,
+            "mean": 28.803794,
+            "deviation": 1.152282,
+            "range": 7.381655
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "center",
+          "v3": {
+            "min_temp": 27.641878,
+            "max_temp": 31.66326,
+            "mean_temp": 28.8844,
+            "deviation": 1.082725
+          },
+          "v2_reference": {
+            "min": 27.641878,
+            "max": 31.66326,
+            "mean": 28.8844,
+            "deviation": 1.082725,
+            "range": 4.021381
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "hot_spot",
+          "v3": {
+            "min_temp": 28.25386,
+            "max_temp": 30.894096,
+            "mean_temp": 29.15647,
+            "deviation": 0.565149
+          },
+          "v2_reference": {
+            "min": 28.25386,
+            "max": 30.894096,
+            "mean": 29.15647,
+            "deviation": 0.565149,
+            "range": 2.640236
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_ul",
+          "v3": {
+            "min_temp": 27.95484,
+            "max_temp": 33.765587,
+            "mean_temp": 29.508395,
+            "deviation": 1.337443
+          },
+          "v2_reference": {
+            "min": 27.95484,
+            "max": 33.765587,
+            "mean": 29.508395,
+            "deviation": 1.337443,
+            "range": 5.810747
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_lr",
+          "v3": {
+            "min_temp": 27.471956,
+            "max_temp": 30.894096,
+            "mean_temp": 28.308194,
+            "deviation": 0.50823
+          },
+          "v2_reference": {
+            "min": 27.471956,
+            "max": 30.894096,
+            "mean": 28.308194,
+            "deviation": 0.50823,
+            "range": 3.42214
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        }
+      ]
+    },
+    {
+      "sample_index": 4,
+      "tolerance": 0.001,
+      "pass": true,
+      "rois": [
+        {
+          "roi": "full_frame",
+          "v3": {
+            "min_temp": 26.999908,
+            "max_temp": 34.343021,
+            "mean_temp": 28.804307,
+            "deviation": 1.15274
+          },
+          "v2_reference": {
+            "min": 26.999908,
+            "max": 34.343021,
+            "mean": 28.804307,
+            "deviation": 1.15274,
+            "range": 7.343113
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "center",
+          "v3": {
+            "min_temp": 27.602697,
+            "max_temp": 31.612999,
+            "mean_temp": 28.885821,
+            "deviation": 1.080686
+          },
+          "v2_reference": {
+            "min": 27.602697,
+            "max": 31.612999,
+            "mean": 28.885821,
+            "deviation": 1.080686,
+            "range": 4.010302
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "hot_spot",
+          "v3": {
+            "min_temp": 28.279823,
+            "max_temp": 30.792795,
+            "mean_temp": 29.158005,
+            "deviation": 0.563795
+          },
+          "v2_reference": {
+            "min": 28.279823,
+            "max": 30.792795,
+            "mean": 29.158005,
+            "deviation": 0.563795,
+            "range": 2.512972
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_ul",
+          "v3": {
+            "min_temp": 27.902742,
+            "max_temp": 33.777912,
+            "mean_temp": 29.503856,
+            "deviation": 1.346252
+          },
+          "v2_reference": {
+            "min": 27.902742,
+            "max": 33.777912,
+            "mean": 29.503856,
+            "deviation": 1.346252,
+            "range": 5.87517
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        },
+        {
+          "roi": "corner_lr",
+          "v3": {
+            "min_temp": 27.485043,
+            "max_temp": 30.84346,
+            "mean_temp": 28.299252,
+            "deviation": 0.501873
+          },
+          "v2_reference": {
+            "min": 27.485043,
+            "max": 30.84346,
+            "mean": 28.299252,
+            "deviation": 0.501873,
+            "range": 3.358418
+          },
+          "diff": {
+            "min": 0.0,
+            "max": 0.0,
+            "mean": 0.0,
+            "deviation": 0.0
+          },
+          "pass": true
+        }
+      ]
+    }
+  ],
+  "step_12_calibration_v2_vs_v3": {
+    "lut": {
+      "v2_dtype": "float32",
+      "v3_dtype": "float32",
+      "size": 65536,
+      "max_abs_diff": 0.0,
+      "pass": true
+    },
+    "raw_to_temperature": {
+      "v2_dtype": "float32",
+      "v3_dtype": "float32",
+      "shape": [
+        480,
+        640
+      ],
+      "max_abs_diff": 0.0,
+      "pass": true
+    },
+    "temperature_statistics": {
+      "minimum": {
+        "v2": 26.934179,
+        "v3": 26.934179
+      },
+      "maximum": {
+        "v2": 34.343021,
+        "v3": 34.343021
+      },
+      "mean": {
+        "v2": 28.816725,
+        "v3": 28.816725
+      },
+      "median": {
+        "v2": 28.448406,
+        "v3": 28.448406
+      },
+      "std": {
+        "v2": 1.168948,
+        "v3": 1.168948
+      }
+    }
+  },
+  "step_13_alarms": {
+    "measured": {
+      "center": {
+        "min": 27.681049,
+        "max": 31.638128
+      },
+      "hot_spot": {
+        "min": 28.279823,
+        "max": 30.780132
+      },
+      "full_frame": {
+        "min": 26.934179,
+        "max": 34.343021
+      }
+    },
+    "first_evaluation": {
+      "fired_rules": [
+        "center_above",
+        "center_below",
+        "full_inside",
+        "hot_outside"
+      ],
+      "expected_to_fire": [
+        "center_above",
+        "center_below",
+        "full_inside",
+        "hot_outside"
+      ],
+      "expected_not_to_fire": [
+        "center_ok"
+      ],
+      "missing_fire": [],
+      "unexpected_fire": [],
+      "pass": true
+    },
+    "clear_evaluation": {
+      "cleared_rules": [
+        "center_above",
+        "center_below"
+      ],
+      "expected_to_clear": [
+        "center_above",
+        "center_below"
+      ],
+      "pass": true
+    }
+  },
+  "timing_ms": {
+    "step_10_chain": 368.368,
+    "step_12_calibration": 43.5,
+    "step_11_roi": [
+      6.04,
+      6.881,
+      5.221,
+      7.795,
+      5.896
+    ],
+    "step_13_alarms": 5.217
+  },
+  "verdict": {
+    "checks": {
+      "lut_parity": true,
+      "step_10_chain": true,
+      "step_11_roi": true,
+      "step_12_calibration": true,
+      "step_13_alarms": true
+    },
+    "overall_pass": true
+  }
+}

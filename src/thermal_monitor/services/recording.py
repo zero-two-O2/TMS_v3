@@ -4,7 +4,7 @@ services.recording -- Recording service for coordinating alarm-triggered recordi
 
 from __future__ import annotations
 
-import dataclasses
+from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from thermal_monitor.core.models import (
@@ -15,10 +15,10 @@ from thermal_monitor.core.models import (
     RecordingState,
     RecordingTrigger,
 )
-from thermal_monitor.storage.recording import Recorder, FileRecordingSink, NullRecordingSink, RecordingSink
+from thermal_monitor.storage.recording import Recorder, FileRecordingSink, NullRecordingSink
 
 
-@dataclasses.dataclass
+@dataclass
 class RecordingService:
     """Application-level service for coordinating recording.
 
@@ -26,19 +26,19 @@ class RecordingService:
     recording with pre/post-alarm capture.
     """
 
-    recorders: dict[str, Recorder] = dataclasses.field(default_factory=dict)
-    recording_configs: dict[str, RecordingConfig] = dataclasses.field(default_factory=dict)
+    recorders: dict[str, Recorder] = field(default_factory=dict)
+    recording_configs: dict[str, RecordingConfig] = field(default_factory=dict)
     sink_factory: Optional[Callable[[RecordingMetadata], RecordingSink]] = None
-    _recording_callbacks: dict[str, list[Callable[[RecordingMetadata], None]]] = dataclasses.field(default_factory=dict)
-    _completion_callbacks: dict[str, list[Callable[[RecordingMetadata], None]]] = dataclasses.field(default_factory=dict)
+    _recording_callbacks: dict[str, list[Callable[[RecordingMetadata], None]]] = field(default_factory=dict)
+    _completion_callbacks: dict[str, list[Callable[[RecordingMetadata], None]]] = field(default_factory=dict)
 
     def __init__(
         self,
-        sink_factory: Optional[Callable[[RecordingMetadata], RecordingSink]] = None,
+        sink_factory: Optional[Callable[[RecordingMetadata], "FileRecordingSink | NullRecordingSink"]] = None,
     ) -> None:
         self.sink_factory = sink_factory or self._default_sink_factory
 
-    def _default_sink_factory(self, metadata: RecordingMetadata) -> RecordingSink:
+    def _default_sink_factory(self, metadata: RecordingMetadata) -> "FileRecordingSink | NullRecordingSink":
         return NullRecordingSink()
 
     def get_recorder(self, camera_id: str) -> Recorder | None:

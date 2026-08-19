@@ -1,6 +1,6 @@
 # TV46L Hardware Characterization (V3)
 
-* Run UTC: 2026-08-17T11:56:15
+* Run UTC: 2026-08-19T05:43:57
 * Tool: `tv46l_hardware_probe v1.0.0`
 * Requested device: `3408e1db21f2_FlukeProcessInstruments_TV46L1260100029Hz`
 
@@ -41,9 +41,9 @@
 | numpy_strides | `[1280, 2]` |
 | c_contiguous | `True` |
 | byteorder | `native` |
-| min_raw | `5035` |
-| max_raw | `5495` |
-| mean_raw | `5154.220787760417` |
+| min_raw | `4831` |
+| max_raw | `5366` |
+| mean_raw | `4950.181097005208` |
 
 HALCON-reported geometry/format:
 
@@ -71,7 +71,7 @@ HALCON-reported geometry/format:
   "simultaneous_ir_visible": null,
   "note_handles": "TV46L is a single-stream GigE camera (DeviceStreamChannelCount). IR and visible cannot be acquired simultaneously through one framegrabber handle; visible requires a separate handle or time-sliced selector switching.",
   "drained_stale_frames": 3,
-  "switch_to_first_frame_s": 0.9482,
+  "switch_to_first_frame_s": 0.7009,
   "visible_format": {
     "tag": "visible",
     "width": 640,
@@ -94,7 +94,7 @@ HALCON-reported geometry/format:
     "byteorder": "native",
     "min_raw": 0,
     "max_raw": 255,
-    "mean_raw": 121.325944,
+    "mean_raw": 128.79661,
     "halcon": {
       "image_width": 640,
       "image_height": 480,
@@ -105,17 +105,17 @@ HALCON-reported geometry/format:
   },
   "visible_fps": {
     "measured": true,
-    "average_fps": 8.9415,
+    "average_fps": 9.0218,
     "frame_interval_stats_s": {
       "count": 30,
-      "mean_s": 0.111838,
-      "median_s": 0.111079,
-      "p90_s": 0.194958,
-      "p95_s": 0.196739,
-      "p99_s": 0.202677,
-      "max_s": 0.202677,
-      "min_s": 0.022263,
-      "stddev_s": 0.053418
+      "mean_s": 0.110843,
+      "median_s": 0.11112,
+      "p90_s": 0.194305,
+      "p95_s": 0.194787,
+      "p99_s": 0.195385,
+      "max_s": 0.195385,
+      "min_s": 0.026759,
+      "stddev_s": 0.03761
     }
   },
   "restored_selector": "IR_Data",
@@ -138,31 +138,31 @@ HALCON-reported geometry/format:
     ],
     "c_contiguous": true,
     "byteorder": "native",
-    "min_raw": 4955,
-    "max_raw": 5428,
-    "mean_raw": 5113.355199
+    "min_raw": 4832,
+    "max_raw": 5306,
+    "mean_raw": 4933.882842
   }
 }
 ```
 
 ## D. Actual FPS
 
-* average FPS: **MEASURED `7.2522`**
-* frame count: `500`
+* average FPS: **MEASURED `7.9808`**
+* frame count: `30`
 
 ## E. Frame timing
 
 ```
 {
-  "count": 499,
-  "mean_s": 0.138165,
-  "median_s": 0.117283,
-  "p90_s": 0.224828,
-  "p95_s": 0.324639,
-  "p99_s": 0.44248,
-  "max_s": 0.547271,
-  "min_s": 0.005938,
-  "stddev_s": 0.089505
+  "count": 29,
+  "mean_s": 0.129622,
+  "median_s": 0.111367,
+  "p90_s": 0.222039,
+  "p95_s": 0.326449,
+  "p99_s": 0.332711,
+  "max_s": 0.332711,
+  "min_s": 0.004989,
+  "stddev_s": 0.080156
 }
 ```
 
@@ -180,63 +180,18 @@ HALCON-reported geometry/format:
 {
   "hardware_frame_counter": true,
   "source": "buffer_frameid",
-  "first": 62,
-  "last": 680,
-  "count": 500,
-  "unique_count": 500,
+  "first": 29,
+  "last": 63,
+  "count": 30,
+  "unique_count": 30,
   "duplicate_count": 0,
-  "missing_count": 119,
+  "missing_count": 5,
   "missing_sample": [
-    74,
-    79,
-    80,
-    81,
-    83,
-    84,
-    85,
-    90,
-    95,
-    102,
-    113,
-    114,
-    116,
-    128,
-    133,
-    140,
-    142,
-    150,
-    151,
-    158,
-    165,
-    174,
-    175,
-    176,
-    181,
-    184,
-    192,
-    195,
-    198,
-    199,
-    212,
-    219,
-    239,
-    245,
-    255,
-    258,
-    259,
-    261,
-    266,
-    272,
-    273,
-    275,
-    291,
-    297,
-    304,
-    309,
-    317,
-    318,
-    319,
-    325
+    35,
+    39,
+    55,
+    56,
+    58
   ],
   "reset_observed": false
 }
@@ -270,13 +225,13 @@ HALCON-reported geometry/format:
 
 ## I. Copy timings
 
-| Stage                      | count | mean       | median     | p95        | max        |
-|----------------------------|-------|------------|------------|------------|------------|
-| A_halcon_grab              | 500   | 137.316 ms | 115.980 ms | 323.636 ms | 545.856 ms |
-| B_himage_as_numpy_array    | 500   | 0.300 ms   | 0.286 ms   | 0.459 ms   | 0.789 ms   |
-| C_numpy_copy_owned         | 500   | 0.068 ms   | 0.062 ms   | 0.104 ms   | 0.228 ms   |
-| D_numpy_to_shm_slot        | 500   | 0.067 ms   | 0.061 ms   | 0.113 ms   | 0.592 ms   |
-| A_plus_B_plus_C_end_to_end | 500   | 137.684 ms | 116.311 ms | 323.879 ms | 546.276 ms |
+| Stage | count | mean | median | p95 | max |
+|---|---|---|---|---|---|
+| A_halcon_grab | 30 | 124.171 ms | 110.279 ms | 325.129 ms | 331.271 ms |
+| B_himage_as_numpy_array | 30 | 0.282 ms | 0.291 ms | 0.471 ms | 0.611 ms |
+| C_numpy_copy_owned | 30 | 0.069 ms | 0.059 ms | 0.145 ms | 0.210 ms |
+| D_numpy_to_shm_slot | 30 | 0.075 ms | 0.054 ms | 0.213 ms | 0.435 ms |
+| A_plus_B_plus_C_end_to_end | 30 | 124.522 ms | 110.701 ms | 325.418 ms | 331.732 ms |
 
 ## J. Timeout result
 
@@ -599,7 +554,7 @@ HALCON-reported geometry/format:
 ## L. Visible acquisition result
 
 * visible available: `True`
-* measured FPS: `8.9415`
+* measured FPS: `9.0218`
 * simultaneous IR/visible: `None`
 
 ## M. Network / transport observations
@@ -610,9 +565,9 @@ HALCON-reported geometry/format:
   "[Stream]DeviceStreamChannelPacketSizeMax": 9000,
   "[Stream]GevStreamReceiveSocketSize": 1048576,
   "[Stream]GevStreamRingBufferSize": 262144,
-  "[Stream]GevStreamSeenPacketCount": 422,
+  "[Stream]GevStreamSeenPacketCount": 392,
   "[Stream]GevStreamLostPacketCount": 0,
-  "[Stream]GevStreamDeliveredPacketCount": 422,
+  "[Stream]GevStreamDeliveredPacketCount": 0,
   "[Stream]GevStreamResendCommandCount": 0,
   "[Stream]GevStreamResendPacketCount": 0,
   "[Stream]GevStreamDiscardedBlockCount": 0,
@@ -623,7 +578,7 @@ HALCON-reported geometry/format:
   "[Stream]GevStreamUnavailablePacketCount": 0,
   "[Interface]GevInterfaceMTU": 9000,
   "num_buffers": 4,
-  "num_buffers_await_delivery": 1,
+  "num_buffers_await_delivery": 0,
   "num_buffers_underrun": 0,
   "image_width": 640,
   "image_height": 480,
@@ -638,47 +593,36 @@ HALCON-reported geometry/format:
 ## N. Reconnection result
 
 ```
-{
-  "close_s": 0.2679,
-  "is_connected_after_close": false,
-  "reopen_s": 3.5697,
-  "reopen_ok": true,
-  "reacquire_ok": true,
-  "reacquire_shape": [
-    480,
-    640
-  ],
-  "note": "Software close/reopen/reacquire only.  Physical unplug/replug testing is deferred to a manual session."
-}
+{}
 ```
 
 ## O. Per-camera bandwidth
 
 * bytes/frame: `1536000` (thermal `614400` + visible `921600`)
-* FPS: `7.2522`
-* bytes/sec: `11139379.2` = 10.62 MiB/s (89.12 Mbit/s)
+* FPS: `7.9808`
+* bytes/sec: `12258508.8` = 11.69 MiB/s (98.07 Mbit/s)
 
 ## P. Projected 8-camera bandwidth
 
 ```
 {
   "thermal_8cam": {
-    "bytes_per_sec": 35646013.44,
-    "human": "33.99 MiB/s (285.17 Mbit/s)"
+    "bytes_per_sec": 39227228.16,
+    "human": "37.41 MiB/s (313.82 Mbit/s)"
   },
   "visible_8cam": {
-    "bytes_per_sec": 65923891.2,
-    "human": "62.87 MiB/s (527.39 Mbit/s)"
+    "bytes_per_sec": 66515927.04,
+    "human": "63.43 MiB/s (532.13 Mbit/s)"
   },
   "combined_8cam": {
-    "bytes_per_sec": 101569904.64,
-    "human": "96.86 MiB/s (812.56 Mbit/s)",
+    "bytes_per_sec": 105743155.2,
+    "human": "100.84 MiB/s (845.95 Mbit/s)",
     "note": "Combined assumes IR+visible run simultaneously.  The TV46L is a single-stream camera (DeviceStreamChannelCount=1); if the two must be time-sliced, the combined rate is the time-sliced alternating rate, not the sum."
   },
   "assumptions": {
     "cameras": 8,
-    "fps": 7.2522,
-    "visible_fps": 8.9415,
+    "fps": 7.9808,
+    "visible_fps": 9.0218,
     "linear_scaling_assumed_but_not_proven": true
   }
 }
@@ -697,8 +641,8 @@ HALCON-reported geometry/format:
 **Recommended provisional ring configuration: depth 32 per camera.**
 
 Rationale:
-* Measured thermal 614400 B at ~7.25 FPS = 4.25 MiB/s (35.65 Mbit/s) per camera.
-* Visible adds 921600 B per frame; combined = 1.465 MiB/frame = 10.62 MiB/s (89.12 Mbit/s).
+* Measured thermal 614400 B at ~7.98 FPS = 4.68 MiB/s (39.23 Mbit/s) per camera.
+* Visible adds 921600 B per frame; combined = 1.465 MiB/frame = 11.69 MiB/s (98.07 Mbit/s).
 * depth 32 for 8 cameras = 376.07 MiB (provisional, matches the ADR-003 working estimate); depth 16 = 188.039 MiB.
 * Ring depth is a bounded rolling history, not the recording buffer; pre-alarm history lives in recorder-owned memory (ADR-003 §14).
 * The final depth must cover worst-case consumer delay and any NUC frame gap.

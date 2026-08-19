@@ -23,9 +23,8 @@ from thermal_monitor.core.models import (
     ROIStatistics,
     TemperatureUnit,
 )
+from thermal_monitor.core.roi_resolver import CachedROIResolver, resolve_rois
 from thermal_monitor.processing.halcon import HalconROIAdapter, process_rois_with_halcon
-from thermal_monitor.processing.roi_resolver import ROIResolver
-from thermal_monitor.storage.database import Database
 
 
 class FrameSource(Protocol):
@@ -166,15 +165,15 @@ class SimpleProcessingPipeline(ProcessingPipeline):
     def __init__(
         self,
         config: AnalysisConfig,
-        database: Database,
         calibration_provider: CalibrationProvider | None = None,
         temperature_converter: TemperatureConverter | None = None,
         halcon_adapter: HalconROIAdapter | None = None,
+        roi_resolver: CachedROIResolver | None = None,
     ) -> None:
         super().__init__(config)
         self._calibration_provider = calibration_provider
         self._temperature_converter = temperature_converter
-        self._roi_resolver = ROIResolver(database)
+        self._roi_resolver = roi_resolver or CachedROIResolver()
         self._halcon_adapter = halcon_adapter or HalconROIAdapter()
 
     @property
@@ -186,7 +185,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
         return self._temperature_converter
 
     @property
-    def roi_resolver(self) -> ROIResolver:
+    def roi_resolver(self) -> CachedROIResolver:
         return self._roi_resolver
 
     def process_frame(self, frame: Frame) -> AnalysisResult:
@@ -195,11 +194,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
 
         # Get applicable ROIs for the current frame's position
         position_id = frame.descriptor.metadata.get("position_id", "default")
-        rois = self._roi_resolver.resolve(frame.descriptor.camera_id, position_id)
-
-        # Fall back to config if resolver returns empty (e.g., no database)
-        if not rois:
-            rois = self._config.get_rois_for_position(position_id)
+        rois = self._roi_resolver.resolve(self._config, frame.descriptor.camera_id, position_id)
 
         roi_results: dict[str, ROIStatistics] = {}
 

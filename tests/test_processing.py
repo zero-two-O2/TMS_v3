@@ -422,16 +422,9 @@ class TestSimpleProcessingPipeline:
             position_associations={"default": assoc},
         )
 
-    @pytest.fixture
-    def mock_database(self):
-        """Create a mock database for testing."""
-        from unittest.mock import MagicMock
-        db = MagicMock(spec=Database)
-        return db
-
-    def test_basic_processing(self, mock_database):
+    def test_basic_processing(self):
         config = self.create_analysis_config()
-        pipeline = SimpleProcessingPipeline(config=config, database=mock_database, halcon_adapter=MockHalconAdapter())
+        pipeline = SimpleProcessingPipeline(config=config, halcon_adapter=MockHalconAdapter())
         frame = self.create_test_frame(0)
 
         result = pipeline.process_frame(frame)
@@ -440,9 +433,9 @@ class TestSimpleProcessingPipeline:
         assert result.frame_sequence == 0
         assert "roi_1" in result.roi_results
 
-    def test_multiple_frames(self, mock_database):
+    def test_multiple_frames(self):
         config = self.create_analysis_config()
-        pipeline = SimpleProcessingPipeline(config=config, database=mock_database, halcon_adapter=MockHalconAdapter())
+        pipeline = SimpleProcessingPipeline(config=config, halcon_adapter=MockHalconAdapter())
 
         frames = [self.create_test_frame(i) for i in range(3)]
         results = pipeline.process_frames(frames)
@@ -450,9 +443,9 @@ class TestSimpleProcessingPipeline:
         assert len(results) == 3
         assert all(r.frame_sequence == i for i, r in enumerate(results))
 
-    def test_stats_tracking(self, mock_database):
+    def test_stats_tracking(self):
         config = self.create_analysis_config()
-        pipeline = SimpleProcessingPipeline(config=config, database=mock_database, halcon_adapter=MockHalconAdapter())
+        pipeline = SimpleProcessingPipeline(config=config, halcon_adapter=MockHalconAdapter())
         frame = self.create_test_frame(0)
 
         pipeline.process_frame(frame)
@@ -462,9 +455,9 @@ class TestSimpleProcessingPipeline:
         assert stats.last_frame_sequence == 0
         assert stats.average_processing_time_ms > 0
 
-    def test_no_thermal_data(self, mock_database):
+    def test_no_thermal_data(self):
         config = self.create_analysis_config()
-        pipeline = SimpleProcessingPipeline(config=config, database=mock_database)
+        pipeline = SimpleProcessingPipeline(config=config)
 
         thermal = np.zeros((10, 10), dtype=np.uint16)
         thermal.setflags(write=False)
@@ -483,7 +476,7 @@ class TestSimpleProcessingPipeline:
         result = pipeline.process_frame(frame)
         assert len(result.roi_results) == 0
 
-    def test_disabled_roi(self, mock_database):
+    def test_disabled_roi(self):
         roi = ROIConfig(
             roi_id="roi_1",
             name="Disabled ROI",
@@ -494,15 +487,15 @@ class TestSimpleProcessingPipeline:
             camera_id="test_cam",
             rois={"roi_1": roi},
         )
-        pipeline = SimpleProcessingPipeline(config=config, database=mock_database)
+        pipeline = SimpleProcessingPipeline(config=config)
         frame = self.create_test_frame(0)
 
         result = pipeline.process_frame(frame)
         assert len(result.roi_results) == 0
 
-    def test_update_config(self, mock_database):
+    def test_update_config(self):
         config1 = self.create_analysis_config()
-        pipeline = SimpleProcessingPipeline(config=config1, database=mock_database)
+        pipeline = SimpleProcessingPipeline(config=config1)
 
         roi2 = ROIConfig(
             roi_id="roi_2",
@@ -518,7 +511,7 @@ class TestSimpleProcessingPipeline:
         assert pipeline.config.rois["roi_2"].name == "New ROI"
         assert "roi_1" not in pipeline.config.rois
 
-    def test_offline_source_with_pipeline(self, mock_database, tmp_path):
+    def test_offline_source_with_pipeline(self, tmp_path):
         """Test that OfflineFrameSource works with SimpleProcessingPipeline."""
         frames = []
         for i in range(3):
@@ -544,7 +537,7 @@ class TestSimpleProcessingPipeline:
         rec_dir = _write_test_recording(tmp_path, "rec_pipeline", frames)
 
         config = self.create_analysis_config()
-        pipeline = SimpleProcessingPipeline(config=config, database=mock_database, halcon_adapter=MockHalconAdapter())
+        pipeline = SimpleProcessingPipeline(config=config, halcon_adapter=MockHalconAdapter())
 
         source = open_offline_source(rec_dir)
         results = []

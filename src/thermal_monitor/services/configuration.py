@@ -30,7 +30,7 @@ class ConfigurationService:
     system configurations. Delegates to repositories for persistence.
     """
 
-    system_config: SystemConfig
+    system_config: SystemConfig = field(default_factory=SystemConfig)
     camera_configs: dict[str, CameraConfig] = field(default_factory=dict)
     analysis_configs: dict[str, AnalysisConfig] = field(default_factory=dict)
     recording_configs: dict[str, RecordingConfig] = field(default_factory=dict)
@@ -40,11 +40,6 @@ class ConfigurationService:
     _analysis_change_callbacks: list[Callable[[str, AnalysisConfig], None]] = field(default_factory=list)
     _system_change_callbacks: list[Callable[[SystemConfig], None]] = field(default_factory=list)
     _recording_change_callbacks: list[Callable[[str, RecordingConfig], None]] = field(default_factory=list)
-
-    def __init__(self, system_config: Optional[SystemConfig] = None) -> None:
-        if system_config is None:
-            system_config = SystemConfig()
-        self.system_config = system_config
 
     # --- Camera Configuration ---
 
@@ -210,7 +205,7 @@ class ConfigurationService:
         self,
         roi_id: str,
         name: str = "",
-        shape: ROIShape = ROIShape.RECT,
+        shape: ROIShape = ROIShape.RECTANGLE1,
         parameters: dict | None = None,
         unit: TemperatureUnit = TemperatureUnit.CELSIUS,
         min_warning: float | None = None,
@@ -219,10 +214,16 @@ class ConfigurationService:
         max_critical: float | None = None,
     ) -> ROIConfig:
         if parameters is None:
-            if shape == ROIShape.RECT:
-                parameters = {"x": 0, "y": 0, "width": 100, "height": 100}
+            if shape == ROIShape.RECTANGLE1:
+                parameters = {"y1": 0.0, "x1": 0.0, "y2": 100.0, "x2": 100.0}
+            elif shape == ROIShape.RECTANGLE2:
+                parameters = {"center_y": 0.0, "center_x": 0.0, "phi": 0.0, "length1": 50.0, "length2": 50.0}
             elif shape == ROIShape.CIRCLE:
-                parameters = {"x": 0, "y": 0, "radius": 50}
+                parameters = {"center_y": 0.0, "center_x": 0.0, "radius": 50.0}
+            elif shape == ROIShape.ELLIPSE:
+                parameters = {"center_y": 0.0, "center_x": 0.0, "phi": 0.0, "radius1": 50.0, "radius2": 30.0}
+            elif shape == ROIShape.POLYGON:
+                parameters = {"points": [(0.0, 0.0), (100.0, 0.0), (50.0, 100.0)]}
             else:
                 parameters = {}
 
