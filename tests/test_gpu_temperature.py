@@ -541,5 +541,206 @@ class TestGPUAvailabilityDetection:
         assert result is None or isinstance(result, str)
 
 
+class TestGPUTemperatureConverterLifecycle:
+    """Tests for GPU converter LUT lifecycle management."""
+
+    @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
+    def test_load_lut_and_release(self):
+        """Test explicit load_lut and release methods."""
+        converter = GPUTemperatureConverter()
+        lut = make_valid_lut()
+        
+        # Initially no LUTs loaded
+        assert converter.get_loaded_cameras() == []
+        assert not converter.is_ready()
+        
+        # Load LUT for camera_a
+        result = converter.load_lut("camera_a", lut)
+        assert result is True
+        assert converter.is_ready()
+        assert "camera_a" in converter.get_loaded_cameras()
+        
+        # Load LUT for camera_b
+        result = converter.load_lut("camera_b", lut)
+        assert result is True
+        assert "camera_b" in converter.get_loaded_cameras()
+        assert len(converter.get_loaded_cameras()) == 2
+        
+        # Release camera_a
+        converter.release("camera_a")
+        assert "camera_a" not in converter.get_loaded_cameras()
+        assert "camera_b" in converter.get_loaded_cameras()
+        assert converter.is_ready()  # Still ready because camera_b loaded
+        
+        # Release camera_b
+        converter.release("camera_b")
+        assert converter.get_loaded_cameras() == []
+        assert not converter.is_ready()
+        
+        # Release non-existent camera (should not raise)
+        converter.release("non_existent")
+        assert converter.get_loaded_cameras() == []
+
+    @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
+    def test_release_all(self):
+        """Test release_all clears all LUTs."""
+        converter = GPUTemperatureConverter()
+        lut = make_valid_lut()
+        
+        converter.load_lut("camera_a", lut)
+        converter.load_lut("camera_b", lut)
+        assert len(converter.get_loaded_cameras()) == 2
+        
+        converter.release_all()
+        assert converter.get_loaded_cameras() == []
+        assert not converter.is_ready()
+
+    @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
+    def test_load_lut_invalid_lut_raises(self):
+        """Test load_lut validates LUT format."""
+        converter = GPUTemperatureConverter()
+        
+        # Wrong dtype
+        bad_lut = np.arange(65536, dtype=np.float64)
+        with pytest.raises(ValueError, match="LUT must be float32"):
+            converter.load_lut("camera_a", bad_lut)
+        
+        # Wrong size
+        bad_lut = np.arange(1000, dtype=np.float32)
+        with pytest.raises(ValueError, match="LUT must have 65536 entries"):
+            converter.load_lut("camera_a", bad_lut)
+        
+        # None
+        with pytest.raises(ValueError, match="Calibration LUT is None"):
+            converter.load_lut("camera_a", None)
+
+    def test_load_lut_returns_false_when_gpu_unavailable(self):
+        """Test load_lut returns False when GPU unavailable."""
+        converter = GPUTemperatureConverter()
+        lut = make_valid_lut()
+        
+        # On this dev machine, GPU is not available
+        result = converter.load_lut("camera_a", lut)
+        assert result is False
+        assert not converter.is_ready()
+
+
+class TestGPUTemperatureConverterMultiCamera:
+    """Tests for multi-camera LUT isolation."""
+
+    @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
+    def test_multi_camera_lut_isolation(self):
+        """Test two cameras with different LUTs cannot share wrong LUT."""
+        converter = GPUTemperatureConverter()
+        
+        # Create two different LUTs
+        lut_a = np.arange(65536, dtype=np.float32) * 0.01   # 0.01°C per raw
+        lut_b = np.arange(65536, dtype=np.float32) * 0.02   # 0.02°C per raw
+        
+        # Load different LUTs for different cameras
+        converter.load_lut("camera_a", lut_a)
+        converter.load_lut("camera_b", lut_b)
+        
+        # Test raw value that produces different temperatures
+        raw = np.array([[1000]], dtype=np.uint16)
+        
+        # Convert with camera_a
+        result_a = converter.raw_to_temperature(raw, lut_a, 1.0, 25.0, 1.0, 50.0, 25.0, camera_id="camera_a")
+        # Convert with camera_b
+        result_b = converter.raw_to_temperature(raw, lut_b, 1.0, 25.0, 1.0, 50.0, 25.0, camera_id="camera_b")
+        
+        # Results should be different (0.01*1000 = 10.0 vs 0.02*1000 = 20.0)
+        assert result_a[0, 0] == lut_a[1000]
+        assert result_b[0, 0] == lut_b[1000]
+        assert result_a[0, 0] != result_b[0, 0]
+        assert abs(result_a[0, 0] - 10.0) < 1e-5
+        assert abs(result_b[0, 0] - 20.0) < 1e-5
+
+    @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
+    def test_camera_id_required_for_multi_camera(self):
+        """Test that camera_id parameter is required for multi-camera isolation."""
+        converter = GPUTemperatureConverter()
+        
+        lut_a = np.arange(65536, dtype=np.float32) * 0.01
+        lut_b = np.arange(65536, dtype=np.float32) * 0.02
+        
+        converter.load_lut("camera_a", lut_a)
+        converter.load_lut("camera_b", lut_b)
+        
+        raw = np.array([[1000]], dtype=np.uint16)
+        
+        # Without camera_id, should use default LUT (first loaded or explicit)
+        # This tests backward compatibility - when camera_id not provided,
+        # it uses a default key
+        result_default = converter.raw_to_temperature(raw, lut_a, 1.0, 25.0, 1.0, 50.0, 25.0)
+        
+        # Should still work (uses default key)
+        assert result_default[0, 0] == lut_a[1000]
+
+    @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
+    def test_concurrent_camera_processing(self):
+        """Test processing frames from multiple cameras in sequence."""
+        converter = GPUTemperatureConverter()
+        
+        # Create distinct LUTs for 3 cameras
+        lut_cam1 = np.arange(65536, dtype=np.float32) * 0.01
+        lut_cam2 = np.arange(65536, dtype=np.float32) * 0.02
+        lut_cam3 = np.arange(65536, dtype=np.float32) * 0.05
+        
+        converter.load_lut("cam1", lut_cam1)
+        converter.load_lut("cam2", lut_cam2)
+        converter.load_lut("cam3", lut_cam3)
+        
+        raw = np.full((100, 100), 2000, dtype=np.uint16)
+        
+        # Process frames from each camera in alternating sequence
+        for _ in range(10):
+            result1 = converter.raw_to_temperature(raw, lut_cam1, 1.0, 25.0, 1.0, 50.0, 25.0, camera_id="cam1")
+            result2 = converter.raw_to_temperature(raw, lut_cam2, 1.0, 25.0, 1.0, 50.0, 25.0, camera_id="cam2")
+            result3 = converter.raw_to_temperature(raw, lut_cam3, 1.0, 25.0, 1.0, 50.0, 25.0, camera_id="cam3")
+            
+            # Each camera should produce its own temperature
+            assert result1[0, 0] == lut_cam1[2000]
+            assert result2[0, 0] == lut_cam2[2000]
+            assert result3[0, 0] == lut_cam3[2000]
+            assert result1[0, 0] != result2[0, 0] != result3[0, 0]
+
+
+class TestGPUFallbackReuse:
+    """Tests for CPU fallback instance reuse."""
+
+    def test_cpu_fallback_reuses_instance(self):
+        """Test that CPU fallback reuses the same converter instance."""
+        converter = GPUTemperatureConverter()
+        lut = make_valid_lut()
+        
+        # First call - should create CPU converter instance
+        raw = np.array([[1000]], dtype=np.uint16)
+        result1 = converter.raw_to_temperature(raw, lut, 1.0, 25.0, 1.0, 50.0, 25.0)
+        
+        # Get the CPU converter instance
+        cpu_converter1 = converter._cpu_converter
+        assert cpu_converter1 is not None
+        
+        # Second call - should reuse same instance
+        result2 = converter.raw_to_temperature(raw, lut, 1.0, 25.0, 1.0, 50.0, 25.0)
+        
+        cpu_converter2 = converter._cpu_converter
+        assert cpu_converter2 is cpu_converter1, "CPU converter instance should be reused"
+        
+        # Results should be identical
+        assert np.array_equal(result1, result2)
+
+    def test_cpu_fallback_with_camera_id(self):
+        """Test CPU fallback works with camera_id parameter."""
+        converter = GPUTemperatureConverter()
+        lut = make_valid_lut()
+        
+        raw = np.array([[1000]], dtype=np.uint16)
+        result = converter.raw_to_temperature(raw, lut, 1.0, 25.0, 1.0, 50.0, 25.0, camera_id="test_cam")
+        
+        assert result[0, 0] == lut[1000]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

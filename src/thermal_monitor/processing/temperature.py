@@ -213,11 +213,11 @@ class GPUTemperatureConverter:
     GPU implementation of TemperatureConverter using CuPy.
 
     Uses the same proven V2 calibration algorithm:
-    - 65536-entry LUT per calibration range (uploaded once to GPU)
+    - 65536-entry LUT per calibration range (uploaded once to GPU per camera)
     - Vectorized GPU lookup via CuPy advanced indexing
     - Identical numerical results to CPU implementation
 
-    The LUT is uploaded to GPU memory once during initialization and reused
+    The LUT is uploaded to GPU memory once per camera and reused
     for all subsequent frames, avoiding repeated host-to-device transfers.
 
     Falls back to CPU if CuPy is unavailable or GPU memory allocation fails.
@@ -230,9 +230,9 @@ class GPUTemperatureConverter:
     ):
         self._calibration_provider = calibration_provider
         self._device_id = device_id
-        self._gpu_lut: "cp.ndarray | None" = None
-        self._lut_ready = False
+        self._gpu_luts: dict[str, "cp.ndarray"] = {}  # camera_id -> GPU LUT
         self._cp = None
+        self._cpu_converter: CPUTemperatureConverter | None = None
         self._init_cupy()
 
     def _init_cupy(self) -> None:
@@ -247,29 +247,18 @@ class GPUTemperatureConverter:
             cupy.cuda.Device(self._device_id).use()
         except Exception as e:
             self._cp = None
-            self._lut_ready = False
             from thermal_monitor.core.logging import get_logger
             logger = get_logger(__name__)
             logger.warning(f"GPUTemperatureConverter: CuPy initialization failed: {e}")
 
-    def _ensure_lut_on_gpu(self, calibration: np.ndarray | CameraCalibration) -> bool:
-        """Upload LUT to GPU if not already present."""
-        if self._cp is None:
-            return False
+    def _get_cpu_converter(self) -> CPUTemperatureConverter:
+        """Get or create the shared CPU fallback converter."""
+        if self._cpu_converter is None:
+            self._cpu_converter = CPUTemperatureConverter(self._calibration_provider)
+        return self._cpu_converter
 
-        if self._lut_ready and self._gpu_lut is not None:
-            return True
-
-        # Extract LUT array
-        if isinstance(calibration, CameraCalibration):
-            lut = calibration.get_lookup_table(0)
-            if lut is None:
-                raise RuntimeError("Lookup table not built for calibration")
-        elif isinstance(calibration, np.ndarray):
-            lut = calibration
-        else:
-            raise TypeError(f"Calibration must be CameraCalibration or np.ndarray, got {type(calibration)}")
-
+    def _validate_lut(self, lut: np.ndarray) -> None:
+        """Validate LUT format. Raises ValueError if invalid."""
         if lut is None:
             raise ValueError("Calibration LUT is None")
         if lut.dtype != np.float32:
@@ -277,20 +266,57 @@ class GPUTemperatureConverter:
         if lut.size != 65536:
             raise ValueError(f"LUT must have 65536 entries, got {lut.size}")
 
-        # Upload to GPU (async copy, then synchronize)
+    def _upload_lut(self, camera_id: str, lut: np.ndarray) -> bool:
+        """Upload a LUT to GPU for a specific camera."""
+        if self._cp is None:
+            return False
+
+        self._validate_lut(lut)
+
         try:
-            self._gpu_lut = self._cp.asarray(lut)
-            # Ensure upload completes
+            gpu_lut = self._cp.asarray(lut)
             self._cp.cuda.Stream.null.synchronize()
-            self._lut_ready = True
+            self._gpu_luts[camera_id] = gpu_lut
             return True
         except Exception as e:
             from thermal_monitor.core.logging import get_logger
             logger = get_logger(__name__)
-            logger.error(f"Failed to upload LUT to GPU: {e}")
-            self._gpu_lut = None
-            self._lut_ready = False
+            logger.error(f"Failed to upload LUT to GPU for camera {camera_id}: {e}")
+            self._gpu_luts.pop(camera_id, None)
             return False
+
+    def load_lut(self, camera_id: str, lut: np.ndarray) -> bool:
+        """
+        Explicitly load a calibration LUT for a camera.
+
+        Parameters
+        ----------
+        camera_id : str
+            Camera identifier (used as LUT registry key)
+        lut : np.ndarray
+            Calibration LUT array (65536, float32)
+
+        Returns
+        -------
+        bool
+            True if upload succeeded, False otherwise
+        """
+        return self._upload_lut(camera_id, lut)
+
+    def release(self, camera_id: str) -> None:
+        """
+        Release GPU memory for a specific camera's LUT.
+
+        Parameters
+        ----------
+        camera_id : str
+            Camera identifier
+        """
+        self._gpu_luts.pop(camera_id, None)
+
+    def release_all(self) -> None:
+        """Release all GPU LUTs."""
+        self._gpu_luts.clear()
 
     def raw_to_temperature(
         self,
@@ -301,6 +327,7 @@ class GPUTemperatureConverter:
         distance: float,
         humidity: float,
         reflected_temp: float,
+        camera_id: str | None = None,
     ) -> np.ndarray:
         """
         Convert raw thermal data to temperature values on GPU.
@@ -322,6 +349,10 @@ class GPUTemperatureConverter:
             Relative humidity % (accepted for protocol, not used in V2 algorithm)
         reflected_temp : float
             Reflected temperature °C (accepted for protocol, not used in V2 algorithm)
+        camera_id : str | None
+            Optional camera identifier for multi-camera LUT isolation.
+            When provided, uses the camera-specific LUT loaded via load_lut().
+            When None, uses a default LUT (backward compatibility).
 
         Returns
         -------
@@ -339,22 +370,43 @@ class GPUTemperatureConverter:
         """
         if self._cp is None:
             # CuPy not available - fall back to CPU
-            cpu_converter = CPUTemperatureConverter(self._calibration_provider)
+            cpu_converter = self._get_cpu_converter()
             return cpu_converter.raw_to_temperature(
                 raw_data, calibration, emissivity, ambient_temp, distance, humidity, reflected_temp
             )
 
-        # Handle calibration input
-        if calibration is None and self._calibration_provider is not None:
-            raise ValueError("Calibration array required when no camera_id available")
+        # Determine which LUT to use
+        lut_key = camera_id if camera_id is not None else "__default__"
+        gpu_lut = self._gpu_luts.get(lut_key)
 
-        # Ensure LUT is on GPU
-        if not self._ensure_lut_on_gpu(calibration):
-            # GPU upload failed - fall back to CPU
-            cpu_converter = CPUTemperatureConverter(self._calibration_provider)
-            return cpu_converter.raw_to_temperature(
-                raw_data, calibration, emissivity, ambient_temp, distance, humidity, reflected_temp
-            )
+        # If no LUT for this camera, try to upload from calibration parameter
+        if gpu_lut is None:
+            if calibration is None:
+                if self._calibration_provider is not None and camera_id is not None:
+                    calibration = self._calibration_provider.get_calibration(camera_id)
+                if calibration is None:
+                    raise ValueError(f"No calibration available for camera {camera_id}")
+
+            # Extract LUT array from calibration
+            if isinstance(calibration, CameraCalibration):
+                lut = calibration.get_lookup_table(0)
+                if lut is None:
+                    raise RuntimeError("Lookup table not built for calibration")
+            elif isinstance(calibration, np.ndarray):
+                lut = calibration
+            else:
+                raise TypeError(f"Calibration must be CameraCalibration or np.ndarray, got {type(calibration)}")
+
+            self._validate_lut(lut)
+
+            # Upload LUT for this camera
+            if not self._upload_lut(lut_key, lut):
+                # GPU upload failed - fall back to CPU
+                cpu_converter = self._get_cpu_converter()
+                return cpu_converter.raw_to_temperature(
+                    raw_data, calibration, emissivity, ambient_temp, distance, humidity, reflected_temp
+                )
+            gpu_lut = self._gpu_luts[lut_key]
 
         try:
             # Convert raw data to uint16 (no copy if already uint16)
@@ -364,7 +416,7 @@ class GPUTemperatureConverter:
             gpu_raw = self._cp.asarray(raw_uint16)
 
             # GPU LUT lookup - the core operation
-            gpu_temp = self._gpu_lut[gpu_raw]
+            gpu_temp = gpu_lut[gpu_raw]
 
             # Download result to host
             temp_image = self._cp.asnumpy(gpu_temp)
@@ -374,16 +426,16 @@ class GPUTemperatureConverter:
         except Exception as e:
             from thermal_monitor.core.logging import get_logger
             logger = get_logger(__name__)
-            logger.error(f"GPU conversion failed, falling back to CPU: {e}")
+            logger.error(f"GPU conversion failed for camera {lut_key}, falling back to CPU: {e}")
             # Fallback to CPU on any GPU error
-            cpu_converter = CPUTemperatureConverter(self._calibration_provider)
+            cpu_converter = self._get_cpu_converter()
             return cpu_converter.raw_to_temperature(
                 raw_data, calibration, emissivity, ambient_temp, distance, humidity, reflected_temp
             )
 
     def is_ready(self) -> bool:
-        """Check if GPU converter is ready (CuPy available and LUT uploaded)."""
-        return self._cp is not None and self._lut_ready
+        """Check if GPU converter is ready (CuPy available and at least one LUT uploaded)."""
+        return self._cp is not None and len(self._gpu_luts) > 0
 
     def get_device_name(self) -> str | None:
         """Get GPU device name if available."""
@@ -394,3 +446,7 @@ class GPUTemperatureConverter:
             return name.decode() if isinstance(name, bytes) else name
         except Exception:
             return None
+
+    def get_loaded_cameras(self) -> list[str]:
+        """Get list of camera IDs with loaded LUTs."""
+        return list(self._gpu_luts.keys())
