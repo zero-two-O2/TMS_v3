@@ -16,12 +16,13 @@ from thermal_monitor.core.models import (
     RecordingState,
     RecordingTrigger,
 )
-from thermal_monitor.processing.sources import OfflineFrameSource
+from thermal_monitor.offline import OfflineFrameSource, open_offline_source
 from thermal_monitor.storage.recording import (
-    FileRecordingSink,
     NullRecordingSink,
     Recorder,
     RollingFrameBuffer,
+    RecordingWriteMetadata,
+    RecordingWriter,
 )
 
 
@@ -227,64 +228,94 @@ class TestRecorder:
         assert metadata2.recording_id == metadata1.recording_id
 
 
-class TestFileRecordingSink:
-    def test_open_close(self, tmp_path):
-        sink = FileRecordingSink(tmp_path)
-        metadata = RecordingMetadata(
-            recording_id="test_rec",
-            camera_id="test_cam",
-            trigger=RecordingTrigger.ALARM,
-            state=RecordingState.RECORDING,
-            start_timestamp=1.0,
-            start_sequence=0,
-        )
-        sink.open(metadata)
-        assert sink.get_file_path() is not None
-        sink.close()
+def _make_test_frame(camera_id: str, sequence: int, timestamp: float) -> Frame:
+    thermal = np.zeros((10, 10), dtype=np.uint16)
+    thermal.setflags(write=False)
+    thermal_meta = StreamMetadata(present=True, width=10, height=10, pixel_format="IR_Data")
+    descriptor = FrameDescriptor(
+        camera_id=camera_id,
+        sequence=sequence,
+        timestamp=timestamp,
+        monotonic_timestamp=timestamp,
+        thermal=thermal_meta,
+        visible=StreamMetadata(present=False),
+        sync=SyncInfo(status=SyncStatus.MISSING_VISIBLE),
+    )
+    return Frame(descriptor=descriptor, payload=FramePayload(thermal=thermal))
 
-    def test_write_frame(self, tmp_path):
-        import numpy as np
-        sink = FileRecordingSink(tmp_path)
-        metadata = RecordingMetadata(
-            recording_id="test_rec",
-            camera_id="test_cam",
-            trigger=RecordingTrigger.ALARM,
-            state=RecordingState.RECORDING,
-            start_timestamp=1.0,
-            start_sequence=0,
-        )
-        sink.open(metadata)
 
-        thermal = np.zeros((10, 10), dtype=np.uint16)
-        thermal.setflags(write=False)
-        thermal_meta = StreamMetadata(present=True, width=10, height=10)
-        descriptor = FrameDescriptor(
-            camera_id="test_cam",
-            sequence=0,
-            timestamp=1.0,
-            monotonic_timestamp=1.0,
-            thermal=thermal_meta,
-            visible=StreamMetadata(present=False),
-            sync=SyncInfo(status=SyncStatus.MISSING_VISIBLE),
-        )
-        frame = Frame(descriptor=descriptor, payload=FramePayload(thermal=thermal))
+def _default_write_metadata(recording_id: str, cameras: list[str]) -> RecordingWriteMetadata:
+    return RecordingWriteMetadata(
+        recording_id=recording_id,
+        cameras=cameras,
+        streams={cam: ["IR"] for cam in cameras},
+        camera_snapshots=[{"camera_id": cam} for cam in cameras],
+        roi_snapshots=[],
+        ptz_snapshots=[],
+        calibration_snapshots=[],
+        alarm_snapshots=[],
+    )
 
-        sink.write_frame(frame)
-        sink.close()
 
-        # File should exist
-        assert Path(sink.get_file_path()).exists()
+class TestNewRecordingFormat:
+    def test_write_and_read_frame(self, tmp_path):
+        """Test writing frames with RecordingWriter and reading with OfflineFrameSource."""
+        frames = [_make_test_frame("test_cam", i, 100.0 + i) for i in range(3)]
 
-        # Test loading from file
-        offline_source = OfflineFrameSource.from_recording_file(sink.get_file_path())
-        assert len(offline_source) == 1
-        assert offline_source.camera_id == "test_cam"
-        loaded_frame = offline_source.get_next_frame()
-        assert loaded_frame is not None
-        assert loaded_frame.descriptor.camera_id == "test_cam"
-        assert loaded_frame.descriptor.sequence == 0
-        assert loaded_frame.payload.thermal is not None
-        assert loaded_frame.payload.thermal.shape == (10, 10)
+        meta = _default_write_metadata("rec_test", ["test_cam"])
+        writer = RecordingWriter(tmp_path, meta, chunk_target_bytes=64 * 1024)
+        writer.open()
+        for frame in frames:
+            writer.write_frame(frame)
+        rec_dir = writer.finalize()
+
+        # Read back using OfflineFrameSource
+        source = open_offline_source(rec_dir)
+        assert len(source) == 3
+        assert source.camera_id == "test_cam"
+
+        loaded = []
+        while True:
+            frame = source.get_next_frame()
+            if frame is None:
+                break
+            loaded.append(frame)
+
+        assert len(loaded) == 3
+        for i, frame in enumerate(loaded):
+            assert frame.descriptor.camera_id == "test_cam"
+            assert frame.descriptor.sequence == i
+            assert frame.payload.thermal is not None
+            assert frame.payload.thermal.shape == (10, 10)
+        source.close()
+
+    def test_multiple_cameras(self, tmp_path):
+        """Test recording with multiple cameras."""
+        frames = [
+            _make_test_frame("cam_a", i, 100.0 + i) for i in range(2)
+        ] + [
+            _make_test_frame("cam_b", i, 200.0 + i) for i in range(2)
+        ]
+
+        meta = _default_write_metadata("rec_multi", ["cam_a"])
+        writer = RecordingWriter(tmp_path, meta, chunk_target_bytes=64 * 1024)
+        writer.open()
+        for frame in frames:
+            writer.write_frame(frame)
+        rec_dir = writer.finalize()
+
+        # Read all cameras
+        source = open_offline_source(rec_dir)
+        assert len(source) == 4
+        assert set(source.camera_ids) == {"cam_a", "cam_b"}
+
+        # Filter to cam_b
+        source_cam_b = open_offline_source(rec_dir, camera_id="cam_b")
+        assert len(source_cam_b) == 2
+        for frame in source_cam_b:
+            assert frame.descriptor.camera_id == "cam_b"
+        source_cam_b.close()
+        source.close()
 
 
 if __name__ == "__main__":

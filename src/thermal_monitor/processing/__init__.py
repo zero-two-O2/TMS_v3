@@ -19,7 +19,6 @@ from thermal_monitor.processing.pipeline import (
 
 from thermal_monitor.processing.sources import (
     LiveFrameSource,
-    OfflineFrameSource,
     SyntheticFrameSource,
 )
 
@@ -39,7 +38,6 @@ __all__ = [
     "FrameSource",
     "LiveFrameSource",
     "NullAlarmEvaluator",
-    "OfflineFrameSource",
     "ProcessingPipeline",
     "ProcessingStats",
     "SimpleProcessingPipeline",

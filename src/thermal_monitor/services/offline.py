@@ -9,7 +9,8 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from thermal_monitor.core.models import AnalysisConfig, CameraConfig
-from thermal_monitor.processing import FrameSource, OfflineFrameSource, SyntheticFrameSource
+from thermal_monitor.offline import FrameSource, OfflineFrameSource, OfflineFrameSourceConfig, StreamFilter
+from thermal_monitor.processing.sources import SyntheticFrameSource
 from thermal_monitor.processing.alarms import AlarmEvaluator
 
 
@@ -43,12 +44,38 @@ class OfflineService:
         self,
         session_id: str,
         camera_id: str,
-        recording_file: str,
+        recording_dir: str,
         analysis_config: AnalysisConfig,
         evaluator: AlarmEvaluator | None = None,
+        *,
+        stream_filter: StreamFilter = StreamFilter.ALL,
+        start_timestamp: float | None = None,
+        end_timestamp: float | None = None,
     ) -> OfflineSession:
-        """Create an offline session from a recording file."""
-        source = OfflineFrameSource.from_recording_file(recording_file)
+        """Create an offline session from a recording directory.
+
+        Args:
+            session_id: Unique session identifier.
+            camera_id: Camera ID to filter (or None for all cameras in recording).
+            recording_dir: Path to the recording directory (Stage 5C format).
+            analysis_config: Analysis configuration for processing.
+            evaluator: Optional alarm evaluator.
+            stream_filter: Filter by stream type (IR, VL, or ALL).
+            start_timestamp: Only include frames at or after this timestamp.
+            end_timestamp: Only include frames at or before this timestamp.
+
+        Returns:
+            OfflineSession with opened OfflineFrameSource.
+        """
+        config = OfflineFrameSourceConfig(
+            camera_id=camera_id,
+            stream_filter=stream_filter,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+        )
+        source = OfflineFrameSource(recording_dir, config=config)
+        source.open()
+
         if evaluator is None:
             evaluator = AlarmEvaluator(config=analysis_config)
 

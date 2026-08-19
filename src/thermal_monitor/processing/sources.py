@@ -1,5 +1,11 @@
 """
-processing.sources -- FrameSource implementations for live, offline, and synthetic sources.
+processing.sources -- FrameSource implementations for live and synthetic sources.
+
+The OfflineFrameSource has been moved to thermal_monitor.offline.source for
+proper architectural separation:
+- storage owns recording persistence
+- offline owns reading/replay of recordings
+- processing owns processing algorithms
 """
 
 from __future__ import annotations
@@ -43,175 +49,6 @@ class LiveFrameSource:
     @property
     def is_live(self) -> bool:
         return True
-
-
-@dataclass
-class OfflineFrameSource:
-    """FrameSource for offline playback of recorded frames.
-
-    Loads frames from a recording and provides sequential or random access.
-    """
-
-    camera_id: str
-    frames: list[Frame]
-    _index: int = 0
-
-    @classmethod
-    def from_recording_file(cls, file_path: str) -> OfflineFrameSource:
-        """Load frames from a recording file.
-
-        Args:
-            file_path: Path to the recording file.
-
-        Returns:
-            OfflineFrameSource with loaded frames.
-        """
-        import pickle
-        import json
-
-        frames = []
-        with open(file_path, "rb") as f:
-            # Read header
-            header_len = int.from_bytes(f.read(4), "little")
-            header_json = f.read(header_len).decode("utf-8")
-            header = json.loads(header_json)
-
-            # Verify magic
-            if header.get("magic") != "TMS3REC":
-                raise ValueError("Invalid recording file format")
-
-            # Read frames
-            while True:
-                frame_len_bytes = f.read(4)
-                if not frame_len_bytes:
-                    break
-                frame_len = int.from_bytes(frame_len_bytes, "little")
-                frame_data = f.read(frame_len)
-                if not frame_data:
-                    break
-
-                frame_dict = pickle.loads(frame_data)
-                frame = cls._deserialize_frame(frame_dict)
-                frames.append(frame)
-
-        if frames:
-            camera_id = frames[0].descriptor.camera_id
-        else:
-            camera_id = header.get("metadata", {}).get("camera_id", "unknown")
-
-        return cls(camera_id=camera_id, frames=frames)
-
-    @staticmethod
-    def _deserialize_frame(frame_dict: dict) -> Frame:
-        """Deserialize a frame from the recording format."""
-        import numpy as np
-
-        desc_data = frame_dict["descriptor"]
-        payload_data = frame_dict["payload"]
-
-        # Reconstruct StreamMetadata
-        thermal_meta = StreamMetadata(
-            present=desc_data["thermal"]["present"],
-            width=desc_data["thermal"]["width"],
-            height=desc_data["thermal"]["height"],
-            pixel_format=desc_data["thermal"]["pixel_format"],
-            bits_per_channel=desc_data["thermal"]["bits_per_channel"],
-            dtype=desc_data["thermal"]["dtype"],
-            byte_count=desc_data["thermal"]["byte_count"],
-            sequence=desc_data["thermal"]["sequence"],
-            timestamp=desc_data["thermal"]["timestamp"],
-            monotonic_timestamp=desc_data["thermal"]["monotonic_timestamp"],
-            hardware_timestamp=desc_data["thermal"]["hardware_timestamp"],
-        )
-        visible_meta = StreamMetadata(
-            present=desc_data["visible"]["present"],
-            width=desc_data["visible"]["width"],
-            height=desc_data["visible"]["height"],
-            pixel_format=desc_data["visible"]["pixel_format"],
-            bits_per_channel=desc_data["visible"]["bits_per_channel"],
-            dtype=desc_data["visible"]["dtype"],
-            byte_count=desc_data["visible"]["byte_count"],
-            sequence=desc_data["visible"]["sequence"],
-            timestamp=desc_data["visible"]["timestamp"],
-            monotonic_timestamp=desc_data["visible"]["monotonic_timestamp"],
-            hardware_timestamp=desc_data["visible"]["hardware_timestamp"],
-        )
-        sync = SyncInfo(
-            status=SyncStatus(desc_data["sync"]["status"]),
-            time_delta=desc_data["sync"]["time_delta"],
-        )
-
-        descriptor = FrameDescriptor(
-            camera_id=desc_data["camera_id"],
-            sequence=desc_data["sequence"],
-            timestamp=desc_data["timestamp"],
-            monotonic_timestamp=desc_data["monotonic_timestamp"],
-            thermal=thermal_meta,
-            visible=visible_meta,
-            sync=sync,
-            metadata=desc_data.get("metadata", {}),
-        )
-
-        # Reconstruct payload
-        thermal = None
-        if frame_dict["thermal_bytes"]:
-            thermal = np.frombuffer(
-                frame_dict["thermal_bytes"],
-                dtype=np.dtype(payload_data["thermal_dtype"])
-            ).reshape(payload_data["thermal_shape"])
-            thermal.setflags(write=False)
-
-        visible = None
-        if frame_dict["visible_bytes"]:
-            visible = np.frombuffer(
-                frame_dict["visible_bytes"],
-                dtype=np.dtype(payload_data["visible_dtype"])
-            ).reshape(payload_data["visible_shape"])
-            visible.setflags(write=False)
-
-        return Frame(
-            descriptor=descriptor,
-            payload=FramePayload(thermal=thermal, visible=visible),
-        )
-
-    def get_next_frame(self) -> Frame | None:
-        if self._index < len(self.frames):
-            frame = self.frames[self._index]
-            self._index += 1
-            return frame
-        return None
-
-    def get_latest_frame(self) -> Frame | None:
-        if self.frames:
-            return self.frames[-1]
-        return None
-
-    def seek(self, sequence: int) -> bool:
-        # Find frame with matching sequence
-        for i, frame in enumerate(self.frames):
-            if frame.descriptor.sequence == sequence:
-                self._index = i
-                return True
-        return False
-
-    def seek_to_index(self, index: int) -> bool:
-        if 0 <= index < len(self.frames):
-            self._index = index
-            return True
-        return False
-
-    @property
-    def is_live(self) -> bool:
-        return False
-
-    def __len__(self) -> int:
-        return len(self.frames)
-
-    def __iter__(self) -> Iterator[Frame]:
-        return iter(self.frames)
-
-    def reset(self) -> None:
-        self._index = 0
 
 
 class SyntheticFrameSource:

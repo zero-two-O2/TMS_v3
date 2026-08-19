@@ -372,8 +372,8 @@ metadata tail. No pickle, no NumPy object serialization.
 │  record_type     : 1 byte    (u8)  = 0x01 (frame record)      │
 │  stream_type     : 1 byte    (u8)  = 0x01 IR | 0x02 VL        │
 │  reserved        : 1 byte    (u8)  = 0                        │
-│  camera_id_len   : 2 bytes   (u16 LE)                         │
-│  camera_id       : camera_id_len bytes  (UTF-8)               │
+│  camera_id_len   : 2 bytes   (u16 LE)  (UTF-8 byte length)   │
+│  camera_id       : fixed 37 bytes (UTF-8, NUL padded)        │
 │  sequence        : 8 bytes   (u64 LE)  (per camera, per stream)│
 │  timestamp       : 8 bytes   (f64 LE)  (wall clock, epoch s)  │
 │  monotonic       : 8 bytes   (f64 LE)  (recording-relative s) │
@@ -387,7 +387,7 @@ metadata tail. No pickle, no NumPy object serialization.
 │  sync_status     : 1 byte    (u8)     (see below)             │
 │  sync_group_id   : 8 bytes   (s64 LE)  (-1 = none)            │
 │  metadata_len    : 4 bytes   (u32 LE)                         │
-│  reserved2       : 12 bytes                                   │
+│  reserved2       : 14 bytes                                  │
 ├──────────────────────────────────────────────────────────────┤
 │  Metadata tail (variable)                                     │
 │  JSON UTF-8: acquisition metadata, packet info, drop info,    │
@@ -403,7 +403,7 @@ metadata tail. No pickle, no NumPy object serialization.
 ### Enums
 
 | `stream_type` | Value |
-|---|---|
+|---------------|-------|
 | IR | `0x01` |
 | VL (visible) | `0x02` |
 
