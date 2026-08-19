@@ -262,7 +262,8 @@ class TestCPUGPUParity:
         result = converter.raw_to_temperature(raw, lut, 1.0, 25.0, 1.0, 50.0, 25.0)
         
         assert converter.is_ready()
-        assert converter._gpu_lut is not None
+        assert "__default__" in converter._gpu_luts
+        assert converter._gpu_luts["__default__"] is not None
         assert result[0, 0] == lut[100]
     
     @pytest.mark.skipif(not is_gpu_available(), reason="GPU not available")
