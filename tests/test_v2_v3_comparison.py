@@ -3,6 +3,9 @@ V2 vs V3 Calibration Comparison Test
 
 Validates that V3 implementation produces identical output to V2 reference
 implementation using the same calibration blob and raw input data.
+
+These tests are conditionally collected - they only run when the V2 reference
+package is available at reference/TMS_v2/calibration/.
 """
 
 from __future__ import annotations
@@ -11,6 +14,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -23,17 +27,27 @@ from thermal_monitor.calibration.models import (
 from thermal_monitor.calibration.parser import CalibrationParser as V3CalibrationParser
 from thermal_monitor.calibration.processor import CalibrationProcessor as V3CalibrationProcessor
 
-# Import V2 implementation from reference
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "reference" / "TMS_v2"))
+# Conditionally import V2 implementation from reference
+# This allows tests to gracefully skip when V2 reference is not present
+v2_path = Path(__file__).resolve().parent.parent / "reference" / "TMS_v2"
+if v2_path.exists():
+    sys.path.insert(0, str(v2_path))
+    try:
+        from calibration.calibration_models import (
+            CameraCalibration as V2CameraCalibration,
+            CalibrationRange as V2CalibrationRange,
+            UniverseSegment as V2UniverseSegment,
+        )
+        from calibration.calibration_parser import CalibrationParser as V2CalibrationParser
+        from calibration.calibration_processor import CalibrationProcessor as V2CalibrationProcessor
+        V2_AVAILABLE = True
+    except ImportError:
+        V2_AVAILABLE = False
+else:
+    V2_AVAILABLE = False
 
-from calibration.calibration_models import (
-    CameraCalibration as V2CameraCalibration,
-    CalibrationRange as V2CalibrationRange,
-    UniverseSegment as V2UniverseSegment,
-)
-from calibration.calibration_parser import CalibrationParser as V2CalibrationParser
-from calibration.calibration_processor import CalibrationProcessor as V2CalibrationProcessor
-
+# Skip all tests in this module if V2 reference is not available
+pytestmark = pytest.mark.skipif(not V2_AVAILABLE, reason="V2 reference package not available")
 
 V2_CALIBRATION_FILE = Path("reference/TMS_v2/assets/calibration/calibration_blob.txt")
 
@@ -41,7 +55,6 @@ V2_CALIBRATION_FILE = Path("reference/TMS_v2/assets/calibration/calibration_blob
 def test_v2_v3_parser_output():
     """Test that V3 parser produces same calibration data as V2 parser."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -81,7 +94,6 @@ def test_v2_v3_parser_output():
 def test_v2_v3_lut_generation():
     """Test that V3 LUT generation matches V2 exactly."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -119,7 +131,6 @@ def test_v2_v3_lut_generation():
 def test_v2_v3_raw_to_temperature():
     """Test that V3 raw_to_temperature matches V2 exactly."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -155,7 +166,6 @@ def test_v2_v3_raw_to_temperature():
 def test_v2_v3_temperature_to_display():
     """Test that V3 temperature_to_display matches V2."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     # Use a known temperature image
@@ -177,7 +187,6 @@ def test_v2_v3_temperature_to_display():
 def test_v2_v3_raw_to_display():
     """Test that V3 raw_to_display matches V2."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -205,7 +214,6 @@ def test_v2_v3_raw_to_display():
 def test_v2_v3_statistics():
     """Test that V3 statistics match V2."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -234,7 +242,6 @@ def test_v2_v3_statistics():
 def test_v2_v3_roi_statistics():
     """Test that V3 ROI statistics match V2."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -285,7 +292,6 @@ def test_v2_v3_segment_solver():
 def test_v2_v3_raw_value_to_temperature():
     """Test that V3 raw_value_to_temperature matches V2."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()
@@ -314,7 +320,6 @@ def test_v2_v3_raw_value_to_temperature():
 def test_v2_v3_deterministic():
     """Test that both V2 and V3 produce deterministic output."""
     if not V2_CALIBRATION_FILE.exists():
-        import pytest
         pytest.skip(f"Calibration file not found: {V2_CALIBRATION_FILE}")
 
     v2_parser = V2CalibrationParser()

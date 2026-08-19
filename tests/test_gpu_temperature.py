@@ -475,6 +475,10 @@ class TestPipelineIntegration:
         config = self.create_analysis_config()
         converter = GPUTemperatureConverter()
         
+        class MockCalibrationProvider:
+            def get_calibration(self, camera_id: str):
+                return lut
+        
         class MockHalcon:
             def generate_regions(self, rois): return "mock"
             def extract_statistics(self, regions, temp_image, rois=None):
@@ -485,6 +489,7 @@ class TestPipelineIntegration:
         pipeline = SimpleProcessingPipeline(
             config=config,
             temperature_converter=converter,
+            calibration_provider=MockCalibrationProvider(),
             halcon_adapter=MockHalcon(),
         )
         
