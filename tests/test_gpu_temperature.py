@@ -614,15 +614,23 @@ class TestGPUTemperatureConverterLifecycle:
         with pytest.raises(ValueError, match="Calibration LUT is None"):
             converter.load_lut("camera_a", None)
 
-    def test_load_lut_returns_false_when_gpu_unavailable(self):
-        """Test load_lut returns False when GPU unavailable."""
+    def test_load_lut_behavior_matches_gpu_availability(self):
+        """Test load_lut returns appropriate value based on GPU availability."""
         converter = GPUTemperatureConverter()
         lut = make_valid_lut()
         
-        # On this dev machine, GPU is not available
         result = converter.load_lut("camera_a", lut)
-        assert result is False
-        assert not converter.is_ready()
+        
+        if is_gpu_available():
+            # On GPU machine, load_lut should succeed
+            assert result is True
+            assert converter.is_ready()
+            assert "camera_a" in converter.get_loaded_cameras()
+        else:
+            # On non-GPU machine, load_lut should return False
+            assert result is False
+            assert not converter.is_ready()
+            assert converter.get_loaded_cameras() == []
 
 
 class TestGPUTemperatureConverterMultiCamera:

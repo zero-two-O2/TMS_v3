@@ -133,6 +133,11 @@ def benchmark_gpu_conversion(
         return {"error": "GPU converter not ready"}
     
     cp = converter._cp
+    # Get the default LUT for benchmarking
+    gpu_lut = converter._gpu_luts.get("__default__")
+    if gpu_lut is None:
+        return {"error": "Default LUT not loaded"}
+    
     results = {
         "total_times_ms": [],
         "h2d_times_ms": [],
@@ -166,7 +171,7 @@ def benchmark_gpu_conversion(
         
         # GPU Kernel (LUT lookup)
         kernel_start = time.perf_counter()
-        gpu_temp = converter._gpu_lut[gpu_raw]
+        gpu_temp = gpu_lut[gpu_raw]
         cp.cuda.Stream.null.synchronize()
         kernel_time = (time.perf_counter() - kernel_start) * 1000
         
@@ -331,6 +336,8 @@ def main():
     gpu_converter = None
     if gpu_avail:
         gpu_converter = GPUTemperatureConverter()
+        # Load default LUT for GPU benchmarks
+        gpu_converter.load_lut("__default__", lut)
         print(f"\nGPU Converter initialized: {gpu_converter.is_ready()}")
         if gpu_converter.is_ready():
             print(f"GPU Device: {gpu_converter.get_device_name()}")
