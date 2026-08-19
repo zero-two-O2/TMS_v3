@@ -1,0 +1,39 @@
+{
+  "application": {
+    "name": "TV46L Capture Tool",
+    "version": "1.0.0-experimental"
+  },
+  "cameras": [
+    "HB25100004"
+  ],
+  "chunk_count": 1,
+  "created_at": "2026-08-19T05:53:16.915991Z",
+  "duration_seconds": 4.885749578475952,
+  "end_time": 1787118801.8065577,
+  "finalized_at": "2026-08-19T05:53:21.924441Z",
+  "format_version": {
+    "major": 1,
+    "minor": 0
+  },
+  "frame_count": 37,
+  "index_count": 37,
+  "post_alarm_seconds": 0.0,
+  "pre_alarm_seconds": 0.0,
+  "recording_id": "hardware_test_001",
+  "sql_metadata": {
+    "path": "hardware_test_001",
+    "recording_id": "hardware_test_001",
+    "status": "COMPLETE"
+  },
+  "start_time": 1787118796.920808,
+  "status": "COMPLETE",
+  "streams": {
+    "HB25100004": {
+      "IR": true,
+      "VL": true
+    }
+  },
+  "sync_groups": 0,
+  "trigger": "diagnostic",
+  "trigger_alarm_id": null
+}

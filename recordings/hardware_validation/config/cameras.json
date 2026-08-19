@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "camera_id": "HB25100004",
+      "identity": {
+        "camera_id": "HB25100004"
+      },
+      "ip": "169.254.24.69",
+      "model": "TV46L"
+    }
+  ],
+  "schema_version": 1,
+  "snapshot_timestamp": "2026-08-19T06:11:44.379627Z",
+  "source": "file"
+}
