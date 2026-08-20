@@ -248,15 +248,64 @@ class TV46LDriver:
             array = array.copy()
             array.setflags(write=False)
 
+        # Read hardware metadata from HALCON
+        hardware_timestamp = None
+        frame_id = None
+        packet_stats = None
+        try:
+            ts_ns = ha.get_framegrabber_param(self._framegrabber, "buffer_timestamp_ns")
+            if isinstance(ts_ns, (list, tuple)) and len(ts_ns) == 1:
+                ts_ns = ts_ns[0]
+            if ts_ns is not None:
+                hardware_timestamp = float(ts_ns) / 1e9
+        except Exception:
+            pass
+
+        try:
+            fid = ha.get_framegrabber_param(self._framegrabber, "buffer_frameid")
+            if isinstance(fid, (list, tuple)) and len(fid) == 1:
+                fid = fid[0]
+            if fid is not None:
+                frame_id = int(fid)
+        except Exception:
+            pass
+
+        try:
+            seen = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamSeenPacketCount")
+            lost = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamLostPacketCount")
+            incomplete = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamIncompleteBlockCount")
+            discarded = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamDiscardedBlockCount")
+
+            def unwrap(val):
+                if isinstance(val, (list, tuple)) and len(val) == 1:
+                    return val[0]
+                return val
+
+            packet_stats = {
+                "packets_seen": int(unwrap(seen)) if unwrap(seen) is not None else 0,
+                "packets_lost": int(unwrap(lost)) if unwrap(lost) is not None else 0,
+                "blocks_incomplete": int(unwrap(incomplete)) if unwrap(incomplete) is not None else 0,
+                "blocks_discarded": int(unwrap(discarded)) if unwrap(discarded) is not None else 0,
+            }
+        except Exception:
+            packet_stats = {
+                "packets_seen": 0,
+                "packets_lost": 0,
+                "blocks_incomplete": 0,
+                "blocks_discarded": 0,
+            }
+
         converted = time.perf_counter()
 
         return GrabResult(
             thermal=array,
             thermal_format=self._config.stream_source_thermal,
-            hardware_timestamp=None,
+            hardware_timestamp=hardware_timestamp,
             grab_started=started,
             grab_completed=completed,
             converted_at=converted,
+            frame_id=frame_id,
+            packet_stats=packet_stats,
         )
 
     # ------------------------------------------------------------------

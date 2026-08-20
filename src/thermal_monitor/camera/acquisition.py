@@ -190,6 +190,12 @@ class AcquisitionWorker:
         self._start_time = time.perf_counter()
         self._last_error: str | None = None
 
+        # Acquisition statistics (packet-level from HALCON)
+        self._frames_received = 0
+        self._packets_lost = 0
+        self._blocks_incomplete = 0
+        self._prev_packet_stats: dict[str, int] | None = None
+
     # ------------------------------------------------------------------
     # Public control
     # ------------------------------------------------------------------
@@ -251,6 +257,9 @@ class AcquisitionWorker:
                 current_fps=current_fps,
                 average_fps=self._published / elapsed,
                 last_error=self._last_error,
+                frames_received=self._frames_received,
+                packets_lost=self._packets_lost,
+                blocks_incomplete=self._blocks_incomplete,
             )
 
     # ------------------------------------------------------------------
@@ -361,6 +370,8 @@ class AcquisitionWorker:
             with self._stats_lock:
                 self._consecutive_failures = 0
                 self._reconnect_count += 1
+                # Reset packet stats baseline after reconnect
+                self._prev_packet_stats = None
             self._set_state(AcquisitionState.ACQUIRING)
             return True
         return False
@@ -398,6 +409,12 @@ class AcquisitionWorker:
             visible_timestamp = now_wall
             visible_mono = now_mono
 
+        # Determine thermal stream sequence from hardware frame_id if available,
+        # otherwise fall back to acquisition worker's internal sequence.
+        thermal_sequence = None
+        if result.frame_id is not None:
+            thermal_sequence = result.frame_id
+
         thermal_meta = StreamMetadata(
             present=thermal is not None,
             width=thermal.shape[1] if thermal is not None else None,
@@ -405,7 +422,7 @@ class AcquisitionWorker:
             pixel_format=result.thermal_format,
             dtype=str(thermal.dtype) if thermal is not None else None,
             byte_count=thermal.nbytes if thermal is not None else None,
-            sequence=None,
+            sequence=thermal_sequence,
             timestamp=thermal_timestamp,
             monotonic_timestamp=thermal_mono,
             hardware_timestamp=result.hardware_timestamp,
@@ -446,6 +463,7 @@ class AcquisitionWorker:
             "grab_completed": result.grab_completed,
             "converted_at": result.converted_at,
             "grab_duration_s": result.grab_completed - result.grab_started,
+            "packet_stats": result.packet_stats,
         })
 
         descriptor = FrameDescriptor(
@@ -464,7 +482,21 @@ class AcquisitionWorker:
         result = self._publisher.publish(frame)
         with self._stats_lock:
             self._total_acquired += 1
+            self._frames_received += 1
             self._last_grab_duration = frame.descriptor.metadata.get("grab_duration_s", 0.0)
+
+            # Calculate packet counter deltas from HALCON
+            packet_stats = frame.descriptor.metadata.get("packet_stats")
+            if packet_stats and isinstance(packet_stats, dict):
+                if self._prev_packet_stats is not None:
+                    lost_delta = packet_stats.get("packets_lost", 0) - self._prev_packet_stats.get("packets_lost", 0)
+                    incomplete_delta = packet_stats.get("blocks_incomplete", 0) - self._prev_packet_stats.get("blocks_incomplete", 0)
+                    if lost_delta > 0:
+                        self._packets_lost += lost_delta
+                    if incomplete_delta > 0:
+                        self._blocks_incomplete += incomplete_delta
+                self._prev_packet_stats = packet_stats
+
             if result.accepted:
                 self._published += 1
                 self._publish_times.append(time.perf_counter())

@@ -19,6 +19,11 @@ from thermal_monitor.camera.model import (
     CameraIdentity,
     GrabResult,
 )
+from thermal_monitor.camera.shm import (
+    create_frame_publisher_for_camera,
+    create_ring_buffer_and_publisher,
+    create_thermal_ring_config,
+)
 
 __all__ = [
     "AcquisitionState",
@@ -34,4 +39,7 @@ __all__ = [
     "GrabResult",
     "InProcessLatestPublisher",
     "TV46LDriver",
+    "create_frame_publisher_for_camera",
+    "create_ring_buffer_and_publisher",
+    "create_thermal_ring_config",
 ]

@@ -91,6 +91,8 @@ class GrabResult:
     grab_started: float = 0.0
     grab_completed: float = 0.0
     converted_at: float = 0.0
+    frame_id: int | None = None
+    packet_stats: dict[str, int] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +110,9 @@ class AcquisitionStats:
     current_fps: float = 0.0
     average_fps: float = 0.0
     last_error: str | None = None
+    frames_received: int = 0
+    packets_lost: int = 0
+    blocks_incomplete: int = 0
 
 
 @dataclass(frozen=True, slots=True)
