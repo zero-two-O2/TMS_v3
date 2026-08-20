@@ -294,7 +294,7 @@ def _assert_processing_and_recording(m: dict) -> None:
         assert camera_id_rec == camera_id, "camera_id not preserved into ProcessingResult"
         assert has_th, "frame has no thermal payload"
         assert th_shape == (EXPECTED_HEIGHT, EXPECTED_WIDTH), f"thermal shape {th_shape}"
-        assert th_dtype == str(EXPECTED_DTYPE), f"thermal dtype {th_dtype}"
+        assert th_dtype == str(np.dtype(EXPECTED_DTYPE)), f"thermal dtype {th_dtype}"
         assert has_temp, "temperature_image missing after CPU conversion"
         assert temp_shape == (EXPECTED_HEIGHT, EXPECTED_WIDTH), f"temperature_image shape {temp_shape}"
         assert temp_dtype == str(np.float32), f"temperature_image dtype {temp_dtype}"
