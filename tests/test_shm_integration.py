@@ -28,7 +28,7 @@ from thermal_monitor.core.shm import SlotState
 def make_camera_config(**overrides) -> CameraConfig:
     defaults = {
         "identity": CameraIdentity(
-            camera_id="cam_test",
+            camera_id="cam_worker",
             serial_number="SN12345",
             model="TV46L-1-26010003@9Hz",
             vendor="Fluke Process Instruments",
@@ -167,7 +167,7 @@ class TestSharedMemoryRingIntegration:
 
     def test_basic_producer_consumer(self):
         """Test basic frame publication and consumption through ring."""
-        camera_id = "cam_test"
+        camera_id = "cam_basic"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=4)
 
         try:
@@ -196,13 +196,13 @@ class TestSharedMemoryRingIntegration:
                 assert view.descriptor.thermal.hardware_timestamp is not None
             finally:
                 consumer.close()
-                # Do NOT close ring2 - it's the same shared memory as ring
+                ring2.close()
         finally:
             ring.close()  # Only producer closes the ring
 
     def test_multiple_frames_sequence(self):
         """Test multiple frames in sequence with correct ordering."""
-        camera_id = "cam_seq"
+        camera_id = "cam_ring_seq"
         # Use depth > number of frames to avoid wraparound
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=16)
 
@@ -231,6 +231,7 @@ class TestSharedMemoryRingIntegration:
                 assert stats.gaps == 0
             finally:
                 consumer.close()
+                ring2.close()
         finally:
             ring.close()
 
@@ -264,6 +265,7 @@ class TestSharedMemoryRingIntegration:
                 assert stats.overwritten > 0
             finally:
                 consumer.close()
+                ring2.close()
         finally:
             ring.close()
 
@@ -301,13 +303,14 @@ class TestSharedMemoryRingIntegration:
             finally:
                 slow_consumer.close()
                 fast_consumer.close()
-                # Do NOT close ring2, ring3
+                ring2.close()
+                ring3.close()
         finally:
             ring.close()
 
     def test_dropped_frame_accounting(self):
         """Test explicit dropped-frame accounting when ring is full."""
-        camera_id = "cam_drop"
+        camera_id = "cam_ring_drop"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=2)
 
         try:
@@ -345,13 +348,14 @@ class TestSharedMemoryRingIntegration:
             finally:
                 consumer1.close()
                 consumer2.close()
-                # Do NOT close ring2, ring3
+                ring2.close()
+                ring3.close()
         finally:
             ring.close()
 
     def test_consumer_restart(self):
         """Test consumer can restart and re-read from ring."""
-        camera_id = "cam_restart"
+        camera_id = "cam_ring_restart"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=8)
 
         try:
@@ -369,8 +373,7 @@ class TestSharedMemoryRingIntegration:
                     assert view is not None
                 consumer1.close()
             finally:
-                # Do NOT close ring2
-                pass
+                ring2.close()
 
             # Second consumer reads all (new attach to same ring)
             ring3, consumer2 = __import__('thermal_monitor.camera.shm', fromlist=['attach_ring_buffer_and_consumer']).attach_ring_buffer_and_consumer(
@@ -383,7 +386,7 @@ class TestSharedMemoryRingIntegration:
                     assert view.descriptor.sequence == seq
                 consumer2.close()
             finally:
-                pass  # Do not close ring3
+                ring3.close()
         finally:
             ring.close()
 
@@ -418,7 +421,8 @@ class TestSharedMemoryRingIntegration:
             finally:
                 consumer_a.close()
                 consumer_b.close()
-                # Do NOT close ring_a2, ring_b2
+                ring_a2.close()
+                ring_b2.close()
         finally:
             ring_a.close()
             ring_b.close()
@@ -430,7 +434,7 @@ class TestSharedMemoryRingIntegration:
         in the ring buffer descriptor format. This test verifies the
         core hardware metadata that IS preserved.
         """
-        camera_id = "cam_hw"
+        camera_id = "cam_ring_hw"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=4)
 
         try:
@@ -484,12 +488,13 @@ class TestSharedMemoryRingIntegration:
 
             finally:
                 consumer.close()
+                ring2.close()
         finally:
             ring.close()
 
     def test_raw_uint16_data_unchanged(self):
         """Test raw uint16 data remains unchanged through ring."""
-        camera_id = "cam_data"
+        camera_id = "cam_ring_data"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=4)
 
         try:
@@ -529,12 +534,13 @@ class TestSharedMemoryRingIntegration:
 
             finally:
                 consumer.close()
+                ring2.close()
         finally:
             ring.close()
 
     def test_producer_never_blocks_on_consumer(self):
         """Test producer never blocks, even when consumer is slow."""
-        camera_id = "cam_noblock"
+        camera_id = "cam_ring_noblock"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=4)
 
         try:
@@ -563,6 +569,7 @@ class TestSharedMemoryRingIntegration:
                 consumer.release(pinned0)
             finally:
                 consumer.close()
+                ring2.close()
         finally:
             ring.close()
 
@@ -608,7 +615,7 @@ class TestAcquisitionWorkerWithSharedMemory:
 
             finally:
                 consumer.close()
-                # Do NOT close ring2
+                ring2.close()
         finally:
             worker.stop(timeout=5.0)
             # Worker stops and calls publisher.close() which closes producer

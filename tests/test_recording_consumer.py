@@ -115,7 +115,7 @@ class TestRecordingConsumerBasic:
                 np.testing.assert_array_equal(out.payload.thermal, frame.payload.thermal)
             finally:
                 consumer.close()
-                # Don't close ring2 - same SHM as ring
+                ring2.close()
         finally:
             ring.close()
 
@@ -166,6 +166,7 @@ class TestRecordingConsumerBasic:
                 np.testing.assert_array_equal(out.payload.thermal, frames[i].payload.thermal)
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_hardware_metadata_preserved(self, tmp_path):
@@ -211,6 +212,7 @@ class TestRecordingConsumerBasic:
             assert abs(out.descriptor.thermal.hardware_timestamp - hw_ts) < 0.001
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_raw_uint16_preserved_byte_for_byte(self, tmp_path):
@@ -272,6 +274,7 @@ class TestRecordingConsumerBasic:
             assert out.payload.thermal.dtype == np.uint16
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
 
@@ -345,6 +348,8 @@ class TestRecordingConsumerMultiCamera:
             finally:
                 consumer_a.close()
                 consumer_b.close()
+                ring_a2.close()
+                ring_b2.close()
         finally:
             ring_a.close()
             ring_b.close()
@@ -391,6 +396,8 @@ class TestRecordingConsumerMultiCamera:
         finally:
             ring_a.close()
             ring_b.close()
+            ring_a_attached.close()
+            ring_b_attached.close()
             manager.abort_all()
 
 
@@ -434,6 +441,7 @@ class TestRecordingConsumerSequencePreservation:
             assert sequences == list(range(20))
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_hardware_frame_id_sequence(self, tmp_path):
@@ -474,6 +482,7 @@ class TestRecordingConsumerSequencePreservation:
             assert hw_ids == expected
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
 
@@ -519,6 +528,7 @@ class TestRecordingConsumerDropTracking:
             assert stats.ring_gaps > 0
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_producer_never_blocks(self, tmp_path):
@@ -561,6 +571,7 @@ class TestRecordingConsumerDropTracking:
             ring2_consumer.close()
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
 
@@ -602,6 +613,7 @@ class TestRecordingConsumerFinalization:
             assert reader.status == RecordingStatus.COMPLETE
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_crc_verification_all_frames(self, tmp_path):
@@ -642,6 +654,7 @@ class TestRecordingConsumerFinalization:
             assert len(verify_result.failures) == 0
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_chunk_rollover(self, tmp_path):
@@ -690,6 +703,7 @@ class TestRecordingConsumerFinalization:
             assert verify_result.records_verified == 20
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_consumer_restart(self, tmp_path):
@@ -737,6 +751,7 @@ class TestRecordingConsumerFinalization:
             assert sequences == list(range(10))
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_abort_leaves_incomplete(self, tmp_path):
@@ -775,6 +790,7 @@ class TestRecordingConsumerFinalization:
             assert reader.frame_count == 3
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
 
@@ -831,6 +847,7 @@ class TestRecordingConsumerStats:
                 assert stats.last_timestamp is not None
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
     def test_effective_fps_calculation(self, tmp_path):
@@ -872,6 +889,7 @@ class TestRecordingConsumerStats:
                 assert effective_fps > 0
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
 
@@ -923,6 +941,7 @@ class TestRecordingConsumerCrashRecovery:
                 assert frame.payload.thermal is not None
         finally:
             consumer.close()
+            ring2.close()
             ring.close()
 
 

@@ -731,19 +731,26 @@ class SharedMemoryRingBuffer:
             return consumer
 
     def close(self) -> None:
-        """Close the ring buffer and release resources."""
+        """Close the ring buffer and release resources.
+
+        Only the segment owner (``owns_shm=True``) seals the shared header.
+        An attached consumer-side ring merely releases its own handle; the
+        header is owned by the producer and must not be marked closed while
+        a live producer may still publish.
+        """
         with self._lock:
             if self._closed:
                 return
             self._closed = True
 
-            # Mark header as closed
-            try:
-                header = self._read_header()
-                header.closed = True
-                self._write_header(header)
-            except Exception:
-                pass
+            # Mark header as closed only if we own the segment.
+            if self._owns_shm:
+                try:
+                    header = self._read_header()
+                    header.closed = True
+                    self._write_header(header)
+                except Exception:
+                    pass
 
             # Close producer
             if self._producer:
