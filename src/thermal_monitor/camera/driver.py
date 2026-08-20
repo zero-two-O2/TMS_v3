@@ -186,7 +186,9 @@ class TV46LDriver:
             try:
                 ha.set_framegrabber_param(self._framegrabber, name, value)
             except Exception:
-                logger.warning(
+                # num_buffers is a known limitation on TV46L (also fails in V2); log at debug level
+                log_level = logger.debug if name == "num_buffers" else logger.warning
+                log_level(
                     "Camera %s: unable to set %s=%r",
                     cfg.identity.camera_id,
                     name,
@@ -252,23 +254,30 @@ class TV46LDriver:
         hardware_timestamp = None
         frame_id = None
         packet_stats = None
-        try:
-            ts_ns = ha.get_framegrabber_param(self._framegrabber, "buffer_timestamp_ns")
-            if isinstance(ts_ns, (list, tuple)) and len(ts_ns) == 1:
-                ts_ns = ts_ns[0]
-            if ts_ns is not None:
-                hardware_timestamp = float(ts_ns) / 1e9
-        except Exception:
-            pass
 
-        try:
-            fid = ha.get_framegrabber_param(self._framegrabber, "buffer_frameid")
-            if isinstance(fid, (list, tuple)) and len(fid) == 1:
-                fid = fid[0]
-            if fid is not None:
-                frame_id = int(fid)
-        except Exception:
-            pass
+        # NOTE: TV46L does NOT support buffer_timestamp_ns, buffer_timestamp, or buffer_frameid
+        # (HALCON errors #5331, #5330). These parameters are unsupported on this camera.
+        # We do not fabricate timestamps from the PC clock.
+
+        # Try alternative frame ID parameters that may work on GigE Vision cameras
+        # V2 parameter exploration tested these candidates
+        for param_name in (
+            "GevFrameID",
+            "[Stream]GevFrameID",
+            "[Device]GevFrameID",
+            "ChunkFrameID",
+            "FrameID",
+            "[ChunkData]FrameID",
+        ):
+            try:
+                fid = ha.get_framegrabber_param(self._framegrabber, param_name)
+                if isinstance(fid, (list, tuple)) and len(fid) == 1:
+                    fid = fid[0]
+                if fid is not None:
+                    frame_id = int(fid)
+                    break
+            except Exception:
+                continue
 
         try:
             seen = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamSeenPacketCount")
