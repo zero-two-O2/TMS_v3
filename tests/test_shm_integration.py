@@ -389,8 +389,11 @@ class TestSharedMemoryRingIntegration:
 
     def test_multi_camera_isolation(self):
         """Test multiple camera rings are isolated."""
-        camera_id_a = "cam_a"
-        camera_id_b = "cam_b"
+        # Use unique camera IDs to avoid shared memory collisions across test runs
+        import uuid
+        unique_suffix = uuid.uuid4().hex[:8]
+        camera_id_a = f"cam_a_{unique_suffix}"
+        camera_id_b = f"cam_b_{unique_suffix}"
         ring_a, pub_a = create_ring_buffer_and_publisher(camera_id_a, width=16, height=16, depth=4)
         ring_b, pub_b = create_ring_buffer_and_publisher(camera_id_b, width=16, height=16, depth=4)
 
