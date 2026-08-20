@@ -297,7 +297,7 @@ def _assert_processing_and_recording(m: dict) -> None:
         assert th_dtype == str(np.dtype(EXPECTED_DTYPE)), f"thermal dtype {th_dtype}"
         assert has_temp, "temperature_image missing after CPU conversion"
         assert temp_shape == (EXPECTED_HEIGHT, EXPECTED_WIDTH), f"temperature_image shape {temp_shape}"
-        assert temp_dtype == str(np.float32), f"temperature_image dtype {temp_dtype}"
+        assert temp_dtype == str(np.dtype(np.float32)), f"temperature_image dtype {temp_dtype}"
         sequences.append(seq)
 
     assert sequences == sorted(sequences), "processing sequences out of order"
