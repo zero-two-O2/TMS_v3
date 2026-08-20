@@ -73,12 +73,14 @@ class OfflineModeWidget(QWidget):
         offline_service: OfflineService,
         config_service: ConfigurationService,
         mode_service: ModeService,
+        database: Optional[object] = None,
     ) -> None:
         super().__init__()
 
         self._offline_service = offline_service
         self._config_service = config_service
         self._mode_service = mode_service
+        self._database = database
 
         self._current_session: OfflineSession | None = None
         self._playback_timer = QTimer()
@@ -281,7 +283,6 @@ class OfflineModeWidget(QWidget):
         self._set_playback_enabled(False)
 
     def _connect_signals(self) -> None:
-        self._offline_service.add_session_callback(self._on_session_changed)
         # Connect worker signals
         self._process_frame_requested.connect(self._process_frame_in_worker)
 
@@ -348,6 +349,7 @@ class OfflineModeWidget(QWidget):
             recording_dir=recording_dir,
             analysis_config=analysis_config,
         )
+        self._offline_service.add_session_callback(session_id, self._on_session_changed)
 
         # Create processing worker in background thread
         self._worker, self._worker_thread = create_processing_worker(
@@ -394,6 +396,9 @@ class OfflineModeWidget(QWidget):
         self._cleanup_worker()
 
         if self._current_session:
+            self._offline_service.remove_session_callback(
+                self._current_session.session_id, self._on_session_changed
+            )
             self._offline_service.remove_session(self._current_session.session_id)
             self._current_session = None
 
@@ -439,6 +444,7 @@ class OfflineModeWidget(QWidget):
             recording_dir=recording_dir,
             analysis_config=analysis_config,
         )
+        self._offline_service.add_session_callback(session_id, self._on_session_changed)
 
         # Create new worker with updated config
         self._worker, self._worker_thread = create_processing_worker(
@@ -702,8 +708,10 @@ class OfflineModeWidget(QWidget):
     def closeEvent(self, event) -> None:
         self._playback_timer.stop()
         self._cleanup_worker()
-        self._offline_service.remove_session_callback(self._on_session_changed)
         if self._current_session:
+            self._offline_service.remove_session_callback(
+                self._current_session.session_id, self._on_session_changed
+            )
             self._offline_service.remove_session(self._current_session.session_id)
         super().closeEvent(event)
 
@@ -716,7 +724,7 @@ class OfflineImageWidget(QWidget):
         self._frame = None
         self._display_image: QImage | None = None
         self._rois: list[dict] = []
-        self._setMinimumSize(640, 480)
+        self.setMinimumSize(640, 480)
 
     def set_frame(self, frame) -> None:
         """Set a new frame and update display."""

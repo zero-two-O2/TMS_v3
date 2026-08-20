@@ -12,10 +12,17 @@ from typing import Optional
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 
+# Import the camera package first: it transitively imports core.shm to
+# completion, so later imports of core.shm (via processing/services) never hit
+# the core.shm <-> camera circular import (core.shm re-exports PublishResult
+# from camera.model).
+import thermal_monitor.camera  # noqa: E402,F401
+
 from thermal_monitor.ui.main_window import MainWindow
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
+from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.storage.database import Database
 
 
@@ -26,12 +33,12 @@ class ThermalMonitorApp:
         if argv is None:
             argv = sys.argv
 
-        # Enable high DPI scaling
+        # Enable high DPI scaling (Qt6 scales by default; only the rounding
+        # policy is configurable -- the legacy AA_*HighDpi* attributes were
+        # removed in Qt 6).
         QApplication.setHighDpiScaleFactorRoundingPolicy(
             Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling)
-        QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps)
 
         self._app = QApplication(argv)
         self._app.setApplicationName("Thermal Monitoring System V3")
@@ -42,6 +49,7 @@ class ThermalMonitorApp:
         self._mode_service = ModeService()
         self._config_service = ConfigurationService()
         self._offline_service = OfflineService()
+        self._observer_service = ObserverService()
         self._database: Optional[Database] = None
 
         # Main window
@@ -57,6 +65,7 @@ class ThermalMonitorApp:
             mode_service=self._mode_service,
             config_service=self._config_service,
             offline_service=self._offline_service,
+            observer_service=self._observer_service,
             database=self._database,
         )
         self._window.show()
@@ -76,6 +85,10 @@ class ThermalMonitorApp:
     @property
     def offline_service(self) -> OfflineService:
         return self._offline_service
+
+    @property
+    def observer_service(self) -> ObserverService:
+        return self._observer_service
 
     @property
     def database(self) -> Database | None:

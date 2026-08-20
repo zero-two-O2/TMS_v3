@@ -26,6 +26,7 @@ from thermal_monitor.core.modes import ApplicationMode, ModeState
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
+from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.storage.database import Database
 
 from thermal_monitor.ui.modes.configuration import ConfigurationModeWidget
@@ -41,6 +42,7 @@ class MainWindow(QMainWindow):
         mode_service: ModeService,
         config_service: ConfigurationService,
         offline_service: OfflineService,
+        observer_service: ObserverService | None = None,
         database: Database | None = None,
     ) -> None:
         super().__init__()
@@ -48,6 +50,7 @@ class MainWindow(QMainWindow):
         self._mode_service = mode_service
         self._config_service = config_service
         self._offline_service = offline_service
+        self._observer_service = observer_service
         self._database = database
 
         self.setWindowTitle("Thermal Monitoring System V3")
@@ -71,6 +74,8 @@ class MainWindow(QMainWindow):
         )
         self._observer_widget = ObserverModeWidget(
             mode_service=mode_service,
+            config_service=config_service,
+            observer_service=observer_service,
         )
 
         # Add to stack in mode order
@@ -163,6 +168,13 @@ class MainWindow(QMainWindow):
     def _update_ui_for_mode(self, state: ModeState) -> None:
         """Update UI to reflect current mode."""
         mode = state.mode
+
+        # Deactivate the currently active mode widget (if it supports it)
+        current_widget = self._stacked_widget.currentWidget()
+        if current_widget is not None:
+            deactivate = getattr(current_widget, "on_mode_deactivated", None)
+            if callable(deactivate):
+                deactivate()
 
         # Switch stacked widget
         mode_index = {

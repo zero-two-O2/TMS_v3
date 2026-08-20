@@ -128,6 +128,14 @@ class SystemConfig:
     database_connection_string: str = ""
     recording_storage_path: str = ""
 
+    # Database (SQL Server connection form fields)
+    database_server: str = ""
+    database_name: str = ""
+    database_trusted: bool = True
+    database_username: str = ""
+    database_password: str = ""
+    auto_save_config: bool = True
+
     # Offline
     offline_storage_path: str = ""
 
