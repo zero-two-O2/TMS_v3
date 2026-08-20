@@ -294,6 +294,7 @@ class SlotHeader:
 # visible_sequence(8) + visible_timestamp(8) + visible_mono_timestamp(8) + visible_hw_timestamp(8) +
 # sync_status(1) + sync_time_delta(8) +
 # grab_started(8) + grab_completed(8) + converted_at(8) + grab_duration_s(8) +
+# packet_stats_present(1) + packets_seen(8) + packets_lost(8) + blocks_incomplete(8) + blocks_discarded(8) +
 # payload_thermal_offset(8) + payload_thermal_size(8) + payload_visible_offset(8) + payload_visible_size(8) +
 # frame_valid(1) + reserved(pad to 4096)
 #
@@ -329,6 +330,8 @@ _DESC_FORMAT = (
     "B"             # sync_status (as int)
     "d"             # sync_time_delta
     "dddd"          # grab_started, grab_completed, converted_at, grab_duration_s
+    "?"             # packet statistics present
+    "QQQQ"          # packet statistics
     "QQQQ"          # thermal_offset, thermal_size, visible_offset, visible_size
     "?"             # frame_valid
 )
@@ -392,6 +395,10 @@ def encode_descriptor(
     grab_completed = metadata.get("grab_completed", 0.0)
     converted_at = metadata.get("converted_at", 0.0)
     grab_duration = metadata.get("grab_duration_s", 0.0)
+    packet_stats = metadata.get("packet_stats")
+    packet_stats_present = isinstance(packet_stats, dict)
+    if not packet_stats_present:
+        packet_stats = {}
 
     return struct.pack(
         _DESC_FORMAT,
@@ -429,6 +436,11 @@ def encode_descriptor(
         grab_completed,
         converted_at,
         grab_duration,
+        packet_stats_present,
+        int(packet_stats.get("packets_seen", 0)),
+        int(packet_stats.get("packets_lost", 0)),
+        int(packet_stats.get("blocks_incomplete", 0)),
+        int(packet_stats.get("blocks_discarded", 0)),
         thermal_offset,
         thermal_size,
         visible_offset,
@@ -490,6 +502,11 @@ def decode_descriptor(data: bytes) -> dict:
     grab_completed = next(it)
     converted_at = next(it)
     grab_duration_s = next(it)
+    packet_stats_present = next(it)
+    packets_seen = next(it)
+    packets_lost = next(it)
+    blocks_incomplete = next(it)
+    blocks_discarded = next(it)
     thermal_offset = next(it)
     thermal_size = next(it)
     visible_offset = next(it)
@@ -541,6 +558,13 @@ def decode_descriptor(data: bytes) -> dict:
         "converted_at": converted_at,
         "grab_duration_s": grab_duration_s,
     }
+    if packet_stats_present:
+        metadata["packet_stats"] = {
+            "packets_seen": packets_seen,
+            "packets_lost": packets_lost,
+            "blocks_incomplete": blocks_incomplete,
+            "blocks_discarded": blocks_discarded,
+        }
 
     return {
         "camera_id": camera_id,

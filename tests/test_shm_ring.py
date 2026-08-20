@@ -370,6 +370,8 @@ def test_descriptor_version_mismatch():
         False, 0, 0, b"".ljust(32, b"\x00"), 0, b"".ljust(16, b"\x00"), 0, 0, 0.0, 0.0, 0.0,
         5, 0.0,  # sync_status=UNKNOWN(5), sync_delta=0
         0.0, 0.0, 0.0, 0.0,  # metadata
+        False,  # packet statistics present
+        0, 0, 0, 0,  # packet statistics
         0, 0, 0, 0,  # offsets/sizes
         True,  # frame_valid
     )

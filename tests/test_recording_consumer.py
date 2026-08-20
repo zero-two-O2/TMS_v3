@@ -7,6 +7,8 @@ import numpy as np
 import pytest
 
 from thermal_monitor.camera.shm import create_ring_buffer_and_publisher
+from thermal_monitor.camera.acquisition import AcquisitionWorker
+from thermal_monitor.camera.model import CameraConfig, CameraIdentity, GrabResult
 from thermal_monitor.core.frame import (
     Frame,
     FrameDescriptor,
@@ -62,7 +64,7 @@ def make_thermal_frame(
         thermal=thermal_meta,
         visible=visible_meta,
         sync=sync,
-        metadata={"grab_duration_s": 0.001, "packet_stats": {"packets_seen": sequence * 1000, "packets_lost": 0, "blocks_incomplete": 0}},
+        metadata={"grab_duration_s": 0.001, "packet_stats": {"packets_seen": sequence * 1000, "packets_lost": 0, "blocks_incomplete": 0, "blocks_discarded": 0}},
     )
 
     return Frame(descriptor=descriptor, payload=FramePayload(thermal=thermal, visible=None))
@@ -117,6 +119,69 @@ class TestRecordingConsumerBasic:
                 consumer.close()
                 ring2.close()
         finally:
+            ring.close()
+
+    def test_packet_stats_survive_acquisition_shm_recording_roundtrip(self, tmp_path):
+        """Preserve GrabResult packet stats through SHM and recording storage."""
+        camera_id = "cam_packet_stats"
+        ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=4)
+        ring2 = None
+        consumer = None
+        try:
+            config = CameraConfig(
+                identity=CameraIdentity(
+                    camera_id=camera_id,
+                    serial_number="test",
+                    model="TV46L",
+                    vendor="test",
+                ),
+                device_identifier="test",
+            )
+            worker = AcquisitionWorker(camera_id, object(), publisher, config)
+            thermal = np.arange(16 * 16, dtype=np.uint16).reshape(16, 16)
+            thermal.setflags(write=False)
+            packet_stats = {
+                "packets_seen": 422,
+                "packets_lost": 0,
+                "blocks_incomplete": 0,
+                "blocks_discarded": 0,
+            }
+            frame = worker._build_frame(GrabResult(
+                thermal=thermal,
+                thermal_format="IR_Data",
+                packet_stats=packet_stats,
+                grab_started=1.0,
+                grab_completed=1.001,
+                converted_at=1.002,
+            ))
+            assert frame is not None
+            assert dict(frame.descriptor.metadata["packet_stats"]) == packet_stats
+
+            ring2, consumer = create_recording_consumer(
+                camera_id=camera_id,
+                output_dir=tmp_path,
+                recording_metadata=RecordingWriteMetadata(
+                    recording_id="rec_packet_stats",
+                    cameras=[camera_id],
+                    streams={camera_id: ["IR"]},
+                ),
+                ring_depth=4,
+                thermal_width=16,
+                thermal_height=16,
+            )
+            consumer.start()
+            assert publisher.publish(frame).accepted
+            assert consumer.wait_for_frames(1, timeout=2.0)
+            consumer.stop()
+
+            reader = RecordingReader(consumer._writer.recording_dir)
+            recorded = reader.read_frame(reader.entries[0])
+            assert dict(recorded.descriptor.metadata["packet_stats"]) == packet_stats
+        finally:
+            if consumer is not None:
+                consumer.close()
+            if ring2 is not None:
+                ring2.close()
             ring.close()
 
     def test_ring_to_writer_multiple_frames(self, tmp_path):

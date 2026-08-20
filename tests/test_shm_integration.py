@@ -430,9 +430,7 @@ class TestSharedMemoryRingIntegration:
     def test_hardware_metadata_survives_ring(self):
         """Test hardware frame_id, timestamp survive ring transit.
         
-        Note: packet_stats is stored in frame metadata but not yet encoded
-        in the ring buffer descriptor format. This test verifies the
-        core hardware metadata that IS preserved.
+        Packet statistics and core hardware metadata survive ring transit.
         """
         camera_id = "cam_ring_hw"
         ring, publisher = create_ring_buffer_and_publisher(camera_id, width=16, height=16, depth=4)
