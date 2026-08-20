@@ -7,6 +7,12 @@ from thermal_monitor.processing.alarms import (
     NullAlarmEvaluator,
 )
 
+from thermal_monitor.processing.consumer import (
+    ProcessingConsumer,
+    ProcessingConsumerStats,
+    create_processing_consumer,
+)
+
 from thermal_monitor.processing.pipeline import (
     CalibrationProvider,
     FrameProcessor,
@@ -44,6 +50,8 @@ __all__ = [
     "FrameSource",
     "LiveFrameSource",
     "NullAlarmEvaluator",
+    "ProcessingConsumer",
+    "ProcessingConsumerStats",
     "ProcessingPipeline",
     "ProcessingResult",
     "ProcessingStats",
@@ -51,5 +59,6 @@ __all__ = [
     "SimpleProcessingPipeline",
     "SyntheticFrameSource",
     "TemperatureConverter",
+    "create_processing_consumer",
     "create_processing_worker",
 ]

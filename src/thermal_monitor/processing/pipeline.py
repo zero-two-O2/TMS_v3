@@ -175,6 +175,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
         self._temperature_converter = temperature_converter
         self._roi_resolver = roi_resolver or CachedROIResolver()
         self._halcon_adapter = halcon_adapter or HalconROIAdapter()
+        self._last_temperature_image: np.ndarray | None = None
 
     @property
     def calibration_provider(self) -> CalibrationProvider | None:
@@ -188,9 +189,19 @@ class SimpleProcessingPipeline(ProcessingPipeline):
     def roi_resolver(self) -> CachedROIResolver:
         return self._roi_resolver
 
+    @property
+    def last_temperature_image(self) -> np.ndarray | None:
+        """Temperature image (float32 °C) computed for the most recent frame.
+
+        None when no temperature converter is configured or the most recent
+        frame carried no thermal payload.
+        """
+        return self._last_temperature_image
+
     def process_frame(self, frame: Frame) -> AnalysisResult:
         """Process a frame using the configured ROIs and HALCON statistics."""
         start_time = time.perf_counter()
+        self._last_temperature_image = None
 
         # Get applicable ROIs for the current frame's position
         position_id = frame.descriptor.metadata.get("position_id", "default")
@@ -226,6 +237,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
                 humidity=self._config.humidity,
                 reflected_temp=self._config.reflected_temperature,
             )
+            self._last_temperature_image = temperature_data
 
         # Process ROIs using HALCON adapter
         if rois:

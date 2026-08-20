@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+import numpy as np
+
 try:
     from PyQt6.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
     _HAS_PYQT6 = True
@@ -41,6 +43,7 @@ class ProcessingResult:
     analysis_result: AnalysisResult
     alarm_result: AlarmEvaluationResult | None
     processing_time_ms: float
+    temperature_image: np.ndarray | None = None
 
 
 class ProcessingWorker(QObject if _HAS_PYQT6 else object):
