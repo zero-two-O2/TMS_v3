@@ -1,0 +1,38 @@
+| Git command                         | When to use it                                                 | Example                                  |
+| ----------------------------------- | -------------------------------------------------------------- | ---------------------------------------- |
+| `git status`                        | **Check what is happening** before doing anything              | `git status`                             |
+| `git log --oneline`                 | See recent commits                                             | `git log --oneline`                      |
+| `git log --oneline --graph --all`   | See **branch history visually**                                | `git log --oneline --graph --all`        |
+| `git branch`                        | See local branches                                             | `git branch`                             |
+| `git branch -a`                     | See local + remote branches                                    | `git branch -a`                          |
+| `git switch <branch>`               | Move to another branch                                         | `git switch PC`                          |
+| `git switch -c <branch>`            | **Create + move** to a new branch                              | `git switch -c feature/camera`           |
+| `git checkout <branch>`             | Older way to switch branches                                   | `git checkout PC`                        |
+| `git pull`                          | Download remote changes **and merge them into current branch** | `git pull origin main`                   |
+| `git fetch`                         | Download remote changes **without changing your code**         | `git fetch origin`                       |
+| `git add .`                         | Stage your changes for commit                                  | `git add .`                              |
+| `git add <file>`                    | Stage one specific file                                        | `git add main.py`                        |
+| `git commit -m "message"`           | Save staged changes as a commit                                | `git commit -m "Fix camera acquisition"` |
+| `git push`                          | Upload your commits to remote                                  | `git push origin PC`                     |
+| `git clone <URL>`                   | Download a repository for the first time                       | `git clone <URL>`                        |
+| `git remote -v`                     | Check which GitHub repo you're connected to                    | `git remote -v`                          |
+| `git merge <branch>`                | **Combine another branch into your current branch**            | `git switch main` → `git merge PC`       |
+| `git rebase <branch>`               | Move your branch's commits on top of another branch            | `git switch PC` → `git rebase main`      |
+| `git stash`                         | Temporarily hide uncommitted changes                           | `git stash`                              |
+| `git stash pop`                     | Bring stashed changes back                                     | `git stash pop`                          |
+| `git diff`                          | See **unstaged** code changes                                  | `git diff`                               |
+| `git diff --staged`                 | See changes that will be committed                             | `git diff --staged`                      |
+| `git restore <file>`                | Throw away **unstaged** changes to a file                      | `git restore main.py`                    |
+| `git restore --staged <file>`       | Remove file from staging, **keep its changes**                 | `git restore --staged main.py`           |
+| `git reset --soft HEAD~1`           | Undo last commit but **keep changes staged**                   | `git reset --soft HEAD~1`                |
+| `git reset --mixed HEAD~1`          | Undo last commit and **unstage changes**                       | `git reset HEAD~1`                       |
+| `git reset --hard HEAD~1`           | Undo last commit **and delete its changes**                    | `git reset --hard HEAD~1`                |
+| `git reset --hard <commit>`         | Move branch back to a specific commit                          | `git reset --hard 9bc5e83a`              |
+| `git revert <commit>`               | Safely undo a commit by creating a **new opposite commit**     | `git revert 9bc5e83a`                    |
+| `git cherry-pick <commit>`          | Take **one specific commit** from another branch               | `git cherry-pick 9bc5e83a`               |
+| `git branch -d <branch>`            | Delete a merged local branch                                   | `git branch -d PC`                       |
+| `git branch -D <branch>`            | Force-delete local branch                                      | `git branch -D PC`                       |
+| `git push origin --delete <branch>` | Delete a remote branch                                         | `git push origin --delete PC`            |
+| `git tag <name>`                    | Mark an important commit/version                               | `git tag v3.0`                           |
+| `git show <commit>`                 | Inspect exactly what a commit changed                          | `git show 9bc5e83a`                      |
+| `git blame <file>`                  | See which commit/person changed each line                      | `git blame main.py`                      |
