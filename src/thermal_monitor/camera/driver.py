@@ -25,6 +25,7 @@ acquisition orchestration through :class:`FrameSource`).
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Protocol
 
@@ -96,6 +97,7 @@ class TV46LDriver:
         self._config = config
         self._framegrabber = None
         self._connected = False
+        self._halcon_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -123,8 +125,9 @@ class TV46LDriver:
                 -1,
             )
             self._connected = True
-            self._configure_camera()
-            ha.grab_image_start(self._framegrabber, -1)
+            with self._halcon_lock:
+                self._configure_camera()
+                ha.grab_image_start(self._framegrabber, -1)
             logger.info("Camera %s framegrabber opened and streaming", self._config.identity.camera_id)
         except Exception as exc:
             self._connected = False
@@ -136,14 +139,15 @@ class TV46LDriver:
         if not self._connected:
             return
         ha = self._import_halcon()
-        try:
-            ha.close_framegrabber(self._framegrabber)
-        except Exception:
-            logger.exception("Error closing framegrabber for camera %s", self._config.identity.camera_id)
-        finally:
-            self._framegrabber = None
-            self._connected = False
-            logger.info("Camera %s disconnected", self._config.identity.camera_id)
+        with self._halcon_lock:
+            try:
+                ha.close_framegrabber(self._framegrabber)
+            except Exception:
+                logger.exception("Error closing framegrabber for camera %s", self._config.identity.camera_id)
+            finally:
+                self._framegrabber = None
+                self._connected = False
+                logger.info("Camera %s disconnected", self._config.identity.camera_id)
 
     def reopen(self) -> None:
         """Close and reopen only the framegrabber (recovery action).
@@ -152,9 +156,10 @@ class TV46LDriver:
         re-applied, nothing downstream is touched.  A valid first frame is
         required before the handle is considered usable again.
         """
-        self.disconnect()
-        self.connect()
-        self.grab(FIRST_FRAME_TIMEOUT_MS)
+        with self._halcon_lock:
+            self.disconnect()
+            self.connect()
+            self.grab(FIRST_FRAME_TIMEOUT_MS)
 
     def is_connected(self) -> bool:
         return self._connected
@@ -201,11 +206,17 @@ class TV46LDriver:
 
     def set_parameter(self, name: str, value: object) -> None:
         ha = self._import_halcon()
-        ha.set_framegrabber_param(self._framegrabber, name, value)
+        with self._halcon_lock:
+            if not self._connected:
+                raise CameraConnectionError("Framegrabber is not open")
+            ha.set_framegrabber_param(self._framegrabber, name, value)
 
     def get_parameter(self, name: str) -> object:
         ha = self._import_halcon()
-        value = ha.get_framegrabber_param(self._framegrabber, name)
+        with self._halcon_lock:
+            if not self._connected:
+                raise CameraConnectionError("Framegrabber is not open")
+            value = ha.get_framegrabber_param(self._framegrabber, name)
         if isinstance(value, (list, tuple)):
             return value[0]
         return value
@@ -221,7 +232,10 @@ class TV46LDriver:
 
         started = time.perf_counter()
         try:
-            image = ha.grab_image_async(self._framegrabber, timeout_ms)
+            with self._halcon_lock:
+                if not self._connected:
+                    raise CameraConnectionError("Framegrabber closed during grab")
+                image = ha.grab_image_async(self._framegrabber, timeout_ms)
         except Exception as exc:
             completed = time.perf_counter()
             if self._is_grab_timeout(exc):
@@ -261,48 +275,49 @@ class TV46LDriver:
 
         # Try alternative frame ID parameters that may work on GigE Vision cameras
         # V2 parameter exploration tested these candidates
-        for param_name in (
-            "GevFrameID",
-            "[Stream]GevFrameID",
-            "[Device]GevFrameID",
-            "ChunkFrameID",
-            "FrameID",
-            "[ChunkData]FrameID",
-        ):
+        with self._halcon_lock:
+            for param_name in (
+                "GevFrameID",
+                "[Stream]GevFrameID",
+                "[Device]GevFrameID",
+                "ChunkFrameID",
+                "FrameID",
+                "[ChunkData]FrameID",
+            ):
+                try:
+                    fid = ha.get_framegrabber_param(self._framegrabber, param_name)
+                    if isinstance(fid, (list, tuple)) and len(fid) == 1:
+                        fid = fid[0]
+                    if fid is not None:
+                        frame_id = int(fid)
+                        break
+                except Exception:
+                    continue
+
             try:
-                fid = ha.get_framegrabber_param(self._framegrabber, param_name)
-                if isinstance(fid, (list, tuple)) and len(fid) == 1:
-                    fid = fid[0]
-                if fid is not None:
-                    frame_id = int(fid)
-                    break
+                seen = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamSeenPacketCount")
+                lost = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamLostPacketCount")
+                incomplete = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamIncompleteBlockCount")
+                discarded = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamDiscardedBlockCount")
+
+                def unwrap(val):
+                    if isinstance(val, (list, tuple)) and len(val) == 1:
+                        return val[0]
+                    return val
+
+                packet_stats = {
+                    "packets_seen": int(unwrap(seen)) if unwrap(seen) is not None else 0,
+                    "packets_lost": int(unwrap(lost)) if unwrap(lost) is not None else 0,
+                    "blocks_incomplete": int(unwrap(incomplete)) if unwrap(incomplete) is not None else 0,
+                    "blocks_discarded": int(unwrap(discarded)) if unwrap(discarded) is not None else 0,
+                }
             except Exception:
-                continue
-
-        try:
-            seen = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamSeenPacketCount")
-            lost = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamLostPacketCount")
-            incomplete = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamIncompleteBlockCount")
-            discarded = ha.get_framegrabber_param(self._framegrabber, "[Stream]GevStreamDiscardedBlockCount")
-
-            def unwrap(val):
-                if isinstance(val, (list, tuple)) and len(val) == 1:
-                    return val[0]
-                return val
-
-            packet_stats = {
-                "packets_seen": int(unwrap(seen)) if unwrap(seen) is not None else 0,
-                "packets_lost": int(unwrap(lost)) if unwrap(lost) is not None else 0,
-                "blocks_incomplete": int(unwrap(incomplete)) if unwrap(incomplete) is not None else 0,
-                "blocks_discarded": int(unwrap(discarded)) if unwrap(discarded) is not None else 0,
-            }
-        except Exception:
-            packet_stats = {
-                "packets_seen": 0,
-                "packets_lost": 0,
-                "blocks_incomplete": 0,
-                "blocks_discarded": 0,
-            }
+                packet_stats = {
+                    "packets_seen": 0,
+                    "packets_lost": 0,
+                    "blocks_incomplete": 0,
+                    "blocks_discarded": 0,
+                }
 
         converted = time.perf_counter()
 
@@ -328,18 +343,24 @@ class TV46LDriver:
         short pause -> flush stale frames.
         """
         ha = self._import_halcon()
-        self.set_parameter(
-            "FLK_TI_ControlFeature_REControlCmd",
-            "FLK_TI_ControlFeature_REControlCmd_RequestFineOffset",
-        )
-        self.set_parameter(
-            "FLK_TI_ControlFeature_REControlCmd",
-            "FLK_TI_ControlFeature_REControlCmd_ExecuteFineOffset",
-        )
+        with self._halcon_lock:
+            if not self._connected:
+                raise CameraConnectionError("Framegrabber is not open")
+            self.set_parameter(
+                "FLK_TI_ControlFeature_REControlCmd",
+                "FLK_TI_ControlFeature_REControlCmd_RequestFineOffset",
+            )
+            self.set_parameter(
+                "FLK_TI_ControlFeature_REControlCmd",
+                "FLK_TI_ControlFeature_REControlCmd_ExecuteFineOffset",
+            )
         time.sleep(0.05)
         for _ in range(3):
             try:
-                ha.grab_image_async(self._framegrabber, 0)
+                with self._halcon_lock:
+                    if not self._connected:
+                        break
+                    ha.grab_image_async(self._framegrabber, 0)
             except Exception:
                 logger.warning("Camera %s: NUC flush grab failed", self._config.identity.camera_id)
 

@@ -253,3 +253,53 @@ def test_stop_returns_promptly_even_while_running():
     worker.stop(timeout=2.0)
     assert time.monotonic() - started < 2.0
     assert worker.state is AcquisitionState.STOPPED
+
+
+def test_worker_lifecycle_stop_disconnect_reconnect_acquire():
+    """Regression test for HALCON access violation fix.
+
+    Verifies the strict lifecycle:
+    1. acquisition running
+    2. stop requested
+    3. worker exits (thread joined)
+    4. driver disconnect called
+    5. reconnect (new worker start)
+    6. acquisition resumes
+
+    This ensures no concurrent grab/close on the same framegrabber handle.
+    """
+    source = FakeFrameSource()
+    publisher = FakePublisher()
+    config = make_camera_config()
+
+    # Phase 1: acquisition running
+    worker = AcquisitionWorker("cam_1", source, publisher, config)
+    worker.start()
+    assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+
+    deadline = time.monotonic() + 2.0
+    while len(publisher.frames) < 5 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    frames_before = len(publisher.frames)
+    assert frames_before >= 5
+
+    # Phase 2-4: stop requested -> worker exits -> driver disconnect
+    worker.stop(timeout=5.0)
+    assert worker.state is AcquisitionState.STOPPED
+    assert worker._thread is None or not worker._thread.is_alive()
+    assert source.disconnect_calls == 1
+
+    # Phase 5-6: reconnect -> acquisition resumes
+    worker.start()
+    assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+
+    deadline = time.monotonic() + 2.0
+    while len(publisher.frames) < frames_before + 5 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    frames_after = len(publisher.frames)
+    assert frames_after > frames_before, "No frames acquired after restart"
+
+    worker.stop(timeout=5.0)
+    assert worker.state is AcquisitionState.STOPPED
+    assert source.disconnect_calls == 2
+    assert source.connect_calls == 2
