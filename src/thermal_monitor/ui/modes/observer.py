@@ -36,6 +36,7 @@ from thermal_monitor.processing import ProcessingResult
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.observer import ObserverService
+from thermal_monitor.services.runtime import CameraRuntimeService
 
 _UNIT_SYMBOLS = {
     TemperatureUnit.CELSIUS: "°C",
@@ -47,8 +48,14 @@ _UNIT_SYMBOLS = {
 class ObserverModeWidget(QWidget):
     """Live camera monitoring for Observer mode.
 
-    Owns the lifecycle of the supplied ObserverService: entering the mode
-    starts monitoring the first configured camera, leaving the mode stops it.
+    Owns the lifecycle of the camera runtime: entering the mode starts the
+    producer (camera acquisition) and the observer for the first configured
+    camera, leaving the mode stops both.  The widget only talks to the
+    lifecycle service (``runtime_service``); it never touches the camera
+    driver, HALCON, the acquisition loop, the shared-memory ring, or
+    recording.  A legacy ``observer_service`` may be injected for
+    display-only tests, in which case the widget manages that service
+    directly.
     """
 
     def __init__(
@@ -56,11 +63,15 @@ class ObserverModeWidget(QWidget):
         mode_service: ModeService,
         config_service: ConfigurationService,
         observer_service: ObserverService | None = None,
+        *,
+        runtime_service: CameraRuntimeService | None = None,
     ) -> None:
         super().__init__()
         self._mode_service = mode_service
         self._config_service = config_service
-        self._observer_service = observer_service
+        self._runtime_service = runtime_service
+        self._legacy_observer = observer_service
+        self._camera_id: str | None = None
 
         self._latest_result: ProcessingResult | None = None
         self._frames_received = 0
@@ -70,6 +81,20 @@ class ObserverModeWidget(QWidget):
         if observer_service is not None:
             observer_service.result_ready.connect(self._on_result)
             observer_service.error_occurred.connect(self._on_error)
+
+    @property
+    def _observer_service(self) -> ObserverService | None:
+        """The active ObserverService for display/stats access.
+
+        In the runtime path this is the observer owned by the runtime service
+        for the currently active camera; otherwise it is the legacy injected
+        service (display-only tests).
+        """
+        if self._runtime_service is not None:
+            if self._camera_id is None:
+                return None
+            return self._runtime_service.observer_service(self._camera_id)
+        return self._legacy_observer
 
     # ─── UI construction ───────────────────────────────────────────────────
 
@@ -148,10 +173,58 @@ class ObserverModeWidget(QWidget):
 
     def on_mode_activated(self) -> None:
         """Start live monitoring when Observer mode becomes active."""
-        if self._observer_service is None:
+        if self._runtime_service is not None:
+            self._start_via_runtime()
+        elif self._legacy_observer is not None:
+            self._start_via_legacy()
+        else:
             self._set_status("Observer service not available")
+
+    def on_mode_deactivated(self) -> None:
+        """Stop live monitoring when leaving Observer mode."""
+        self._disconnect_observer_signals()
+        if self._runtime_service is not None:
+            if self._camera_id is not None:
+                self._runtime_service.stop_camera(self._camera_id)
+        elif self._legacy_observer is not None:
+            self._legacy_observer.stop()
+        self._camera_id = None
+        self._set_status("Stopped")
+
+    def _start_via_runtime(self) -> None:
+        """Start the producer and observer through the lifecycle service."""
+        if self._camera_id is not None and self._runtime_service.is_observer_running(self._camera_id):
             return
-        if self._observer_service.is_running:
+
+        camera = self._first_configured_camera()
+        if camera is None:
+            self._set_status("No configured cameras — configure one first")
+            return
+
+        camera_id = camera.identity.camera_id
+        if not self._runtime_service.is_camera_running(camera_id):
+            try:
+                self._runtime_service.start_camera(camera)
+            except Exception as exc:
+                self._set_status(f"Failed to start camera: {exc}")
+                return
+
+        analysis = self._config_service.get_analysis_config(camera_id)
+        if analysis is None:
+            analysis = AnalysisConfig(camera_id=camera_id)
+
+        try:
+            self._camera_id = camera_id
+            service = self._runtime_service.start_observer(camera_id, analysis_config=analysis)
+            service.result_ready.connect(self._on_result)
+            service.error_occurred.connect(self._on_error)
+            self._set_status(f"Observing {camera_id}…")
+        except Exception as exc:
+            self._set_status(f"Failed to start: {exc}")
+
+    def _start_via_legacy(self) -> None:
+        """Start the legacy injected ObserverService (display-only tests)."""
+        if self._legacy_observer.is_running:
             return
 
         camera = self._first_configured_camera()
@@ -165,16 +238,23 @@ class ObserverModeWidget(QWidget):
             analysis = AnalysisConfig(camera_id=camera_id)
 
         try:
-            self._observer_service.start(camera_id, analysis_config=analysis)
+            self._legacy_observer.start(camera_id, analysis_config=analysis)
             self._set_status(f"Observing {camera_id}…")
         except Exception as exc:
             self._set_status(f"Failed to start: {exc}")
 
-    def on_mode_deactivated(self) -> None:
-        """Stop live monitoring when leaving Observer mode."""
-        if self._observer_service is not None:
-            self._observer_service.stop()
-        self._set_status("Stopped")
+    def _disconnect_observer_signals(self) -> None:
+        svc = self._observer_service
+        if svc is None:
+            return
+        try:
+            svc.result_ready.disconnect(self._on_result)
+        except Exception:
+            pass
+        try:
+            svc.error_occurred.disconnect(self._on_error)
+        except Exception:
+            pass
 
     def _first_configured_camera(self):
         for config in self._config_service.get_all_camera_configs():
@@ -274,8 +354,7 @@ class ObserverModeWidget(QWidget):
         self._status_label.setText(text)
 
     def closeEvent(self, event) -> None:
-        if self._observer_service is not None:
-            self._observer_service.stop()
+        self.on_mode_deactivated()
         super().closeEvent(event)
 
 

@@ -22,7 +22,7 @@ from thermal_monitor.ui.main_window import MainWindow
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
-from thermal_monitor.services.observer import ObserverService
+from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.storage.database import Database
 
 
@@ -49,7 +49,7 @@ class ThermalMonitorApp:
         self._mode_service = ModeService()
         self._config_service = ConfigurationService()
         self._offline_service = OfflineService()
-        self._observer_service = ObserverService()
+        self._runtime_service = CameraRuntimeService()
         self._database: Optional[Database] = None
 
         # Main window
@@ -65,14 +65,17 @@ class ThermalMonitorApp:
             mode_service=self._mode_service,
             config_service=self._config_service,
             offline_service=self._offline_service,
-            observer_service=self._observer_service,
+            runtime_service=self._runtime_service,
             database=self._database,
         )
         self._window.show()
 
     def run(self) -> int:
         """Run the application event loop."""
-        return self._app.exec()
+        try:
+            return self._app.exec()
+        finally:
+            self._runtime_service.shutdown()
 
     @property
     def mode_service(self) -> ModeService:
@@ -87,8 +90,8 @@ class ThermalMonitorApp:
         return self._offline_service
 
     @property
-    def observer_service(self) -> ObserverService:
-        return self._observer_service
+    def runtime_service(self) -> CameraRuntimeService:
+        return self._runtime_service
 
     @property
     def database(self) -> Database | None:

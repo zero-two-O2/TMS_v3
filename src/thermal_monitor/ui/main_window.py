@@ -27,6 +27,7 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
 from thermal_monitor.services.observer import ObserverService
+from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.storage.database import Database
 
 from thermal_monitor.ui.modes.configuration import ConfigurationModeWidget
@@ -44,6 +45,8 @@ class MainWindow(QMainWindow):
         offline_service: OfflineService,
         observer_service: ObserverService | None = None,
         database: Database | None = None,
+        *,
+        runtime_service: CameraRuntimeService | None = None,
     ) -> None:
         super().__init__()
 
@@ -52,6 +55,7 @@ class MainWindow(QMainWindow):
         self._offline_service = offline_service
         self._observer_service = observer_service
         self._database = database
+        self._runtime_service = runtime_service
 
         self.setWindowTitle("Thermal Monitoring System V3")
         self.setMinimumSize(1200, 800)
@@ -76,6 +80,7 @@ class MainWindow(QMainWindow):
             mode_service=mode_service,
             config_service=config_service,
             observer_service=observer_service,
+            runtime_service=runtime_service,
         )
 
         # Add to stack in mode order
@@ -202,4 +207,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         """Clean up on close."""
         self._mode_service.remove_observer(self._on_mode_changed)
+        if self._runtime_service is not None:
+            self._runtime_service.shutdown()
         super().closeEvent(event)

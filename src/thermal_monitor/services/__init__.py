@@ -12,10 +12,19 @@ from thermal_monitor.services.recording import (
     RecordingService,
     create_recording_consumer,
 )
+from thermal_monitor.services.runtime import (
+    CameraRuntime,
+    CameraRuntimeError,
+    CameraRuntimeService,
+    build_driver_config,
+)
 
 __all__ = [
     "AlarmService",
     "AnalysisService",
+    "CameraRuntime",
+    "CameraRuntimeError",
+    "CameraRuntimeService",
     "ConfigurationService",
     "ContinuousRecordingManager",
     "ModeService",
@@ -24,5 +33,6 @@ __all__ = [
     "RecordingConsumer",
     "RecordingConsumerStats",
     "RecordingService",
+    "build_driver_config",
     "create_recording_consumer",
 ]
