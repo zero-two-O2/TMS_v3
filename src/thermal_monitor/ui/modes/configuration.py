@@ -82,6 +82,7 @@ class ConfigurationModeWidget(QWidget):
         self._config_service = config_service
         self._mode_service = mode_service
         self._database = database
+        self._runtime_service = runtime_service
 
         self._setup_ui()
         self._connect_signals()
@@ -98,7 +99,7 @@ class ConfigurationModeWidget(QWidget):
 
         # Create configuration tabs
         self._camera_tab = CameraConfigurationTab(
-            self._config_service, self._database, runtime_service=runtime_service
+            self._config_service, self._database, runtime_service=self._runtime_service
         )
         self._roi_tab = ROIConfigurationTab(self._config_service, self._database)
         self._ptz_tab = PTZConfigurationTab(self._config_service, self._database)
