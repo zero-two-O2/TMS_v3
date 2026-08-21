@@ -204,6 +204,8 @@ class CameraRuntimeService:
         camera_id = camera_config.identity.camera_id
         if not camera_id:
             raise CameraRuntimeError("camera_config.identity.camera_id is required")
+        if not camera_config.enabled:
+            raise CameraRuntimeError(f"Camera {camera_id} is disabled")
 
         with self._lock:
             existing = self._runtimes.get(camera_id)

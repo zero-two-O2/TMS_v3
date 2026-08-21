@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
             config_service=config_service,
             mode_service=mode_service,
             database=database,
+            runtime_service=runtime_service,
         )
         self._offline_widget = OfflineModeWidget(
             offline_service=offline_service,

@@ -35,11 +35,16 @@ from PyQt6.QtWidgets import (
     QTextEdit,
     QMessageBox,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
+    QHeaderView,
 )
 
 from thermal_monitor.core.modes import ApplicationMode
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
+from thermal_monitor.services.discovery import CameraDiscoveryError, CameraDiscoveryService, DiscoveredCamera
+from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.storage.database import Database
 from thermal_monitor.core.models import (
     CameraConfig,
@@ -70,6 +75,7 @@ class ConfigurationModeWidget(QWidget):
         config_service: ConfigurationService,
         mode_service: ModeService,
         database: Database | None = None,
+        runtime_service: CameraRuntimeService | None = None,
     ) -> None:
         super().__init__()
 
@@ -91,7 +97,9 @@ class ConfigurationModeWidget(QWidget):
         layout.addWidget(self._tabs)
 
         # Create configuration tabs
-        self._camera_tab = CameraConfigurationTab(self._config_service, self._database)
+        self._camera_tab = CameraConfigurationTab(
+            self._config_service, self._database, runtime_service=runtime_service
+        )
         self._roi_tab = ROIConfigurationTab(self._config_service, self._database)
         self._ptz_tab = PTZConfigurationTab(self._config_service, self._database)
         self._alarm_tab = AlarmConfigurationTab(self._config_service, self._database)
@@ -172,16 +180,21 @@ class ConfigurationModeWidget(QWidget):
 
 
 class CameraConfigurationTab(QWidget):
-    """Camera configuration with list + detail view for up to 8 cameras."""
+    """HALCON discovery and application camera configuration."""
 
     def __init__(
         self,
         config_service: ConfigurationService,
         database: Database | None = None,
+        discovery_service: CameraDiscoveryService | None = None,
+        runtime_service: CameraRuntimeService | None = None,
     ) -> None:
         super().__init__()
         self._config_service = config_service
         self._database = database
+        self._discovery = discovery_service or CameraDiscoveryService()
+        self._runtime_service = runtime_service
+        self._discovered: list[DiscoveredCamera] = []
         self._selected_camera_id: str | None = None
         self._setup_ui()
 
@@ -189,7 +202,28 @@ class CameraConfigurationTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Horizontal splitter: camera list | detail
+        discovery_group = QGroupBox("Discovered Cameras")
+        discovery_layout = QVBoxLayout(discovery_group)
+        discovery_buttons = QVBoxLayout()
+        self._discover_btn = QPushButton("Discover / Refresh Cameras")
+        self._discover_btn.clicked.connect(self._discover_cameras)
+        self._add_selected_btn = QPushButton("Add Selected")
+        self._add_selected_btn.clicked.connect(self._add_selected)
+        discovery_buttons.addWidget(self._discover_btn)
+        discovery_buttons.addWidget(self._add_selected_btn)
+        discovery_buttons.addStretch()
+        discovery_layout.addLayout(discovery_buttons)
+        self._discovered_table = QTableWidget(0, 6)
+        self._discovered_table.setHorizontalHeaderLabels(
+            ["Select", "Serial", "Model", "IP Address", "Device", "Status"]
+        )
+        self._discovered_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._discovered_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        discovery_layout.addWidget(self._discovered_table)
+
+        layout.addWidget(discovery_group)
+
+        # Horizontal splitter: configured camera list | detail
         splitter = QSplitter(Qt.Orientation.Horizontal)
         layout.addWidget(splitter)
 
@@ -199,6 +233,8 @@ class CameraConfigurationTab(QWidget):
         list_layout.setContentsMargins(0, 0, 0, 0)
 
         self._camera_tree = QTreeWidget()
+        configured_label = QLabel("Configured Cameras")
+        list_layout.addWidget(configured_label)
         self._camera_tree.setHeaderLabels(["Camera", "Serial", "Status"])
         self._camera_tree.setColumnWidth(0, 150)
         self._camera_tree.setColumnWidth(1, 150)
@@ -207,8 +243,8 @@ class CameraConfigurationTab(QWidget):
 
         # Camera list buttons
         button_layout = QVBoxLayout()
-        self._add_camera_btn = QPushButton("Add Camera")
-        self._add_camera_btn.clicked.connect(self._add_camera)
+        self._add_camera_btn = QPushButton("Add Camera from Discovery")
+        self._add_camera_btn.clicked.connect(self._add_selected)
         self._remove_camera_btn = QPushButton("Remove Camera")
         self._remove_camera_btn.clicked.connect(self._remove_camera)
         self._remove_camera_btn.setEnabled(False)
@@ -225,6 +261,7 @@ class CameraConfigurationTab(QWidget):
 
         splitter.setSizes([300, 600])
 
+
     def _on_camera_selected(self) -> None:
         items = self._camera_tree.selectedItems()
         if items:
@@ -237,52 +274,78 @@ class CameraConfigurationTab(QWidget):
             self._detail_widget.clear()
             self._remove_camera_btn.setEnabled(False)
 
-    def _add_camera(self) -> None:
-        """Add a new camera configuration."""
-        from thermal_monitor.core.models import CameraIdentity, PTZConfig
+    def _discover_cameras(self) -> None:
+        try:
+            self._discovered = self._discovery.refresh()
+        except CameraDiscoveryError as exc:
+            self._discovered = []
+            QMessageBox.warning(self, "Camera Discovery", f"HALCON discovery failed: {exc}")
+        self._refresh_discovered_table()
+        self.refresh_all()
 
-        # Simple dialog for camera ID and serial
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit
+    def _refresh_discovered_table(self) -> None:
+        self._discovered_table.setRowCount(0)
+        for camera in self._discovered:
+            row = self._discovered_table.rowCount()
+            self._discovered_table.insertRow(row)
+            check = QTableWidgetItem()
+            check.setFlags(check.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            check.setCheckState(
+                Qt.CheckState.Unchecked
+                if self._config_service.get_camera_config(camera.camera_id)
+                else Qt.CheckState.Unchecked
+            )
+            self._discovered_table.setItem(row, 0, check)
+            values = [
+                camera.serial_number or "(not provided)",
+                camera.model,
+                camera.ip_address,
+                camera.device_identifier,
+                "Configured - Available" if self._config_service.get_camera_config(camera.camera_id) else "Found",
+            ]
+            for column, value in enumerate(values, 1):
+                self._discovered_table.setItem(row, column, QTableWidgetItem(value))
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add Camera")
-        layout = QFormLayout(dialog)
+    def _add_selected(self) -> None:
+        selected = []
+        for row, camera in enumerate(self._discovered):
+            item = self._discovered_table.item(row, 0)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                selected.append(camera)
+        if not selected:
+            QMessageBox.information(self, "Add Cameras", "Select one or more discovered cameras first.")
+            return
 
-        camera_id_edit = QLineEdit()
-        camera_id_edit.setPlaceholderText("e.g., cam_001")
-        serial_edit = QLineEdit()
-        serial_edit.setPlaceholderText("e.g., SN123456")
-        ip_edit = QLineEdit()
-        ip_edit.setPlaceholderText("e.g., 192.168.1.100")
-
-        layout.addRow("Camera ID:", camera_id_edit)
-        layout.addRow("Serial Number:", serial_edit)
-        layout.addRow("IP Address:", ip_edit)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            camera_id = camera_id_edit.text().strip()
-            serial = serial_edit.text().strip()
-            ip = ip_edit.text().strip()
-
-            if not camera_id or not serial:
-                QMessageBox.warning(self, "Invalid Input", "Camera ID and Serial Number are required.")
-                return
-
-            if self._config_service.get_camera_config(camera_id):
-                QMessageBox.warning(self, "Duplicate", f"Camera '{camera_id}' already exists.")
-                return
-
-            identity = CameraIdentity(camera_id=camera_id, serial_number=serial)
-            config = self._config_service.create_camera_config(identity=identity, name=ip)
+        for camera in selected:
+            camera_id = camera.camera_id
+            existing = self._config_service.get_camera_config(camera_id)
+            serial = camera.serial_number or camera.device_identifier
+            identity = CameraIdentity(
+                camera_id=camera_id,
+                serial_number=serial,
+                model=camera.model,
+                vendor=camera.vendor,
+                firmware=camera.firmware,
+                user_name=camera.user_name,
+            )
+            metadata = dict(existing.metadata) if existing else {}
+            metadata.update({
+                "device_identifier": camera.device_identifier,
+                "ip_address": camera.ip_address,
+            })
+            config = CameraConfig(
+                identity=identity,
+                name=existing.name if existing else camera.user_name or camera_id,
+                description=existing.description if existing else "",
+                enabled=existing.enabled if existing else True,
+                thermal_enabled=existing.thermal_enabled if existing else True,
+                visible_enabled=existing.visible_enabled if existing else False,
+                ptz_config=existing.ptz_config if existing else PTZConfig(),
+                tags=existing.tags if existing else {},
+                metadata=metadata,
+            )
             self._config_service.set_camera_config(config)
-            self.refresh_all()
+        self.refresh_all()
 
     def _remove_camera(self) -> None:
         if self._selected_camera_id:
@@ -300,16 +363,23 @@ class CameraConfigurationTab(QWidget):
 
     def refresh_camera(self, camera_id: str) -> None:
         """Refresh a specific camera in the list."""
+        self._refresh_discovered_table()
         self.refresh_all()
 
     def refresh_all(self) -> None:
         """Refresh the entire camera list."""
         self._camera_tree.clear()
         for config in self._config_service.get_all_camera_configs():
+            available = any(camera.camera_id == config.identity.camera_id for camera in self._discovered)
+            running = bool(
+                self._runtime_service
+                and self._runtime_service.is_camera_running(config.identity.camera_id)
+            )
             item = QTreeWidgetItem([
                 config.name or config.identity.camera_id,
                 config.identity.serial_number,
-                "Enabled" if config.enabled else "Disabled",
+                ("Running" if running else ("Configured - Available" if available else "Configured - Not Detected"))
+                + (" (Disabled)" if not config.enabled else ""),
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, config.identity.camera_id)
             self._camera_tree.addTopLevelItem(item)
