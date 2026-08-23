@@ -51,6 +51,7 @@ from thermal_monitor.services.recording_consumer import (
     create_recording_consumer,
 )
 from thermal_monitor.storage.recording import RecordingWriteMetadata
+from thermal_monitor.config import CamerasConfig, SystemConfig, RecordingConfig, StorageConfig
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,6 @@ class CameraRuntimeError(RuntimeError):
 # TV46L is a fixed 640x480 Mono16 camera (V2-validated).
 _THERMAL_WIDTH = 640
 _THERMAL_HEIGHT = 480
-_RECORDING_CHUNK_BYTES = 64 * 1024 * 1024
 
 
 def _int_meta(metadata: dict, key: str, default: int) -> int:
@@ -85,7 +85,10 @@ def _float_meta(metadata: dict, key: str, default: float) -> float:
         raise CameraRuntimeError(f"metadata[{key!r}] must be a number, got {value!r}") from exc
 
 
-def build_driver_config(camera_config: CameraConfig) -> DriverCameraConfig:
+def build_driver_config(
+    camera_config: CameraConfig,
+    cameras_config: CamerasConfig,
+) -> DriverCameraConfig:
     """Map an application-level ``core.models.CameraConfig`` to a driver config.
 
     The application config deliberately does not carry HALCON/GVSP tuning
@@ -94,9 +97,16 @@ def build_driver_config(camera_config: CameraConfig) -> DriverCameraConfig:
     any driver-level field.  The camera IP is stored in ``name`` by the UI;
     the HALCON device identifier defaults to ``"default"`` (auto-discovery)
     unless metadata explicitly provides it.
+
+    Acquisition and recovery defaults come from CamerasConfig.
     """
     identity = camera_config.identity
     metadata = dict(camera_config.metadata or {})
+
+    # Get defaults from cameras config
+    acq = cameras_config.acquisition
+    rec = cameras_config.recovery
+    conn = cameras_config.connection
 
     return DriverCameraConfig(
         identity=DriverCameraIdentity(
@@ -107,20 +117,20 @@ def build_driver_config(camera_config: CameraConfig) -> DriverCameraConfig:
             firmware=identity.firmware,
             user_name=identity.user_name,
         ),
-        device_identifier=str(metadata.get("device_identifier") or "default"),
+        device_identifier=str(metadata.get("device_identifier") or conn.device_identifier or "default"),
         ip_address=str(metadata.get("ip_address") or camera_config.name or ""),
-        frame_rate=_int_meta(metadata, "frame_rate", 9),
-        grab_timeout_ms=_int_meta(metadata, "grab_timeout_ms", 500),
-        socket_buffer_size=_int_meta(metadata, "socket_buffer_size", 1048576),
-        num_buffers=_int_meta(metadata, "num_buffers", 8),
-        stream_source_thermal=str(metadata.get("stream_source_thermal") or "IR_Data"),
-        thermal_bits_per_channel=_int_meta(metadata, "thermal_bits_per_channel", 16),
-        stream_source_visible=metadata.get("stream_source_visible"),
-        visible_bits_per_channel=_int_meta(metadata, "visible_bits_per_channel", -1),
-        consecutive_fail_limit=_int_meta(metadata, "consecutive_fail_limit", 3),
-        reconnect_interval_s=_float_meta(metadata, "reconnect_interval_s", 3.0),
-        reconnect_backoff_factor=_float_meta(metadata, "reconnect_backoff_factor", 2.0),
-        max_reconnect_attempts=_int_meta(metadata, "max_reconnect_attempts", 10),
+        frame_rate=_int_meta(metadata, "frame_rate", acq.target_fps),
+        grab_timeout_ms=_int_meta(metadata, "grab_timeout_ms", acq.grab_timeout_ms),
+        socket_buffer_size=_int_meta(metadata, "socket_buffer_size", acq.socket_buffer_size),
+        num_buffers=_int_meta(metadata, "num_buffers", acq.num_buffers),
+        stream_source_thermal=str(metadata.get("stream_source_thermal") or acq.stream_source_thermal),
+        thermal_bits_per_channel=_int_meta(metadata, "thermal_bits_per_channel", acq.thermal_bits_per_channel),
+        stream_source_visible=metadata.get("stream_source_visible") or acq.stream_source_visible,
+        visible_bits_per_channel=_int_meta(metadata, "visible_bits_per_channel", acq.visible_bits_per_channel),
+        consecutive_fail_limit=_int_meta(metadata, "consecutive_fail_limit", rec.consecutive_fail_limit),
+        reconnect_interval_s=_float_meta(metadata, "reconnect_interval_s", rec.reconnect_interval_s),
+        reconnect_backoff_factor=_float_meta(metadata, "reconnect_backoff_factor", rec.reconnect_backoff_factor),
+        max_reconnect_attempts=_int_meta(metadata, "max_reconnect_attempts", rec.max_reconnect_attempts),
     )
 
 
@@ -162,15 +172,24 @@ class CameraRuntimeService:
     def __init__(
         self,
         *,
+        cameras_config: CamerasConfig,
+        system_config: SystemConfig,
+        recording_config: RecordingConfig,
+        storage_config: StorageConfig,
+        calibration_config: "CalibrationConfig" | None = None,
         source_factory: Callable[[DriverCameraConfig], FrameSource] | None = None,
         calibration_provider: CalibrationProvider | None = None,
-        ring_depth: int = 32,
-        acquire_timeout_s: float = 10.0,
     ) -> None:
+        self._cameras_config = cameras_config
+        self._system_config = system_config
+        self._recording_config = recording_config
+        self._storage_config = storage_config
+        self._calibration_config = calibration_config
         self._source_factory = source_factory or (lambda cfg: TV46LDriver(cfg))
         self._calibration_provider = calibration_provider
-        self._ring_depth = ring_depth
-        self._acquire_timeout_s = acquire_timeout_s
+        self._ring_depth = 32
+        self._acquire_timeout_s = cameras_config.startup.acquire_timeout_s
+        self._shutdown_timeout_s = system_config.shutdown_timeout_s
         self._runtimes: dict[str, CameraRuntime] = {}
         self._lock = threading.RLock()
 
@@ -178,7 +197,17 @@ class CameraRuntimeService:
     def calibration_provider(self) -> CalibrationProvider:
         """The default calibration provider (created lazily on first use)."""
         if self._calibration_provider is None:
-            self._calibration_provider = CachingCalibrationProvider()
+            # Use calibration config for default file and app_root for path resolution
+            default_file = "calibration/calibration_blob.txt"
+            app_root = None
+            if self._calibration_config is not None:
+                default_file = self._calibration_config.default_file
+            if self._storage_config is not None:
+                app_root = self._storage_config.resolve_root(Path("."))
+            self._calibration_provider = CachingCalibrationProvider(
+                calibration_default_file=default_file,
+                app_root=app_root,
+            )
         return self._calibration_provider
 
     # ─── Camera producer lifecycle ───────────────────────────────────────────
@@ -215,7 +244,7 @@ class CameraRuntimeService:
                     return camera_id
                 self._stop_runtime_locked(existing, timeout=timeout)
 
-            driver_config = build_driver_config(camera_config)
+            driver_config = build_driver_config(camera_config, self._cameras_config)
 
             try:
                 ring, publisher = create_frame_publisher_for_camera(
@@ -269,12 +298,13 @@ class CameraRuntimeService:
             logger.info("Camera %s: runtime started", camera_id)
             return camera_id
 
-    def stop_camera(self, camera_id: str, *, timeout: float = 5.0) -> None:
+    def stop_camera(self, camera_id: str, *, timeout: float | None = None) -> None:
         """Stop the observer, recording, acquisition worker and ring for one camera.
 
         Deterministic teardown order: observer -> recording -> worker -> ring.
         Safe to call for an unknown or already-stopped camera.
         """
+        timeout = self._shutdown_timeout_s if timeout is None else timeout
         with self._lock:
             runtime = self._runtimes.get(camera_id)
             if runtime is None:
@@ -282,8 +312,9 @@ class CameraRuntimeService:
             self._stop_runtime_locked(runtime, timeout=timeout)
             self._runtimes.pop(camera_id, None)
 
-    def shutdown(self, *, timeout: float = 5.0) -> None:
+    def shutdown(self, *, timeout: float | None = None) -> None:
         """Stop every running camera runtime."""
+        timeout = self._shutdown_timeout_s if timeout is None else timeout
         with self._lock:
             for camera_id in list(self._runtimes.keys()):
                 self._stop_runtime_locked(self._runtimes[camera_id], timeout=timeout)
@@ -391,7 +422,12 @@ class CameraRuntimeService:
                 logger.warning("Camera %s: recording already active", camera_id)
                 return runtime.recording
 
-            output_dir = Path(output_dir) if output_dir is not None else Path("recordings")
+            # Resolve output directory from storage config
+            if output_dir is None:
+                output_dir = self._storage_config.resolve_root(Path(".")) / self._storage_config.recordings
+            elif isinstance(output_dir, str):
+                output_dir = Path(output_dir)
+
             recording_id = recording_id or f"rec_{camera_id}_{int(time.time() * 1000)}"
             metadata = RecordingWriteMetadata(
                 recording_id=recording_id,
@@ -407,7 +443,7 @@ class CameraRuntimeService:
                     output_dir=output_dir,
                     recording_metadata=metadata,
                     ring_depth=self._ring_depth,
-                    chunk_target_bytes=_RECORDING_CHUNK_BYTES,
+                    chunk_target_bytes=self._recording_config.chunk_target_bytes,
                 )
             except Exception as exc:
                 raise CameraRuntimeError(

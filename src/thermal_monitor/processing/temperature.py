@@ -151,15 +151,26 @@ class CachingCalibrationProvider:
     Loads calibration blob once per camera_id and builds LUTs.
     """
 
-    def __init__(self, calibration_file_map: dict[str, str] | None = None):
+    def __init__(
+        self,
+        calibration_file_map: dict[str, str] | None = None,
+        calibration_default_file: str = "calibration/calibration_blob.txt",
+        app_root: Path | None = None,
+    ):
         """
         Parameters
         ----------
         calibration_file_map : dict[str, str] | None
             Mapping from camera_id to calibration file path.
             If None, uses default path for all cameras.
+        calibration_default_file : str
+            Default calibration file path (relative to app_root or absolute).
+        app_root : Path | None
+            Application root directory for resolving relative paths.
         """
         self._calibration_file_map = calibration_file_map or {}
+        self._calibration_default_file = calibration_default_file
+        self._app_root = app_root
         self._cache: dict[str, CameraCalibration] = {}
         self._parser = CalibrationParser()
 
@@ -178,21 +189,34 @@ class CachingCalibrationProvider:
         """Get full CameraCalibration object for a camera."""
         return self._get_or_load_calibration(camera_id)
 
+    def _resolve_calibration_path(self, file_path: str) -> Path:
+        """Resolve calibration file path relative to app_root if needed."""
+        path = Path(file_path)
+        if not path.is_absolute() and self._app_root is not None:
+            return (self._app_root / path).resolve()
+        return path.resolve()
+
     def _get_or_load_calibration(self, camera_id: str) -> CameraCalibration | None:
         if camera_id in self._cache:
             return self._cache[camera_id]
 
         file_path = self._calibration_file_map.get(camera_id)
         if file_path is None:
-            # Try default location
-            default_path = Path("assets/calibration/calibration_blob.txt")
+            # Try default location from config
+            default_path = self._resolve_calibration_path(self._calibration_default_file)
             if default_path.exists():
                 file_path = str(default_path)
             else:
-                return None
+                # Fallback to assets/calibration/calibration_blob.txt
+                fallback_path = self._resolve_calibration_path("assets/calibration/calibration_blob.txt")
+                if fallback_path.exists():
+                    file_path = str(fallback_path)
+                else:
+                    return None
 
         try:
-            calibration = self._parser.load(Path(file_path))
+            resolved_path = self._resolve_calibration_path(file_path)
+            calibration = self._parser.load(resolved_path)
             CalibrationProcessor.build_lookup_tables(calibration)
             self._cache[camera_id] = calibration
             return calibration

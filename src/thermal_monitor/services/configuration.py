@@ -20,6 +20,7 @@ from thermal_monitor.core.models import (
     TemperatureLimits,
     TemperatureUnit,
 )
+from thermal_monitor.config import ROIConfig as ConfigROIConfig, RecordingConfig as ConfigRecordingConfig
 
 
 @dataclass
@@ -35,11 +36,20 @@ class ConfigurationService:
     analysis_configs: dict[str, AnalysisConfig] = field(default_factory=dict)
     recording_configs: dict[str, RecordingConfig] = field(default_factory=dict)
 
+    # Default configurations from config.yaml (injected at startup)
+    _roi_defaults: ConfigROIConfig | None = field(default=None, repr=False)
+    _recording_defaults: ConfigRecordingConfig | None = field(default=None, repr=False)
+
     # Change callbacks
     _camera_change_callbacks: list[Callable[[str, CameraConfig], None]] = field(default_factory=list)
     _analysis_change_callbacks: list[Callable[[str, AnalysisConfig], None]] = field(default_factory=list)
     _system_change_callbacks: list[Callable[[SystemConfig], None]] = field(default_factory=list)
     _recording_change_callbacks: list[Callable[[str, RecordingConfig], None]] = field(default_factory=list)
+
+    def set_defaults(self, roi_defaults: ConfigROIConfig, recording_defaults: ConfigRecordingConfig) -> None:
+        """Set default configurations from config.yaml."""
+        self._roi_defaults = roi_defaults
+        self._recording_defaults = recording_defaults
 
     # --- Camera Configuration ---
 
@@ -214,18 +224,14 @@ class ConfigurationService:
         max_critical: float | None = None,
     ) -> ROIConfig:
         if parameters is None:
-            if shape == ROIShape.RECTANGLE1:
-                parameters = {"y1": 0.0, "x1": 0.0, "y2": 100.0, "x2": 100.0}
-            elif shape == ROIShape.RECTANGLE2:
-                parameters = {"center_y": 0.0, "center_x": 0.0, "phi": 0.0, "length1": 50.0, "length2": 50.0}
-            elif shape == ROIShape.CIRCLE:
-                parameters = {"center_y": 0.0, "center_x": 0.0, "radius": 50.0}
-            elif shape == ROIShape.ELLIPSE:
-                parameters = {"center_y": 0.0, "center_x": 0.0, "phi": 0.0, "radius1": 50.0, "radius2": 30.0}
-            elif shape == ROIShape.POLYGON:
-                parameters = {"points": [(0.0, 0.0), (100.0, 0.0), (50.0, 100.0)]}
+            if self._roi_defaults is not None:
+                defaults_dict = self._roi_defaults.defaults
+                if shape.value in defaults_dict:
+                    parameters = defaults_dict[shape.value]
+                else:
+                    parameters = self._get_fallback_roi_params(shape)
             else:
-                parameters = {}
+                parameters = self._get_fallback_roi_params(shape)
 
         geometry = ROIGeometry(shape=shape, parameters=parameters)
         limits = TemperatureLimits(
@@ -241,6 +247,20 @@ class ConfigurationService:
             geometry=geometry,
             temperature_limits=limits,
         )
+
+    def _get_fallback_roi_params(self, shape: ROIShape) -> dict:
+        """Fallback ROI parameters if config is not available."""
+        if shape == ROIShape.RECTANGLE1:
+            return {"y1": 0.0, "x1": 0.0, "y2": 100.0, "x2": 100.0}
+        elif shape == ROIShape.RECTANGLE2:
+            return {"center_y": 0.0, "center_x": 0.0, "phi": 0.0, "length1": 50.0, "length2": 50.0}
+        elif shape == ROIShape.CIRCLE:
+            return {"center_y": 0.0, "center_x": 0.0, "radius": 50.0}
+        elif shape == ROIShape.ELLIPSE:
+            return {"center_y": 0.0, "center_x": 0.0, "phi": 0.0, "radius1": 50.0, "radius2": 30.0}
+        elif shape == ROIShape.POLYGON:
+            return {"points": [(0.0, 0.0), (100.0, 0.0), (50.0, 100.0)]}
+        return {}
 
     def create_position_roi_association(
         self,
@@ -270,12 +290,18 @@ class ConfigurationService:
         self,
         camera_id: str,
         enabled: bool = True,
-        pre_alarm_seconds: float = 10.0,
-        post_alarm_seconds: float = 30.0,
+        pre_alarm_seconds: float | None = None,
+        post_alarm_seconds: float | None = None,
     ) -> RecordingConfig:
+        if self._recording_defaults is not None:
+            pre = pre_alarm_seconds if pre_alarm_seconds is not None else self._recording_defaults.pre_alarm_seconds
+            post = post_alarm_seconds if post_alarm_seconds is not None else self._recording_defaults.post_alarm_seconds
+        else:
+            pre = pre_alarm_seconds if pre_alarm_seconds is not None else 10.0
+            post = post_alarm_seconds if post_alarm_seconds is not None else 30.0
         return RecordingConfig(
             camera_id=camera_id,
             enabled=enabled,
-            pre_alarm_seconds=pre_alarm_seconds,
-            post_alarm_seconds=post_alarm_seconds,
+            pre_alarm_seconds=pre,
+            post_alarm_seconds=post,
         )

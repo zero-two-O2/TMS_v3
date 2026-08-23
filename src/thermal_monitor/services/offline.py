@@ -13,6 +13,7 @@ from thermal_monitor.processing import FrameSource
 from thermal_monitor.offline import OfflineFrameSource, OfflineFrameSourceConfig, StreamFilter
 from thermal_monitor.processing.sources import SyntheticFrameSource
 from thermal_monitor.processing.alarms import AlarmEvaluator
+from thermal_monitor.config import OfflineConfig
 
 
 @dataclasses.dataclass
@@ -36,7 +37,24 @@ class OfflineService:
     and managing playback sessions.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        playback_speed: float = 1.0,
+        speed_min: float = 0.1,
+        speed_max: float = 10.0,
+        offline_config: OfflineConfig | None = None,
+    ) -> None:
+        # Use offline_config if provided, else use individual parameters
+        if offline_config is not None:
+            self._default_playback_speed = offline_config.playback.default_speed
+            self._speed_min = offline_config.playback.speed_min
+            self._speed_max = offline_config.playback.speed_max
+        else:
+            self._default_playback_speed = playback_speed
+            self._speed_min = speed_min
+            self._speed_max = speed_max
+
         self._sessions: dict[str, OfflineSession] = {}
         self._frame_callbacks: dict[str, list[Callable]] = {}
         self._session_callbacks: dict[str, list[Callable]] = {}
@@ -86,6 +104,7 @@ class OfflineService:
             source=source,
             analysis_config=analysis_config,
             evaluator=evaluator,
+            playback_speed=self._default_playback_speed,
         )
         self._sessions[session_id] = session
         self._notify_session_created(session)
@@ -168,7 +187,7 @@ class OfflineService:
     def set_playback_speed(self, session_id: str, speed: float) -> bool:
         session = self._sessions.get(session_id)
         if session is not None:
-            session.playback_speed = max(0.1, min(10.0, speed))
+            session.playback_speed = max(self._speed_min, min(self._speed_max, speed))
             self._notify_session_changed(session)
             return True
         return False

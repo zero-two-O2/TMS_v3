@@ -86,18 +86,18 @@ def _parse_devices(result: Any) -> list[str]:
 class CameraDiscoveryService:
     """Short-lived HALCON discovery service with injectable HALCON module."""
 
-    HALCON_INTERFACE = "GigEVision2"
-
     def __init__(
         self,
         *,
         halcon: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        halcon_interface: str = "GigEVision2",
         attempts: int = 3,
         retry_delay_s: float = 3.0,
     ) -> None:
         self._halcon = halcon
         self._sleep = sleep
+        self._halcon_interface = halcon_interface
         self._attempts = max(1, attempts)
         self._retry_delay_s = retry_delay_s
         self._cameras: list[DiscoveredCamera] = []
@@ -115,7 +115,7 @@ class CameraDiscoveryService:
             ha = self._halcon or self._import_halcon()
             devices: list[str] = []
             for attempt in range(self._attempts):
-                devices = _parse_devices(ha.info_framegrabber(self.HALCON_INTERFACE, "device"))
+                devices = _parse_devices(ha.info_framegrabber(self._halcon_interface, "device"))
                 if devices or attempt == self._attempts - 1:
                     break
                 self._sleep(self._retry_delay_s)
@@ -144,7 +144,7 @@ class CameraDiscoveryService:
         handle = None
         try:
             handle = ha.open_framegrabber(
-                self.HALCON_INTERFACE, 0, 0, 0, 0, 0, 0,
+                self._halcon_interface, 0, 0, 0, 0, 0, 0,
                 "progressive", -1, "default", -1, "false", "default",
                 device, 0, -1,
             )

@@ -34,6 +34,7 @@ from thermal_monitor.camera.driver import CameraConnectionError
 from thermal_monitor.core.models import AnalysisConfig
 from thermal_monitor.core.models import CameraConfig as AppCameraConfig
 from thermal_monitor.core.models import CameraIdentity as AppCameraIdentity
+from thermal_monitor.config import CamerasConfig, SystemConfig, RecordingConfig, StorageConfig
 from thermal_monitor.services.runtime import CameraRuntimeError, CameraRuntimeService
 
 
@@ -98,7 +99,18 @@ class FixedCalibrationProvider:
 
 def runtime_service() -> CameraRuntimeService:
     """A runtime service with a throttled synthetic frame source."""
-    return CameraRuntimeService(source_factory=lambda cfg: ThrottledFrameSource())
+    # Create minimal config objects for testing
+    cameras_config = CamerasConfig()
+    system_config = SystemConfig()
+    recording_config = RecordingConfig()
+    storage_config = StorageConfig()
+    return CameraRuntimeService(
+        cameras_config=cameras_config,
+        system_config=system_config,
+        recording_config=recording_config,
+        storage_config=storage_config,
+        source_factory=lambda cfg: ThrottledFrameSource(),
+    )
 
 
 def thread_names() -> list[str]:
@@ -174,9 +186,19 @@ class TestStartCamera:
 class TestStartFailure:
     def test_connect_failure_raises_and_leaves_nothing(self, qapp):
         """Acquisition failure raises CameraRuntimeError with no orphan threads."""
-        service = CameraRuntimeService(source_factory=lambda cfg: FakeFrameSource(
-            connect_error=CameraConnectionError("no camera present")
-        ))
+        cameras_config = CamerasConfig()
+        system_config = SystemConfig()
+        recording_config = RecordingConfig()
+        storage_config = StorageConfig()
+        service = CameraRuntimeService(
+            cameras_config=cameras_config,
+            system_config=system_config,
+            recording_config=recording_config,
+            storage_config=storage_config,
+            source_factory=lambda cfg: FakeFrameSource(
+                connect_error=CameraConnectionError("no camera present")
+            )
+        )
         camera_id = unique_camera("cam_fail")
         cfg = make_app_camera_config(camera_id, **fast_failure_metadata())
         with pytest.raises(CameraRuntimeError):

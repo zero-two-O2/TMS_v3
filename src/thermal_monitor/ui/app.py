@@ -24,7 +24,9 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
 from thermal_monitor.services.runtime import CameraRuntimeService
+from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.storage.database import Database
+from thermal_monitor.config import ConfigurationManager, create_config_manager
 
 
 class ThermalMonitorApp:
@@ -42,19 +44,70 @@ class ThermalMonitorApp:
         )
 
         self._app = QApplication(argv)
-        self._app.setApplicationName("Thermal Monitoring System V3")
-        self._app.setApplicationVersion("3.0.0")
+
+        # Initialize ConfigurationManager FIRST - single source of truth
+        self._config_manager = create_config_manager()
+        config = self._config_manager.get_config()
+
+        # Apply application identity from config
+        self._app.setApplicationName(config.application.name)
+        self._app.setApplicationVersion(config.application.version)
         self._app.setOrganizationName("ThermalMonitor")
 
-        # Services
+        # Initialize logging from configuration
+        self._configure_logging(config.logging)
+
+        # Services - created with configuration injection
         self._mode_service = ModeService()
         self._config_service = ConfigurationService()
         self._offline_service = OfflineService()
+        self._discovery_service = CameraDiscoveryService()
         self._runtime_service = CameraRuntimeService()
         self._database: Optional[Database] = None
 
         # Application controller (owns window lifecycle)
         self._controller: Optional[AppController] = None
+
+    def _configure_logging(self, logging_config) -> None:
+        """Configure application logging from configuration."""
+        import logging
+        from thermal_monitor.core.logging import logger as app_logger
+
+        # Get the root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(getattr(logging, logging_config.level))
+
+        # Clear existing handlers
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Configure handler
+        if logging_config.file_path:
+            # File path will be resolved by the logging system if needed
+            from logging.handlers import RotatingFileHandler
+            log_path = self._config_manager.resolve_log_path()
+            if log_path:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                handler = RotatingFileHandler(
+                    log_path,
+                    maxBytes=logging_config.max_size_mb * 1024 * 1024,
+                    backupCount=logging_config.backup_count,
+                    encoding="utf-8"
+                )
+            else:
+                handler = logging.StreamHandler()
+        else:
+            handler = logging.StreamHandler()
+
+        formatter = logging.Formatter(logging_config.format, logging_config.date_format)
+        handler.setFormatter(formatter)
+        root_logger.addHandler(handler)
+
+        # Also update our internal logger
+        app_logger._logger.setLevel(getattr(logging, logging_config.level))
+        for h in app_logger._logger.handlers[:]:
+            app_logger._logger.removeHandler(h)
+        app_logger._logger.addHandler(handler)
 
     def set_database(self, database: Database) -> None:
         """Set the database connection."""
@@ -62,12 +115,15 @@ class ThermalMonitorApp:
 
     def initialize(self) -> None:
         """Initialize the application and create the controller."""
+        # Pass ConfigurationManager to controller for dependency injection
         self._controller = AppController(
             mode_service=self._mode_service,
             config_service=self._config_service,
             offline_service=self._offline_service,
             runtime_service=self._runtime_service,
             database=self._database,
+            discovery_service=self._discovery_service,
+            config_manager=self._config_manager,
         )
         self._controller.initialize()
 
@@ -99,6 +155,10 @@ class ThermalMonitorApp:
     @property
     def database(self) -> Database | None:
         return self._database
+
+    @property
+    def config_manager(self) -> ConfigurationManager:
+        return self._config_manager
 
 
 def main() -> int:

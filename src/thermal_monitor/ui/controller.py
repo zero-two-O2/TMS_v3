@@ -24,6 +24,7 @@ from thermal_monitor.ui.windows.configuration_window import ConfigurationWindow
 from thermal_monitor.ui.windows.offline_window import OfflineWindow
 from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.services.observer import ObserverService
+from thermal_monitor.config import ConfigurationManager, CamerasConfig, SystemConfig, RecordingConfig, StorageConfig, CalibrationConfig
 
 
 class AppController(QObject):
@@ -47,6 +48,7 @@ class AppController(QObject):
         *,
         discovery_service: CameraDiscoveryService | None = None,
         observer_service: ObserverService | None = None,
+        config_manager: ConfigurationManager | None = None,
     ) -> None:
         super().__init__()
 
@@ -57,6 +59,7 @@ class AppController(QObject):
         self._database = database
         self._discovery_service = discovery_service or CameraDiscoveryService()
         self._observer_service = observer_service
+        self._config_manager = config_manager
 
         # Window instances (created lazily)
         self._launcher_window: LauncherWindow | None = None
@@ -73,8 +76,95 @@ class AppController(QObject):
 
     def initialize(self) -> None:
         """Create and show the launcher window maximized."""
+        # Configure services with configuration
+        self._configure_services()
         self._create_launcher_window()
-        self._launcher_window.showMaximized()
+        # Apply start_maximized from config
+        config = self._config_manager.get_config()
+        if config.ui.windows.start_maximized:
+            self._launcher_window.showMaximized()
+        else:
+            self._launcher_window.show()
+
+    def _configure_services(self) -> None:
+        """Configure all services with configuration from ConfigurationManager."""
+        config = self._config_manager.get_config()
+
+        # Configure CameraDiscoveryService
+        self._discovery_service = CameraDiscoveryService(
+            halcon_interface=config.cameras.discovery.halcon_interface,
+            attempts=config.cameras.discovery.attempts,
+            retry_delay_s=config.cameras.discovery.retry_delay_s,
+        )
+
+        # Configure CameraRuntimeService
+        self._runtime_service = CameraRuntimeService(
+            cameras_config=config.cameras,
+            system_config=config.system,
+            recording_config=config.recording,
+            storage_config=config.storage,
+            calibration_config=config.calibration,
+        )
+
+        # Configure OfflineService
+        self._offline_service = OfflineService(
+            playback_speed=config.offline.playback.default_speed,
+        )
+
+        # Configure ConfigurationService with defaults from config
+        self._configure_configuration_service(config)
+
+        # Configure Database if enabled
+        if config.database.enabled:
+            self._configure_database(config.database)
+
+    def _configure_configuration_service(self, config) -> None:
+        """Configure ConfigurationService with defaults from config."""
+        # Update system config with values from config.yaml
+        from thermal_monitor.core.models import SystemConfig
+        system_config = SystemConfig(
+            application_name=config.application.name,
+            version=config.application.version,
+            default_mode=config.application.default_mode,
+            max_cameras=config.system.max_cameras,
+            camera_discovery_enabled=config.cameras.discovery.enabled,
+            camera_discovery_interval_seconds=config.cameras.discovery.interval_seconds,
+            processing_enabled=config.processing.enabled,
+            processing_interval_ms=config.processing.interval_ms,
+            alarm_evaluation_enabled=config.alarms.evaluation_enabled,
+            alarm_cooldown_seconds=config.alarms.cooldown_seconds,
+            max_alarm_history=config.alarms.max_history,
+            recording_enabled=config.recording.enabled,
+            database_connection_string="",  # Will be set if database enabled
+            recording_storage_path="",
+            offline_storage_path=config.offline.storage_path,
+            log_level=config.logging.level,
+            log_max_size_mb=config.logging.max_size_mb,
+            log_backup_count=config.logging.backup_count,
+            bind_address=config.network.bind_address,
+            http_port=config.network.http_port,
+        )
+        self._config_service.update_system_config(system_config)
+
+    def _configure_database(self, db_config) -> None:
+        """Configure Database with DatabaseConfig."""
+        from thermal_monitor.storage.database import Database, DatabaseConfig
+
+        # Get password from environment
+        password = self._config_manager.get_database_password()
+
+        database_config = DatabaseConfig(
+            server=db_config.host,
+            database=db_config.name,
+            username=db_config.username if not db_config.trusted_connection else None,
+            password=password,
+            driver=db_config.driver,
+            trust_server_certificate=db_config.trust_server_certificate,
+            connection_timeout=db_config.connection_timeout,
+            command_timeout=db_config.command_timeout,
+        )
+        database = Database(database_config)
+        self._database = database
 
     def _create_launcher_window(self) -> None:
         """Create the launcher window."""

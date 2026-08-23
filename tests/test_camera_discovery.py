@@ -242,11 +242,25 @@ def test_gui_selection_populates_configuration(qapp):
 
 def test_disabled_camera_is_not_started_by_runtime():
     from thermal_monitor.services.runtime import CameraRuntimeError, CameraRuntimeService
+    from thermal_monitor.config import CamerasConfig, SystemConfig, RecordingConfig, StorageConfig
 
     config = CameraConfig(
         identity=CameraIdentity("cam_disabled", "SN-disabled"),
         enabled=False,
     )
-    service = CameraRuntimeService(source_factory=lambda _: pytest.fail("source must not be built"))
+
+    # Create minimal config objects for testing
+    cameras_config = CamerasConfig()
+    system_config = SystemConfig()
+    recording_config = RecordingConfig()
+    storage_config = StorageConfig()
+
+    service = CameraRuntimeService(
+        cameras_config=cameras_config,
+        system_config=system_config,
+        recording_config=recording_config,
+        storage_config=storage_config,
+        source_factory=lambda _: pytest.fail("source must not be built")
+    )
     with pytest.raises(CameraRuntimeError, match="disabled"):
         service.start_camera(config)
