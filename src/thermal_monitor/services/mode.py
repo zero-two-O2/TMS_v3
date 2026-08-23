@@ -20,7 +20,7 @@ class ModeService:
 
     _manager: ModeManager
 
-    def __init__(self, initial_mode: ApplicationMode = ApplicationMode.CONFIGURATION) -> None:
+    def __init__(self, initial_mode: ApplicationMode = ApplicationMode.LAUNCHER) -> None:
         self._manager = ModeManager(initial_mode)
 
     @property
@@ -54,8 +54,11 @@ class ModeService:
     def transition_to_configuration(self, reason: str = "") -> ModeState:
         return self._manager.transition_to_configuration(reason)
 
-    def transition_to_observer(self, reason: str = "") -> ModeState:
-        return self._manager.transition_to_observer(reason)
+    def transition_to_live(self, reason: str = "") -> ModeState:
+        return self._manager.transition_to_live(reason)
+
+    def transition_to_launcher(self, reason: str = "") -> ModeState:
+        return self._manager.transition_to_launcher(reason)
 
     def transition_to_offline(self, reason: str = "") -> ModeState:
         return self._manager.transition_to_offline(reason)
@@ -63,8 +66,11 @@ class ModeService:
     def is_configuration_mode(self) -> bool:
         return self.current_mode == ApplicationMode.CONFIGURATION
 
-    def is_observer_mode(self) -> bool:
-        return self.current_mode == ApplicationMode.OBSERVER
+    def is_live_mode(self) -> bool:
+        return self.current_mode == ApplicationMode.LIVE
+
+    def is_launcher_mode(self) -> bool:
+        return self.current_mode == ApplicationMode.LAUNCHER
 
     def is_offline_mode(self) -> bool:
         return self.current_mode == ApplicationMode.OFFLINE

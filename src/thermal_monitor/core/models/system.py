@@ -207,7 +207,7 @@ class ApplicationState:
 
     @property
     def is_observer_mode(self) -> bool:
-        return self.mode == ApplicationMode.OBSERVER
+        return self.mode == ApplicationMode.LIVE
 
     @property
     def is_offline_mode(self) -> bool:

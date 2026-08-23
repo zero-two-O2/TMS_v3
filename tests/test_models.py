@@ -389,7 +389,7 @@ class TestSystemModels:
 
     def test_system_status(self):
         status = SystemStatus(
-            mode=ApplicationMode.OBSERVER,
+            mode=ApplicationMode.LIVE,
             camera_count=4,
             active_camera_count=3,
             acquiring_camera_count=3,
@@ -398,7 +398,7 @@ class TestSystemModels:
 
     def test_system_status_unhealthy(self):
         status = SystemStatus(
-            mode=ApplicationMode.OBSERVER,
+            mode=ApplicationMode.LIVE,
             camera_count=4,
             active_camera_count=0,
             last_error="No cameras connected",

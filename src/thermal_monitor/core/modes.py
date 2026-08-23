@@ -18,8 +18,9 @@ from types import MappingProxyType
 class ApplicationMode(str, Enum):
     """Top-level application operating mode."""
 
+    LAUNCHER = "launcher"
+    LIVE = "live"
     CONFIGURATION = "configuration"
-    OBSERVER = "observer"
     OFFLINE = "offline"
 
 
@@ -61,18 +62,18 @@ class ModeCapabilities:
 
 # Capability matrix per mode (defined once, frozen)
 _MODE_CAPABILITIES: Mapping[ApplicationMode, ModeCapabilities] = MappingProxyType({
-    ApplicationMode.CONFIGURATION: ModeCapabilities(
-        live_camera_operation=True,
-        camera_configuration=True,
-        ptz_configuration=True,
-        roi_editing=True,
-        system_configuration=True,
-        ptz_manual_control=True,
+    ApplicationMode.LAUNCHER: ModeCapabilities(
+        live_camera_operation=False,
+        camera_configuration=False,
+        ptz_configuration=False,
+        roi_editing=False,
+        system_configuration=False,
+        ptz_manual_control=False,
         alarm_observation=False,
         offline_playback=False,
         recording_playback=False,
     ),
-    ApplicationMode.OBSERVER: ModeCapabilities(
+    ApplicationMode.LIVE: ModeCapabilities(
         live_camera_operation=True,
         camera_configuration=False,
         ptz_configuration=False,
@@ -80,6 +81,17 @@ _MODE_CAPABILITIES: Mapping[ApplicationMode, ModeCapabilities] = MappingProxyTyp
         system_configuration=False,
         ptz_manual_control=False,
         alarm_observation=True,
+        offline_playback=False,
+        recording_playback=False,
+    ),
+    ApplicationMode.CONFIGURATION: ModeCapabilities(
+        live_camera_operation=False,
+        camera_configuration=True,
+        ptz_configuration=True,
+        roi_editing=True,
+        system_configuration=True,
+        ptz_manual_control=True,
+        alarm_observation=False,
         offline_playback=False,
         recording_playback=False,
     ),
@@ -127,21 +139,26 @@ class ModeManager:
 
     # Valid transitions: from_mode -> allowed target modes
     _VALID_TRANSITIONS: Mapping[ApplicationMode, Sequence[ApplicationMode]] = MappingProxyType({
-        ApplicationMode.CONFIGURATION: (
-            ApplicationMode.OBSERVER,
+        ApplicationMode.LAUNCHER: (
+            ApplicationMode.LIVE,
+            ApplicationMode.CONFIGURATION,
             ApplicationMode.OFFLINE,
         ),
-        ApplicationMode.OBSERVER: (
+        ApplicationMode.LIVE: (
             ApplicationMode.CONFIGURATION,
+            ApplicationMode.OFFLINE,
+        ),
+        ApplicationMode.CONFIGURATION: (
+            ApplicationMode.LIVE,
             ApplicationMode.OFFLINE,
         ),
         ApplicationMode.OFFLINE: (
+            ApplicationMode.LIVE,
             ApplicationMode.CONFIGURATION,
-            ApplicationMode.OBSERVER,
         ),
     })
 
-    def __init__(self, initial_mode: ApplicationMode = ApplicationMode.CONFIGURATION) -> None:
+    def __init__(self, initial_mode: ApplicationMode = ApplicationMode.LAUNCHER) -> None:
         if not isinstance(initial_mode, ApplicationMode):
             raise ValueError(f"Invalid initial mode: {initial_mode!r}")
 
@@ -228,6 +245,14 @@ class ModeManager:
     def transition_to_offline(self, reason: str = "") -> ModeState:
         """Convenience method to transition to OFFLINE mode."""
         return self.transition(ApplicationMode.OFFLINE, reason)
+
+    def transition_to_launcher(self, reason: str = "") -> ModeState:
+        """Convenience method to transition to LAUNCHER mode."""
+        return self.transition(ApplicationMode.LAUNCHER, reason)
+
+    def transition_to_live(self, reason: str = "") -> ModeState:
+        """Convenience method to transition to LIVE mode."""
+        return self.transition(ApplicationMode.LIVE, reason)
 
     def _notify_callbacks(self, new_state: ModeState) -> None:
         for callback in self._callbacks:

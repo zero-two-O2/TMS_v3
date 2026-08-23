@@ -26,31 +26,31 @@ from thermal_monitor.core.models import (
 class TestModeSwitching:
     """Test mode switching logic."""
 
-    def test_initial_mode_defaults_to_configuration(self) -> None:
+    def test_initial_mode_defaults_to_launcher(self) -> None:
         service = ModeService()
-        assert service.current_mode == ApplicationMode.CONFIGURATION
+        assert service.current_mode == ApplicationMode.LAUNCHER
 
     def test_initial_mode_can_be_set(self) -> None:
         service = ModeService(ApplicationMode.OFFLINE)
         assert service.current_mode == ApplicationMode.OFFLINE
 
-    def test_transition_configuration_to_observer(self) -> None:
+    def test_transition_configuration_to_live(self) -> None:
         service = ModeService(ApplicationMode.CONFIGURATION)
-        state = service.transition_to_observer("test")
-        assert state.mode == ApplicationMode.OBSERVER
+        state = service.transition_to_live("test")
+        assert state.mode == ApplicationMode.LIVE
 
     def test_transition_configuration_to_offline(self) -> None:
         service = ModeService(ApplicationMode.CONFIGURATION)
         state = service.transition_to_offline("test")
         assert state.mode == ApplicationMode.OFFLINE
 
-    def test_transition_observer_to_configuration(self) -> None:
-        service = ModeService(ApplicationMode.OBSERVER)
+    def test_transition_live_to_configuration(self) -> None:
+        service = ModeService(ApplicationMode.LIVE)
         state = service.transition_to_configuration("test")
         assert state.mode == ApplicationMode.CONFIGURATION
 
-    def test_transition_observer_to_offline(self) -> None:
-        service = ModeService(ApplicationMode.OBSERVER)
+    def test_transition_live_to_offline(self) -> None:
+        service = ModeService(ApplicationMode.LIVE)
         state = service.transition_to_offline("test")
         assert state.mode == ApplicationMode.OFFLINE
 
@@ -59,10 +59,25 @@ class TestModeSwitching:
         state = service.transition_to_configuration("test")
         assert state.mode == ApplicationMode.CONFIGURATION
 
-    def test_transition_offline_to_observer(self) -> None:
+    def test_transition_offline_to_live(self) -> None:
         service = ModeService(ApplicationMode.OFFLINE)
-        state = service.transition_to_observer("test")
-        assert state.mode == ApplicationMode.OBSERVER
+        state = service.transition_to_live("test")
+        assert state.mode == ApplicationMode.LIVE
+
+    def test_transition_launcher_to_live(self) -> None:
+        service = ModeService(ApplicationMode.LAUNCHER)
+        state = service.transition_to_live("test")
+        assert state.mode == ApplicationMode.LIVE
+
+    def test_transition_launcher_to_configuration(self) -> None:
+        service = ModeService(ApplicationMode.LAUNCHER)
+        state = service.transition_to_configuration("test")
+        assert state.mode == ApplicationMode.CONFIGURATION
+
+    def test_transition_launcher_to_offline(self) -> None:
+        service = ModeService(ApplicationMode.LAUNCHER)
+        state = service.transition_to_offline("test")
+        assert state.mode == ApplicationMode.OFFLINE
 
     def test_invalid_transition_raises(self) -> None:
         service = ModeService(ApplicationMode.CONFIGURATION)
@@ -78,9 +93,9 @@ class TestModeSwitching:
             callback_states.append(state)
 
         service.add_observer(callback)
-        service.transition_to_observer("test")
+        service.transition_to_live("test")
         assert len(callback_states) == 1
-        assert callback_states[0].mode == ApplicationMode.OBSERVER
+        assert callback_states[0].mode == ApplicationMode.LIVE
 
 
 class TestConfigurationValidation:

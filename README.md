@@ -23,7 +23,7 @@ Saved raw camera data can be loaded and analyzed without connecting to cameras.
 
 
 
-What happened
+# What happened
 
 The PC had the correct native MVTec HALCON installation, but the Python environment initially had the wrong package.
 

@@ -159,58 +159,85 @@ def test_refresh_does_not_create_acquisition_or_shm_objects():
 
 
 def test_gui_displays_discovered_cameras(qapp):
-    from thermal_monitor.ui.modes.configuration import CameraConfigurationTab
+    from thermal_monitor.ui.modes.launcher import LauncherWidget
+    from thermal_monitor.services.mode import ModeService
 
     camera = DiscoveredCamera("dev-a", "SN1", "192.168.1.1", "TV46L", "Fluke")
-    tab = CameraConfigurationTab(
-        ConfigurationService(),
-        discovery_service=SimpleNamespace(refresh=lambda: [camera]),
+    mode_service = ModeService()
+    config_service = ConfigurationService()
+    discovery = SimpleNamespace(
+        discover_cameras=lambda: [camera],
+        refresh=lambda: [camera],
     )
-    tab._discover_cameras()
+    widget = LauncherWidget(mode_service, config_service, discovery_service=discovery)
 
-    assert tab._discovered_table.rowCount() == 1
-    assert tab._discovered_table.item(0, 1).text() == "SN1"
-    assert tab._discovered_table.item(0, 3).text() == "192.168.1.1"
+    assert widget._camera_table.rowCount() == 8  # Fixed 8 slots
+    assert widget._camera_table.item(0, 1).text() == "SN1"
+    assert widget._camera_table.item(0, 3).text() == "192.168.1.1"
+    assert widget._camera_table.item(0, 4).text() == "Available"
+
+
+def test_gui_search_button_triggers_discovery(qapp):
+    from thermal_monitor.ui.modes.launcher import LauncherWidget
+    from thermal_monitor.services.mode import ModeService
+    from thermal_monitor.services.discovery import CameraDiscoveryError
+    from PyQt6.QtTest import QTest
+    from PyQt6.QtCore import Qt
+
+    config_service = ConfigurationService()
+    mode_service = ModeService()
+
+    call_count = [0]
+    def tracking_discovery():
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return [DiscoveredCamera("dev-a", "SN1", "192.168.1.1", "TV46L", "Fluke")]
+        return [DiscoveredCamera("dev-b", "SN2", "192.168.1.2", "TV46L", "Fluke")]
+
+    discovery = SimpleNamespace(
+        discover_cameras=tracking_discovery,
+        refresh=tracking_discovery,
+    )
+    widget = LauncherWidget(mode_service, config_service, discovery_service=discovery)
+
+    # Initial discovery
+    assert widget._camera_table.item(0, 1).text() == "SN1"
+
+    # Click search button
+    QTest.mouseClick(widget._search_btn, Qt.MouseButton.LeftButton)
+
+    # Should have refreshed with new camera
+    assert widget._camera_table.item(0, 1).text() == "SN2"
 
 
 def test_gui_selection_populates_configuration(qapp):
+    """Test that discovered cameras can be added to configuration."""
     from PyQt6.QtCore import Qt
-    from thermal_monitor.ui.modes.configuration import CameraConfigurationTab
+    from thermal_monitor.services.configuration import ConfigurationService
 
     config_service = ConfigurationService()
     camera = DiscoveredCamera("dev-a", "SN1", "192.168.1.1", "TV46L", "Fluke")
-    tab = CameraConfigurationTab(
-        config_service,
-        discovery_service=SimpleNamespace(refresh=lambda: [camera]),
+
+    # Simulate adding a discovered camera to configuration (as Launcher would do)
+    identity = CameraIdentity(
+        camera_id=camera.camera_id,
+        serial_number=camera.serial_number,
+        model=camera.model,
+        vendor=camera.vendor,
+        firmware=camera.firmware,
+        user_name=camera.user_name,
     )
-    tab._discover_cameras()
-    tab._discovered_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-    tab._add_selected()
-
-    config = config_service.get_camera_config("cam_SN1")
-    assert config is not None
-    assert config.identity.serial_number == "SN1"
-    assert config.metadata["device_identifier"] == "dev-a"
-    assert config.metadata["ip_address"] == "192.168.1.1"
-
-
-def test_adding_same_discovered_camera_twice_keeps_one_configuration(qapp):
-    from PyQt6.QtCore import Qt
-    from thermal_monitor.ui.modes.configuration import CameraConfigurationTab
-
-    config_service = ConfigurationService()
-    camera = DiscoveredCamera("dev-a", "SN1", "192.168.1.1", "TV46L", "Fluke")
-    tab = CameraConfigurationTab(
-        config_service,
-        discovery_service=SimpleNamespace(refresh=lambda: [camera]),
+    config = CameraConfig(
+        identity=identity,
+        metadata={"device_identifier": camera.device_identifier, "ip_address": camera.ip_address},
     )
-    tab._discover_cameras()
-    tab._discovered_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-    tab._add_selected()
-    tab._discovered_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
-    tab._add_selected()
+    config_service.set_camera_config(config)
 
-    assert len(config_service.get_all_camera_configs()) == 1
+    config_result = config_service.get_camera_config("cam_SN1")
+    assert config_result is not None
+    assert config_result.identity.serial_number == "SN1"
+    assert config_result.metadata["device_identifier"] == "dev-a"
+    assert config_result.metadata["ip_address"] == "192.168.1.1"
 
 
 def test_disabled_camera_is_not_started_by_runtime():

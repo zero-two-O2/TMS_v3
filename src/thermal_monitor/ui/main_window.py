@@ -2,7 +2,7 @@
 ui.main_window -- Main application window with mode switching.
 
 The main window holds the central widget that changes based on the current
-application mode (CONFIGURATION, OBSERVER, OFFLINE).
+application mode (LAUNCHER, LIVE, CONFIGURATION, OFFLINE).
 """
 
 from __future__ import annotations
@@ -12,14 +12,13 @@ from typing import Optional
 from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import (
     QMainWindow,
-    QWidget,
-    QVBoxLayout,
     QStackedWidget,
     QToolBar,
     QStatusBar,
     QLabel,
     QMenuBar,
     QMenu,
+    QMessageBox,
 )
 
 from thermal_monitor.core.modes import ApplicationMode, ModeState
@@ -28,11 +27,13 @@ from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.services.runtime import CameraRuntimeService
+from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.storage.database import Database
 
 from thermal_monitor.ui.modes.configuration import ConfigurationModeWidget
+from thermal_monitor.ui.modes.launcher import LauncherWidget
+from thermal_monitor.ui.modes.live import LiveModeWidget
 from thermal_monitor.ui.modes.offline import OfflineModeWidget
-from thermal_monitor.ui.modes.observer import ObserverModeWidget
 
 
 class MainWindow(QMainWindow):
@@ -65,6 +66,18 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._stacked_widget)
 
         # Create mode widgets
+        self._discovery_service = CameraDiscoveryService()
+        self._launcher_widget = LauncherWidget(
+            mode_service=mode_service,
+            config_service=config_service,
+            discovery_service=self._discovery_service,
+        )
+        self._live_widget = LiveModeWidget(
+            mode_service=mode_service,
+            config_service=config_service,
+            observer_service=observer_service,
+            runtime_service=runtime_service,
+        )
         self._config_widget = ConfigurationModeWidget(
             config_service=config_service,
             mode_service=mode_service,
@@ -77,24 +90,19 @@ class MainWindow(QMainWindow):
             mode_service=mode_service,
             database=database,
         )
-        self._observer_widget = ObserverModeWidget(
-            mode_service=mode_service,
-            config_service=config_service,
-            observer_service=observer_service,
-            runtime_service=runtime_service,
-        )
 
         # Add to stack in mode order
-        self._stacked_widget.addWidget(self._config_widget)   # index 0
-        self._stacked_widget.addWidget(self._observer_widget) # index 1
-        self._stacked_widget.addWidget(self._offline_widget)  # index 2
+        self._stacked_widget.addWidget(self._launcher_widget)   # index 0 - LAUNCHER
+        self._stacked_widget.addWidget(self._live_widget)       # index 1 - LIVE
+        self._stacked_widget.addWidget(self._config_widget)     # index 2 - CONFIGURATION
+        self._stacked_widget.addWidget(self._offline_widget)    # index 3 - OFFLINE
 
         # Toolbar for mode switching
         self._create_toolbar()
 
         # Status bar
         self._status_bar = QStatusBar()
-        self._mode_label = QLabel("Mode: CONFIGURATION")
+        self._mode_label = QLabel("Mode: LAUNCHER")
         self._status_bar.addPermanentWidget(self._mode_label)
         self.setStatusBar(self._status_bar)
 
@@ -103,6 +111,9 @@ class MainWindow(QMainWindow):
 
         # Connect mode changes
         self._mode_service.add_observer(self._on_mode_changed)
+
+        # Connect launcher mode requests
+        self._launcher_widget.mode_requested.connect(self._on_launcher_mode_requested)
 
         # Initial mode
         self._update_ui_for_mode(self._mode_service.state)
@@ -113,19 +124,18 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, toolbar)
 
+        # Live mode action
+        self._live_action = toolbar.addAction("Live")
+        self._live_action.setCheckable(True)
+        self._live_action.triggered.connect(
+            lambda: self._request_live_mode()
+        )
+
         # Configuration mode action
         self._config_action = toolbar.addAction("Configuration")
         self._config_action.setCheckable(True)
-        self._config_action.setChecked(True)
         self._config_action.triggered.connect(
-            lambda: self._mode_service.transition_to_configuration("toolbar")
-        )
-
-        # Observer mode action
-        self._observer_action = toolbar.addAction("Observer")
-        self._observer_action.setCheckable(True)
-        self._observer_action.triggered.connect(
-            lambda: self._mode_service.transition_to_observer("toolbar")
+            lambda: self._request_configuration_mode()
         )
 
         # Offline mode action
@@ -135,12 +145,40 @@ class MainWindow(QMainWindow):
             lambda: self._mode_service.transition_to_offline("toolbar")
         )
 
-        # Group actions for exclusive checking
+        # Group actions for exclusive checking (Launcher is startup-only, not in toolbar)
         self._mode_actions = {
+            ApplicationMode.LIVE: self._live_action,
             ApplicationMode.CONFIGURATION: self._config_action,
-            ApplicationMode.OBSERVER: self._observer_action,
             ApplicationMode.OFFLINE: self._offline_action,
         }
+
+    def _request_live_mode(self) -> None:
+        """Request transition to Live mode with mutual exclusion check."""
+        if self._mode_service.current_mode == ApplicationMode.CONFIGURATION:
+            QMessageBox.warning(
+                self,
+                "Configuration Mode Active",
+                "Configuration Mode Is Active\n\n"
+                "Please close Configuration before starting Live Mode.",
+                QMessageBox.StandardButton.Ok
+            )
+            self._live_action.setChecked(False)
+            return
+        self._mode_service.transition_to_live("toolbar")
+
+    def _request_configuration_mode(self) -> None:
+        """Request transition to Configuration mode with mutual exclusion check."""
+        if self._mode_service.current_mode == ApplicationMode.LIVE:
+            QMessageBox.warning(
+                self,
+                "Live Mode Active",
+                "Live Mode Is Active\n\n"
+                "Please stop Live Mode before opening Configuration.",
+                QMessageBox.StandardButton.Ok
+            )
+            self._config_action.setChecked(False)
+            return
+        self._mode_service.transition_to_configuration("toolbar")
 
     def _create_menu_bar(self) -> None:
         """Create the application menu bar."""
@@ -155,8 +193,8 @@ class MainWindow(QMainWindow):
 
         # Mode menu
         mode_menu = menubar.addMenu("Mode")
-        mode_menu.addAction("Configuration", lambda: self._mode_service.transition_to_configuration("menu"))
-        mode_menu.addAction("Observer", lambda: self._mode_service.transition_to_observer("menu"))
+        mode_menu.addAction("Live", lambda: self._request_live_mode())
+        mode_menu.addAction("Configuration", lambda: self._request_configuration_mode())
         mode_menu.addAction("Offline", lambda: self._mode_service.transition_to_offline("menu"))
 
         # View menu
@@ -171,6 +209,17 @@ class MainWindow(QMainWindow):
         """Handle mode change from ModeService."""
         self._update_ui_for_mode(state)
 
+    @pyqtSlot(ApplicationMode)
+    def _on_launcher_mode_requested(self, mode: ApplicationMode) -> None:
+        """Handle mode request from launcher widget."""
+        if mode == ApplicationMode.LIVE:
+            self._request_live_mode()
+        elif mode == ApplicationMode.CONFIGURATION:
+            self._request_configuration_mode()
+        elif mode == ApplicationMode.OFFLINE:
+            self._mode_service.transition_to_offline("launcher")
+        # LAUNCHER is not requested from launcher
+
     def _update_ui_for_mode(self, state: ModeState) -> None:
         """Update UI to reflect current mode."""
         mode = state.mode
@@ -184,9 +233,10 @@ class MainWindow(QMainWindow):
 
         # Switch stacked widget
         mode_index = {
-            ApplicationMode.CONFIGURATION: 0,
-            ApplicationMode.OBSERVER: 1,
-            ApplicationMode.OFFLINE: 2,
+            ApplicationMode.LAUNCHER: 0,
+            ApplicationMode.LIVE: 1,
+            ApplicationMode.CONFIGURATION: 2,
+            ApplicationMode.OFFLINE: 3,
         }
         self._stacked_widget.setCurrentIndex(mode_index[mode])
 
@@ -198,12 +248,14 @@ class MainWindow(QMainWindow):
         self._mode_label.setText(f"Mode: {mode.value.upper()}")
 
         # Notify mode widgets
-        if mode == ApplicationMode.CONFIGURATION:
+        if mode == ApplicationMode.LAUNCHER:
+            self._launcher_widget.on_mode_activated()
+        elif mode == ApplicationMode.LIVE:
+            self._live_widget.on_mode_activated()
+        elif mode == ApplicationMode.CONFIGURATION:
             self._config_widget.on_mode_activated()
         elif mode == ApplicationMode.OFFLINE:
             self._offline_widget.on_mode_activated()
-        elif mode == ApplicationMode.OBSERVER:
-            self._observer_widget.on_mode_activated()
 
     def closeEvent(self, event) -> None:
         """Clean up on close."""
