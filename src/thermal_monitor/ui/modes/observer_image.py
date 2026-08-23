@@ -10,6 +10,7 @@ result array.  A later mutation of the source cannot affect the displayed pixels
 
 from __future__ import annotations
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QImage, QPainter, QColor, QFont
 from PyQt6.QtWidgets import QWidget
 
