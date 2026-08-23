@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QStatusBar,
     QFrame,
+    QLineEdit,
 )
 from PyQt6.QtGui import QFont
 
@@ -65,6 +66,7 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
+from thermal_monitor.ui.theme import ThemeManager
 
 
 _UNIT_SYMBOLS = {
@@ -82,12 +84,14 @@ class ConfigurationModeWidget(QWidget):
         config_service: ConfigurationService,
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
 
         self._config_service = config_service
         self._mode_service = mode_service
         self._runtime_service = runtime_service
+        self._theme = theme_manager
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
@@ -158,6 +162,8 @@ class ConfigurationModeWidget(QWidget):
         self._prev_btn = QPushButton("◀ Previous")
         self._prev_btn.clicked.connect(self._select_prev_camera)
         self._prev_btn.setEnabled(False)
+        if self._theme:
+            self._prev_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
 
         self._camera_combo = QComboBox()
         self._camera_combo.setMinimumWidth(300)
@@ -166,9 +172,14 @@ class ConfigurationModeWidget(QWidget):
         self._next_btn = QPushButton("Next ▶")
         self._next_btn.clicked.connect(self._select_next_camera)
         self._next_btn.setEnabled(False)
+        if self._theme:
+            self._next_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
 
         selector_layout.addWidget(self._prev_btn)
-        selector_layout.addWidget(QLabel("Camera:"))
+        if self._theme:
+            selector_layout.addWidget(QLabel("Camera:"))
+        else:
+            selector_layout.addWidget(QLabel("Camera:"))
         selector_layout.addWidget(self._camera_combo, 1)
         selector_layout.addWidget(self._next_btn)
         selector_layout.addStretch()
@@ -183,7 +194,12 @@ class ConfigurationModeWidget(QWidget):
 
         self._acq_camera_label = QLabel("—")
         self._acq_state_label = QLabel("STOPPED")
-        self._acq_state_label.setStyleSheet("color: #757575; font-weight: bold;")
+        state_style = "font-weight: bold;"
+        if self._theme:
+            state_style += f" color: {self._theme.disabled_text()};"
+        else:
+            state_style += " color: #757575;"
+        self._acq_state_label.setStyleSheet(state_style)
 
         self._target_fps_spin = QSpinBox()
         self._target_fps_spin.setRange(1, 60)
@@ -214,6 +230,11 @@ class ConfigurationModeWidget(QWidget):
         self._stop_btn.setEnabled(False)
         self._reconnect_btn = QPushButton("Reconnect")
         self._reconnect_btn.clicked.connect(self._on_reconnect)
+
+        if self._theme:
+            self._start_btn.setStyleSheet(self._theme.primary_button_stylesheet())
+            self._stop_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+            self._reconnect_btn.setStyleSheet(self._theme.accent_button_stylesheet())
 
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(self._start_btn)
@@ -1711,21 +1732,24 @@ class ConfigurationWindow(QMainWindow):
         config_service: ConfigurationService,
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
 
         self._config_service = config_service
         self._mode_service = mode_service
         self._runtime_service = runtime_service
+        self._theme = theme_manager
 
         self.setWindowTitle("Thermal Monitoring System V3 - Configuration Mode")
-        self.setMinimumSize(1400, 900)
+        self._apply_window_config()
 
         # Central widget
         self._config_widget = ConfigurationModeWidget(
             config_service=config_service,
             mode_service=mode_service,
             runtime_service=runtime_service,
+            theme_manager=theme_manager,
         )
         self.setCentralWidget(self._config_widget)
 
@@ -1733,7 +1757,17 @@ class ConfigurationWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Configuration Mode")
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
         self._status_bar.addWidget(self._status_label)
+
+    def _apply_window_config(self) -> None:
+        """Apply window configuration from theme manager."""
+        if self._theme:
+            config = self._theme.window_config()
+            self.setMinimumSize(config["config_min_width"], config["config_min_height"])
+        else:
+            self.setMinimumSize(1400, 900)
 
     def on_mode_activated(self) -> None:
         """Called when Configuration mode becomes active."""

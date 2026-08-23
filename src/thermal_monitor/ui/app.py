@@ -27,6 +27,7 @@ from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.storage.database import Database
 from thermal_monitor.config import ConfigurationManager, create_config_manager
+from thermal_monitor.ui.theme import ThemeManager
 
 
 class ThermalMonitorApp:
@@ -56,6 +57,10 @@ class ThermalMonitorApp:
 
         # Initialize logging from configuration
         self._configure_logging(config.logging)
+
+        # Create ThemeManager and apply theme
+        self._theme_manager = ThemeManager(self._config_manager)
+        self._theme_manager.apply(self._app)
 
         # Services - created with configuration injection
         self._mode_service = ModeService()
@@ -115,7 +120,7 @@ class ThermalMonitorApp:
 
     def initialize(self) -> None:
         """Initialize the application and create the controller."""
-        # Pass ConfigurationManager to controller for dependency injection
+        # Pass ConfigurationManager and ThemeManager to controller for dependency injection
         self._controller = AppController(
             mode_service=self._mode_service,
             config_service=self._config_service,
@@ -124,6 +129,7 @@ class ThermalMonitorApp:
             database=self._database,
             discovery_service=self._discovery_service,
             config_manager=self._config_manager,
+            theme_manager=self._theme_manager,
         )
         self._controller.initialize()
 
@@ -159,6 +165,10 @@ class ThermalMonitorApp:
     @property
     def config_manager(self) -> ConfigurationManager:
         return self._config_manager
+
+    @property
+    def theme_manager(self) -> ThemeManager:
+        return self._theme_manager
 
 
 def main() -> int:

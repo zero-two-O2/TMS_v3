@@ -34,6 +34,7 @@ from thermal_monitor.ui.modes.configuration import ConfigurationModeWidget
 from thermal_monitor.ui.modes.launcher import LauncherWidget
 from thermal_monitor.ui.modes.live import LiveModeWidget
 from thermal_monitor.ui.modes.offline import OfflineModeWidget
+from thermal_monitor.ui.theme import ThemeManager
 
 
 class MainWindow(QMainWindow):
@@ -48,6 +49,7 @@ class MainWindow(QMainWindow):
         database: Database | None = None,
         *,
         runtime_service: CameraRuntimeService | None = None,
+        theme_manager: ThemeManager | None = None,
     ) -> None:
         super().__init__()
 
@@ -57,9 +59,10 @@ class MainWindow(QMainWindow):
         self._observer_service = observer_service
         self._database = database
         self._runtime_service = runtime_service
+        self._theme = theme_manager
 
         self.setWindowTitle("Thermal Monitoring System V3")
-        self.setMinimumSize(1200, 800)
+        self._apply_window_config()
 
         # Central stacked widget for mode switching
         self._stacked_widget = QStackedWidget()
@@ -71,24 +74,28 @@ class MainWindow(QMainWindow):
             mode_service=mode_service,
             config_service=config_service,
             discovery_service=self._discovery_service,
+            theme_manager=self._theme,
         )
         self._live_widget = LiveModeWidget(
             mode_service=mode_service,
             config_service=config_service,
             observer_service=observer_service,
             runtime_service=runtime_service,
+            theme_manager=self._theme,
         )
         self._config_widget = ConfigurationModeWidget(
             config_service=config_service,
             mode_service=mode_service,
             database=database,
             runtime_service=runtime_service,
+            theme_manager=self._theme,
         )
         self._offline_widget = OfflineModeWidget(
             offline_service=offline_service,
             config_service=config_service,
             mode_service=mode_service,
             database=database,
+            theme_manager=self._theme,
         )
 
         # Add to stack in mode order
@@ -103,6 +110,8 @@ class MainWindow(QMainWindow):
         # Status bar
         self._status_bar = QStatusBar()
         self._mode_label = QLabel("Mode: LAUNCHER")
+        if self._theme:
+            self._mode_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
         self._status_bar.addPermanentWidget(self._mode_label)
         self.setStatusBar(self._status_bar)
 
@@ -263,3 +272,11 @@ class MainWindow(QMainWindow):
         if self._runtime_service is not None:
             self._runtime_service.shutdown()
         super().closeEvent(event)
+
+    def _apply_window_config(self) -> None:
+        """Apply window configuration from theme manager."""
+        if self._theme:
+            config = self._theme.window_config()
+            self.setMinimumSize(config.get("live_min_width", 1200), config.get("live_min_height", 800))
+        else:
+            self.setMinimumSize(1200, 800)

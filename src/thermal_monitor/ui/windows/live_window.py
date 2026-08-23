@@ -9,6 +9,7 @@ Unavailable cameras show a clear "NOT AVAILABLE" state.
 from __future__ import annotations
 
 from enum import Enum
+from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (
@@ -33,6 +34,7 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
+from thermal_monitor.ui.theme import ThemeManager
 
 
 _UNIT_SYMBOLS = {
@@ -80,12 +82,20 @@ class LiveCameraTile(QWidget):
     If no camera is assigned, it shows "NOT AVAILABLE".
     """
 
-    def __init__(self, slot_index: int, camera_id: str | None = None, name: str = "", serial: str = "") -> None:
+    def __init__(
+        self,
+        slot_index: int,
+        camera_id: str | None = None,
+        name: str = "",
+        serial: str = "",
+        theme_manager: Optional[ThemeManager] = None,
+    ) -> None:
         super().__init__()
         self._slot_index = slot_index  # 0-7
         self._camera_id = camera_id
         self._name = name or (f"CAM {slot_index + 1:02d}" if camera_id else f"CAM {slot_index + 1:02d}")
         self._serial = serial
+        self._theme = theme_manager
 
         self._latest_result: ProcessingResult | None = None
         self._frames_received = 0
@@ -104,11 +114,19 @@ class LiveCameraTile(QWidget):
         header = QHBoxLayout()
         header.setSpacing(6)
         self._label = QLabel(self._name)
-        self._label.setStyleSheet("font-weight: bold; font-size: 13px;")
+        label_style = "font-weight: bold; font-size: 13px;"
+        if self._theme:
+            label_style += f" color: {self._theme.text()};"
+        self._label.setStyleSheet(label_style)
         self._serial_label = QLabel(self._serial)
-        self._serial_label.setStyleSheet("color: #888; font-size: 11px;")
+        serial_style = "font-size: 11px;"
+        if self._theme:
+            serial_style += f" color: {self._theme.text_secondary()};"
+        else:
+            serial_style += " color: #888;"
+        self._serial_label.setStyleSheet(serial_style)
         self._state_label = QLabel(_STATE_TEXT[self._state])
-        self._state_label.setStyleSheet(_STATE_STYLES[self._state])
+        self._state_label.setStyleSheet(self._state_style(self._state))
         header.addWidget(self._label)
         header.addWidget(self._serial_label)
         header.addStretch()
@@ -132,6 +150,19 @@ class LiveCameraTile(QWidget):
         footer.addWidget(self._temp_label)
         footer.addStretch()
         layout.addLayout(footer)
+
+    def _state_style(self, state: LiveTileState) -> str:
+        """Get stylesheet for a tile state from theme."""
+        if not self._theme:
+            return _STATE_STYLES.get(state, "")
+        color_map = {
+            LiveTileState.STARTING: self._theme.warning(),
+            LiveTileState.RUNNING: self._theme.success(),
+            LiveTileState.ERROR: self._theme.error(),
+            LiveTileState.NOT_AVAILABLE: self._theme.disabled_text(),
+        }
+        color = color_map.get(state, self._theme.text())
+        return f"color: {color}; font-weight: bold;"
 
     @pyqtSlot(object)
     def on_result(self, result: ProcessingResult) -> None:
@@ -179,7 +210,7 @@ class LiveCameraTile(QWidget):
         if message is not None:
             self._error_message = message
         self._state_label.setText(_STATE_TEXT[state])
-        self._state_label.setStyleSheet(_STATE_STYLES[state])
+        self._state_label.setStyleSheet(self._state_style(state))
 
         if state == LiveTileState.ERROR and message:
             self._temp_label.setText(message)
@@ -280,6 +311,7 @@ class LiveModeWidget(QWidget):
         *,
         runtime_service: CameraRuntimeService | None = None,
         stats_interval_ms: int = 1000,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
         self._mode_service = mode_service
@@ -287,6 +319,7 @@ class LiveModeWidget(QWidget):
         self._runtime_service = runtime_service
         self._legacy_observer = observer_service
         self._stats_interval_ms = stats_interval_ms
+        self._theme = theme_manager
 
         self._tiles: list[LiveCameraTile] = []  # Fixed 8 tiles, index = slot
         self._camera_to_slot: dict[str, int] = {}  # camera_id -> slot index
@@ -304,11 +337,19 @@ class LiveModeWidget(QWidget):
         # Header
         header = QHBoxLayout()
         title = QLabel("LIVE MODE — 8 Camera Monitoring Wall")
-        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #2E7D32;")
+        title_style = "font-size: 20px; font-weight: bold;"
+        if self._theme:
+            title_style += f" color: {self._theme.success()};"
+        else:
+            title_style += " color: #2E7D32;"
+        title.setStyleSheet(title_style)
         header.addWidget(title)
         header.addStretch()
         self._summary_label = QLabel("Initializing...")
-        self._summary_label.setStyleSheet("font-weight: bold;")
+        summary_style = "font-weight: bold;"
+        if self._theme:
+            summary_style += f" color: {self._theme.text()};"
+        self._summary_label.setStyleSheet(summary_style)
         header.addWidget(self._summary_label)
         layout.addLayout(header)
 
@@ -320,7 +361,10 @@ class LiveModeWidget(QWidget):
         self._grid_widget = QWidget()
         self._grid_layout = QGridLayout(self._grid_widget)
         self._grid_layout.setContentsMargins(4, 4, 4, 4)
-        self._grid_layout.setSpacing(8)
+        if self._theme:
+            self._grid_layout.setSpacing(self._theme.live_config().get("tile_gap", 8))
+        else:
+            self._grid_layout.setSpacing(8)
         self._scroll.setWidget(self._grid_widget)
         layout.addWidget(self._scroll, 1)
 
@@ -328,7 +372,7 @@ class LiveModeWidget(QWidget):
         """Create exactly 8 fixed tiles in a 2x4 grid."""
         self._tiles.clear()
         for slot in range(FIXED_CAMERA_SLOTS):
-            tile = LiveCameraTile(slot)
+            tile = LiveCameraTile(slot, theme_manager=self._theme)
             self._tiles.append(tile)
             row = slot // GRID_COLUMNS
             col = slot % GRID_COLUMNS
@@ -570,15 +614,17 @@ class LiveWindow(QMainWindow):
         observer_service: ObserverService | None = None,
         *,
         runtime_service: CameraRuntimeService | None = None,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
 
         self._mode_service = mode_service
         self._config_service = config_service
         self._runtime_service = runtime_service
+        self._theme = theme_manager
 
         self.setWindowTitle("Thermal Monitoring System V3 - Live Mode")
-        self.setMinimumSize(1200, 800)
+        self._apply_window_config()
 
         # Central widget
         self._live_widget = LiveModeWidget(
@@ -586,6 +632,7 @@ class LiveWindow(QMainWindow):
             config_service=config_service,
             observer_service=observer_service,
             runtime_service=runtime_service,
+            theme_manager=theme_manager,
         )
         self.setCentralWidget(self._live_widget)
 
@@ -593,7 +640,17 @@ class LiveWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Live Mode")
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
         self._status_bar.addWidget(self._status_label)
+
+    def _apply_window_config(self) -> None:
+        """Apply window configuration from theme manager."""
+        if self._theme:
+            config = self._theme.window_config()
+            self.setMinimumSize(config["live_min_width"], config["live_min_height"])
+        else:
+            self.setMinimumSize(1200, 800)
 
     def on_mode_activated(self) -> None:
         """Called when Live mode becomes active."""

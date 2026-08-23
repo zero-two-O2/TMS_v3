@@ -25,6 +25,7 @@ from thermal_monitor.ui.windows.offline_window import OfflineWindow
 from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.config import ConfigurationManager, CamerasConfig, SystemConfig, RecordingConfig, StorageConfig, CalibrationConfig
+from thermal_monitor.ui.theme import ThemeManager
 
 
 class AppController(QObject):
@@ -49,6 +50,7 @@ class AppController(QObject):
         discovery_service: CameraDiscoveryService | None = None,
         observer_service: ObserverService | None = None,
         config_manager: ConfigurationManager | None = None,
+        theme_manager: ThemeManager | None = None,
     ) -> None:
         super().__init__()
 
@@ -60,6 +62,7 @@ class AppController(QObject):
         self._discovery_service = discovery_service or CameraDiscoveryService()
         self._observer_service = observer_service
         self._config_manager = config_manager
+        self._theme_manager = theme_manager
 
         # Window instances (created lazily)
         self._launcher_window: LauncherWindow | None = None
@@ -175,6 +178,7 @@ class AppController(QObject):
             mode_service=self._mode_service,
             config_service=self._config_service,
             discovery_service=self._discovery_service,
+            theme_manager=self._theme_manager,
         )
         self._launcher_window.mode_requested.connect(self._on_mode_requested)
 
@@ -186,6 +190,7 @@ class AppController(QObject):
                 config_service=self._config_service,
                 observer_service=self._observer_service,
                 runtime_service=self._runtime_service,
+                theme_manager=self._theme_manager,
             )
             self._live_window.destroyed.connect(self._on_live_window_destroyed)
         return self._live_window
@@ -197,6 +202,7 @@ class AppController(QObject):
                 config_service=self._config_service,
                 mode_service=self._mode_service,
                 runtime_service=self._runtime_service,
+                theme_manager=self._theme_manager,
             )
             self._config_window.destroyed.connect(self._on_config_window_destroyed)
         return self._config_window
@@ -209,6 +215,7 @@ class AppController(QObject):
                 config_service=self._config_service,
                 mode_service=self._mode_service,
                 database=self._database,
+                theme_manager=self._theme_manager,
             )
             self._offline_window.destroyed.connect(self._on_offline_window_destroyed)
         return self._offline_window

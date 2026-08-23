@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal 
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -29,6 +29,7 @@ from thermal_monitor.core.modes import ApplicationMode
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError
 from thermal_monitor.services.configuration import ConfigurationService
+from thermal_monitor.ui.theme import ThemeManager
 
 
 class LauncherWindow(QMainWindow):
@@ -42,6 +43,7 @@ class LauncherWindow(QMainWindow):
         mode_service: ModeService,
         config_service: ConfigurationService,
         discovery_service: Optional[CameraDiscoveryService] = None,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
 
@@ -49,13 +51,39 @@ class LauncherWindow(QMainWindow):
         self._config_service = config_service
         self._discovery = discovery_service or CameraDiscoveryService()
         self._discovered: list[DiscoveredCamera] = []
+        self._theme = theme_manager
 
         self.setWindowTitle("Thermal Monitoring System V3 - Launcher")
-        self.setMinimumSize(1000, 700)
-
+        self._apply_window_config()
         self._setup_ui()
         self._create_status_bar()
         self._perform_initial_discovery()
+
+    def _apply_window_config(self) -> None:
+        """Apply window configuration from theme manager."""
+        if self._theme:
+            config = self._theme.window_config()
+            self.setMinimumSize(config["launcher_min_width"], config["launcher_min_height"])
+        else:   
+            self.setMinimumSize(1000, 700)
+
+    def _theme_stylesheet(self, widget_type: str) -> str:
+        """Get stylesheet for widget type from theme manager."""
+        if not self._theme:
+            return ""
+        if widget_type == "title":
+            return self._theme.title_stylesheet(28)
+        elif widget_type == "subtitle":
+            return self._theme.subtitle_stylesheet(16)
+        elif widget_type == "status":
+            return self._theme.status_stylesheet(12)
+        elif widget_type == "primary_button":
+            return self._theme.primary_button_stylesheet()
+        elif widget_type == "secondary_button":
+            return self._theme.secondary_button_stylesheet()
+        elif widget_type == "accent_button":
+            return self._theme.accent_button_stylesheet()
+        return ""
 
     def _setup_ui(self) -> None:
         central = QWidget()
@@ -67,12 +95,12 @@ class LauncherWindow(QMainWindow):
 
         # Title
         title = QLabel("Thermal Monitoring System")
-        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #2196F3;")
+        title.setStyleSheet(self._theme_stylesheet("title"))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("Available Cameras")
-        subtitle.setStyleSheet("font-size: 16px; color: #666;")
+        subtitle.setStyleSheet(self._theme_stylesheet("subtitle"))
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -109,67 +137,17 @@ class LauncherWindow(QMainWindow):
 
         self._live_btn = QPushButton("LIVE")
         self._live_btn.setMinimumSize(140, 60)
-        self._live_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                background-color: #2E7D32;
-                color: white;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #388E3C;
-            }
-            QPushButton:pressed {
-                background-color: #1B5E20;
-            }
-            QPushButton:disabled {
-                background-color: #A5D6A7;
-                color: #E8F5E9;
-            }
-        """)
+        self._live_btn.setStyleSheet(self._theme_stylesheet("primary_button"))
         self._live_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.LIVE))
 
         self._config_btn = QPushButton("CONFIGURATION")
         self._config_btn.setMinimumSize(140, 60)
-        self._config_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                background-color: #1976D2;
-                color: white;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #1E88E5;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-            QPushButton:disabled {
-                background-color: #90CAF9;
-                color: #E3F2FD;
-            }
-        """)
+        self._config_btn.setStyleSheet(self._theme_stylesheet("secondary_button"))
         self._config_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.CONFIGURATION))
 
         self._offline_btn = QPushButton("OFFLINE")
         self._offline_btn.setMinimumSize(140, 60)
-        self._offline_btn.setStyleSheet("""
-            QPushButton {
-                font-size: 18px;
-                font-weight: bold;
-                background-color: #7B1FA2;
-                color: white;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #8E24AA;
-            }
-            QPushButton:pressed {
-                background-color: #4A148C;
-            }
-        """)
+        self._offline_btn.setStyleSheet(self._theme_stylesheet("accent_button"))
         self._offline_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.OFFLINE))
 
         mode_layout.addStretch()
@@ -183,7 +161,7 @@ class LauncherWindow(QMainWindow):
         # Status
         self._status_label = QLabel("Discovering cameras...")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_label.setStyleSheet("color: #888; font-size: 12px;")
+        self._status_label.setStyleSheet(self._theme_stylesheet("status"))
         layout.addWidget(self._status_label)
 
     def _create_status_bar(self) -> None:
@@ -249,7 +227,10 @@ class LauncherWindow(QMainWindow):
             # Status
             status = "Available"
             status_item = QTableWidgetItem(status)
-            status_item.setForeground(Qt.GlobalColor.darkGreen)
+            if self._theme:
+                status_item.setForeground(self._theme.success())
+            else:
+                status_item.setForeground(Qt.GlobalColor.darkGreen)
             self._camera_table.setItem(row, 4, status_item)
 
         # Fill remaining slots as unavailable
@@ -261,7 +242,10 @@ class LauncherWindow(QMainWindow):
             self._camera_table.setItem(row, 2, QTableWidgetItem("—"))
             self._camera_table.setItem(row, 3, QTableWidgetItem("—"))
             status_item = QTableWidgetItem("Not Available")
-            status_item.setForeground(Qt.GlobalColor.gray)
+            if self._theme:
+                status_item.setForeground(self._theme.disabled_text())
+            else:
+                status_item.setForeground(Qt.GlobalColor.gray)
             self._camera_table.setItem(row, 4, status_item)
 
     def _update_status(self) -> None:

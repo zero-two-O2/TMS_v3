@@ -52,6 +52,7 @@ from thermal_monitor.processing import (
     ProcessingResult,
     create_processing_worker,
 )
+from thermal_monitor.ui.theme import ThemeManager
 
 
 class OfflineImageWidget(QWidget):
@@ -183,6 +184,7 @@ class OfflineModeWidget(QWidget):
         config_service: ConfigurationService,
         mode_service: ModeService,
         database: Optional[object] = None,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
 
@@ -190,6 +192,7 @@ class OfflineModeWidget(QWidget):
         self._config_service = config_service
         self._mode_service = mode_service
         self._database = database
+        self._theme = theme_manager
 
         self._current_session: OfflineSession | None = None
         self._playback_timer = QTimer()
@@ -223,6 +226,9 @@ class OfflineModeWidget(QWidget):
         self._close_btn = QPushButton("Close")
         self._close_btn.clicked.connect(self.close_recording)
         self._close_btn.setEnabled(False)
+        if self._theme:
+            self._open_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+            self._close_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
         selector_layout.addWidget(QLabel("Recording:"))
         selector_layout.addWidget(self._recording_combo, 1)
         selector_layout.addWidget(self._open_btn)
@@ -284,7 +290,17 @@ class OfflineModeWidget(QWidget):
         # Speed control
         speed_layout = QHBoxLayout()
         self._speed_combo = QComboBox()
-        self._speed_combo.addItems(["0.25x", "0.5x", "1x", "2x", "4x"])
+        if self._theme:
+            pb_config = self._theme.offline_playback_config()
+            speeds = []
+            speed = pb_config.get("speed_min", 0.1)
+            speed_max = pb_config.get("speed_max", 10.0)
+            while speed <= speed_max:
+                speeds.append(f"{speed:.2g}x".rstrip('0').rstrip('.') if speed != 1.0 else "1x")
+                speed *= 2
+            self._speed_combo.addItems(speeds)
+        else:
+            self._speed_combo.addItems(["0.25x", "0.5x", "1x", "2x", "4x"])
         self._speed_combo.setCurrentIndex(2)  # 1x
         self._speed_combo.currentTextChanged.connect(self._on_speed_changed)
         speed_layout.addWidget(QLabel("Speed:"))
@@ -307,6 +323,9 @@ class OfflineModeWidget(QWidget):
         self._next_btn.clicked.connect(self._go_next)
         self._last_btn = QPushButton("Last ⏭")
         self._last_btn.clicked.connect(self._go_last)
+        if self._theme:
+            for btn in [self._first_btn, self._prev_btn, self._play_btn, self._pause_btn, self._next_btn, self._last_btn]:
+                btn.setStyleSheet(self._theme.secondary_button_stylesheet())
         nav_layout.addWidget(self._first_btn)
         nav_layout.addWidget(self._prev_btn)
         nav_layout.addWidget(self._play_btn)
@@ -369,7 +388,10 @@ class OfflineModeWidget(QWidget):
             "Recorded alarms are from the original recording. "
             "Current alarms are re-evaluated during playback."
         )
-        alarm_legend.setStyleSheet("color: gray; font-size: 10px;")
+        if self._theme:
+            alarm_legend.setStyleSheet(f"color: {self._theme.text_muted()}; font-size: 10px;")
+        else:
+            alarm_legend.setStyleSheet("color: gray; font-size: 10px;")
         alarm_layout.addWidget(alarm_legend)
 
         right_layout.addWidget(alarm_group, 1)
@@ -383,6 +405,10 @@ class OfflineModeWidget(QWidget):
         status_layout.setContentsMargins(4, 4, 4, 4)
         self._processing_time_label = QLabel("Processing: — ms")
         self._fps_label = QLabel("FPS: —")
+        if self._theme:
+            status_style = f"color: {self._theme.text_secondary()};"
+            self._processing_time_label.setStyleSheet(status_style)
+            self._fps_label.setStyleSheet(status_style)
         status_layout.addWidget(self._processing_time_label)
         status_layout.addWidget(self._fps_label)
         status_layout.addStretch()
@@ -831,15 +857,17 @@ class OfflineWindow(QMainWindow):
         config_service: ConfigurationService,
         mode_service: ModeService,
         database: Optional[object] = None,
+        theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
 
         self._offline_service = offline_service
         self._config_service = config_service
         self._mode_service = mode_service
+        self._theme = theme_manager
 
         self.setWindowTitle("Thermal Monitoring System V3 - Offline Mode")
-        self.setMinimumSize(1200, 800)
+        self._apply_window_config()
 
         # Central widget
         self._offline_widget = OfflineModeWidget(
@@ -847,6 +875,7 @@ class OfflineWindow(QMainWindow):
             config_service=config_service,
             mode_service=mode_service,
             database=database,
+            theme_manager=theme_manager,
         )
         self.setCentralWidget(self._offline_widget)
 
@@ -854,7 +883,17 @@ class OfflineWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Offline Mode")
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
         self._status_bar.addWidget(self._status_label)
+
+    def _apply_window_config(self) -> None:
+        """Apply window configuration from theme manager."""
+        if self._theme:
+            config = self._theme.window_config()
+            self.setMinimumSize(config["offline_min_width"], config["offline_min_height"])
+        else:
+            self.setMinimumSize(1200, 800)
 
     def on_mode_activated(self) -> None:
         """Called when Offline mode becomes active."""
