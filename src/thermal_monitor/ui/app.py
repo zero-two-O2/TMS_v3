@@ -1,7 +1,8 @@
 """
 ui.app -- PyQt6 application entry point.
 
-Sets up QApplication, applies global styles, and creates the main window.
+Sets up QApplication, applies global styles, and creates the application controller
+which manages the four independent top-level windows.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from PyQt6.QtCore import Qt
 # from camera.model).
 import thermal_monitor.camera  # noqa: E402,F401
 
-from thermal_monitor.ui.main_window import MainWindow
+from thermal_monitor.ui.controller import AppController
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
@@ -52,29 +53,31 @@ class ThermalMonitorApp:
         self._runtime_service = CameraRuntimeService()
         self._database: Optional[Database] = None
 
-        # Main window
-        self._window: Optional[MainWindow] = None
+        # Application controller (owns window lifecycle)
+        self._controller: Optional[AppController] = None
 
     def set_database(self, database: Database) -> None:
         """Set the database connection."""
         self._database = database
 
     def initialize(self) -> None:
-        """Initialize the application and create the main window."""
-        self._window = MainWindow(
+        """Initialize the application and create the controller."""
+        self._controller = AppController(
             mode_service=self._mode_service,
             config_service=self._config_service,
             offline_service=self._offline_service,
             runtime_service=self._runtime_service,
             database=self._database,
         )
-        self._window.show()
+        self._controller.initialize()
 
     def run(self) -> int:
         """Run the application event loop."""
         try:
             return self._app.exec()
         finally:
+            if self._controller:
+                self._controller.shutdown()
             self._runtime_service.shutdown()
 
     @property
