@@ -67,7 +67,13 @@ class ThermalMonitorApp:
         self._config_service = ConfigurationService()
         self._offline_service = OfflineService()
         self._discovery_service = CameraDiscoveryService()
-        self._runtime_service = CameraRuntimeService()
+        self._runtime_service = CameraRuntimeService(
+            cameras_config=config.cameras,
+            system_config=config.system,
+            recording_config=config.recording,
+            storage_config=config.storage,
+            calibration_config=config.calibration,
+        )
         self._database: Optional[Database] = None
 
         # Application controller (owns window lifecycle)

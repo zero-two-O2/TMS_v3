@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal 
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -228,7 +229,7 @@ class LauncherWindow(QMainWindow):
             status = "Available"
             status_item = QTableWidgetItem(status)
             if self._theme:
-                status_item.setForeground(self._theme.success())
+                status_item.setForeground(QColor(self._theme.success()))
             else:
                 status_item.setForeground(Qt.GlobalColor.darkGreen)
             self._camera_table.setItem(row, 4, status_item)
@@ -243,7 +244,7 @@ class LauncherWindow(QMainWindow):
             self._camera_table.setItem(row, 3, QTableWidgetItem("—"))
             status_item = QTableWidgetItem("Not Available")
             if self._theme:
-                status_item.setForeground(self._theme.disabled_text())
+                status_item.setForeground(QColor(self._theme.disabled_text()))
             else:
                 status_item.setForeground(Qt.GlobalColor.gray)
             self._camera_table.setItem(row, 4, status_item)
