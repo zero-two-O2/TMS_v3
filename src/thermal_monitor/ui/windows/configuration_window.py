@@ -1,16 +1,24 @@
 """
 ui.windows.configuration_window -- Configuration mode window.
 
-Industrial thermal-camera configuration workstation for one selected camera:
-- Camera selector with status (all configured cameras shown, unavailable included)
-- Camera identity panel (read-only: Camera, Serial, Model, Vendor, IP, Status)
-- Acquisition controls (does NOT start acquisition on selection)
-- Live thermal image with temperature display controls
-- Temperature scale panel (palette, range, zoom)
-- ROI workspace (create, edit, delete, configure limits/alarms)
-- Alarm configuration (add, edit, delete rules)
-- Statistics display
-- Configuration Editor tab (deployment config)
+Industrial thermal-camera configuration workstation inspired by ThermoView workflow:
+
+    CONNECT CAMERA
+          ↓
+    CONFIGURE ACQUISITION
+          ↓
+    START ACQUISITION
+          ↓
+    LIVE THERMAL IMAGE (dominant workspace)
+          ↓
+    ANALYZE IMAGE
+          ↓
+    CONFIGURE ROIs / ALARMS / MEASUREMENTS
+
+Layout:
+- Top toolbar (menu + camera selector + connection + acquisition)
+- Main splitter: Left (Image Acquisition), Center (Thermal Image), Right (Scale + Analysis)
+- Bottom status bar
 """
 
 from __future__ import annotations
@@ -24,30 +32,15 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QSplitter,
-    QGroupBox,
-    QFormLayout,
-    QLabel,
-    QPushButton,
-    QComboBox,
-    QSpinBox,
-    QDoubleSpinBox,
-    QCheckBox,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QScrollArea,
     QTabWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView,
-    QMessageBox,
     QStatusBar,
+    QMessageBox,
     QFrame,
-    QLineEdit,
-    QDialog,
-    QDialogButtonBox,
-    QTextEdit,
+    QLabel,
+    QMenuBar,
+    QMenu,
 )
-from PyQt6.QtGui import QFont, QColor
+from PyQt6.QtGui import QColor, QAction
 
 import numpy as np
 
@@ -56,37 +49,39 @@ from thermal_monitor.core.models import (
     CameraConfig,
     CameraIdentity,
     AnalysisConfig,
-    ROIConfig,
-    ROIGeometry,
-    ROIShape,
-    TemperatureLimits,
-    TemperatureUnit,
-    AlarmRule,
-    AlarmCondition,
-    AlarmSeverity,
-    PositionROIAssociation,
     CameraConnectionState,
 )
 from thermal_monitor.processing import ProcessingResult
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.runtime import CameraRuntimeService
+from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.services.observer import ObserverService
-from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
 from thermal_monitor.config import ConfigurationManager
 from thermal_monitor.ui.configuration_editor import ConfigurationEditor
+from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverlay
+from thermal_monitor.ui.widgets import (
+    ConfigCameraHeader,
+    ThermalScalePanel,
+    FrameInfoPanel,
+    ROIPanel,
+    AlarmPanel,
+    StatisticsPanel,
+    CameraSelectionDialog,
+    ImageAcquisitionPanel,
+)
 from thermal_monitor.ui.theme import ThemeManager
 
 
 _UNIT_SYMBOLS = {
-    TemperatureUnit.CELSIUS: "°C",
-    TemperatureUnit.FAHRENHEIT: "°F",
-    TemperatureUnit.KELVIN: "K",
+    "celsius": "°C",
+    "fahrenheit": "°F",
+    "kelvin": "K",
 }
 
 
 class ConfigurationModeWidget(QWidget):
-    """Main widget for Configuration mode - single camera detailed configuration."""
+    """Main widget for Configuration mode - ThermoView-style workstation."""
 
     # Signal emitted when there are unsaved changes and user tries to switch cameras
     camera_switch_blocked = pyqtSignal(str, str)  # (current_camera_id, target_camera_id)
@@ -96,6 +91,7 @@ class ConfigurationModeWidget(QWidget):
         config_service: ConfigurationService,
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
+        discovery_service: CameraDiscoveryService | None = None,
         theme_manager: Optional[ThemeManager] = None,
         config_manager: Optional[ConfigurationManager] = None,
     ) -> None:
@@ -104,12 +100,14 @@ class ConfigurationModeWidget(QWidget):
         self._config_service = config_service
         self._mode_service = mode_service
         self._runtime_service = runtime_service
+        self._discovery_service = discovery_service
         self._theme = theme_manager
         self._config_manager = config_manager
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
         self._config_editor: Optional[ConfigurationEditor] = None
+        self._camera_selection_dialog: CameraSelectionDialog | None = None
 
         # Dirty state tracking for camera-specific configurations
         self._dirty_camera_configs: set[str] = set()
@@ -122,306 +120,84 @@ class ConfigurationModeWidget(QWidget):
     def _setup_ui(self) -> None:
         """Set up the industrial workstation-style UI layout."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(8, 8, 8, 8)
-        main_layout.setSpacing(6)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # --- Top: Camera selector + Identity panel ---
-        self._create_camera_selector_and_identity(main_layout)
+        # --- Top Toolbar ---
+        self._toolbar = ConfigCameraHeader(self._theme)
+        self._toolbar.camera_selected.connect(self._on_camera_selected)
+        self._toolbar.prev_camera_requested.connect(self._select_prev_camera)
+        self._toolbar.next_camera_requested.connect(self._select_next_camera)
+        self._toolbar.connect_requested.connect(self._on_connect)
+        self._toolbar.disconnect_requested.connect(self._on_disconnect)
+        self._toolbar.start_requested.connect(self._on_start_acquisition)
+        self._toolbar.stop_requested.connect(self._on_stop_acquisition)
+        self._toolbar.snapshot_requested.connect(self._on_snapshot)
+        self._toolbar.save_requested.connect(self._on_save_config)
+        main_layout.addWidget(self._toolbar)
 
-        # --- Main content area: splitter ---
+        # --- Main content area: Three-pane splitter ---
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(main_splitter, 1)
 
-        # Left side: Image + acquisition controls
-        left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(6)
+        # LEFT PANE: Image Acquisition panel (instrument panel)
+        self._acq_panel = ImageAcquisitionPanel(self._theme)
+        self._acq_panel.connect_requested.connect(self._on_connect)
+        self._acq_panel.disconnect_requested.connect(self._on_disconnect)
+        self._acq_panel.start_requested.connect(self._on_start_acquisition)
+        self._acq_panel.stop_requested.connect(self._on_stop_acquisition)
+        self._acq_panel.change_requested.connect(self._on_change_acquisition)
+        self._acq_panel.fps_changed.connect(self._on_fps_changed)
+        self._acq_panel.averaging_changed.connect(self._on_averaging_changed)
+        self._acq_panel.history_changed.connect(self._on_history_changed)
+        main_splitter.addWidget(self._acq_panel)
 
-        # Acquisition controls
-        self._create_acquisition_toolbar(left_layout)
+        # CENTER PANE: Large thermal image (primary workspace)
+        center_widget = QWidget()
+        center_layout = QVBoxLayout(center_widget)
+        center_layout.setContentsMargins(0, 0, 0, 0)
+        center_layout.setSpacing(0)
 
-        # Image display area
-        image_splitter = QSplitter(Qt.Orientation.Vertical)
-        left_layout.addWidget(image_splitter, 1)
-
-        # Live thermal image
         self._image_widget = LiveThermalWidget()
-        self._image_widget.setMinimumSize(480, 360)
-        image_splitter.addWidget(self._image_widget)
+        self._image_widget.cursor_temperature_changed.connect(self._on_cursor_temperature)
+        center_layout.addWidget(self._image_widget, 1)
 
-        # Frame info panel (below image)
-        self._create_frame_info_panel(image_splitter)
+        main_splitter.addWidget(center_widget)
 
-        # Right side: Temperature/Scale + Analysis/ROI
+        # RIGHT PANE: Temperature scale + Analysis tabs
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
 
-        # Temperature scale panel
-        self._create_temperature_scale_panel(right_layout)
+        # Temperature scale panel (ThermoView-style)
+        self._scale_panel = ThermalScalePanel(self._theme)
+        self._scale_panel.palette_changed.connect(self._on_palette_changed)
+        self._scale_panel.auto_range_toggled.connect(self._on_auto_range_toggled)
+        self._scale_panel.manual_range_applied.connect(self._on_apply_range)
+        self._scale_panel.zoom_changed.connect(self._on_zoom_changed)
+        right_layout.addWidget(self._scale_panel)
 
-        # Analysis/ROI panel
-        self._create_analysis_panel(right_layout)
-
-        main_splitter.addWidget(left_widget)
-        main_splitter.addWidget(right_widget)
-        main_splitter.setSizes([800, 420])
-
-        # Status bar at bottom
-        self._create_status_bar(main_layout)
-
-    def _create_camera_selector_and_identity(self, parent_layout: QVBoxLayout) -> None:
-        """Create camera selector toolbar with identity panel at the top."""
-        # Main container for selector and identity
-        top_container = QWidget()
-        top_layout = QVBoxLayout(top_container)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(6)
-
-        # --- Camera Selector Row ---
-        selector_group = QGroupBox("Camera Selection")
-        selector_layout = QHBoxLayout(selector_group)
-        selector_layout.setSpacing(8)
-
-        self._prev_btn = QPushButton("◀ Previous")
-        self._prev_btn.clicked.connect(self._select_prev_camera)
-        self._prev_btn.setEnabled(False)
-        if self._theme:
-            self._prev_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
-
-        self._camera_combo = QComboBox()
-        self._camera_combo.setMinimumWidth(350)
-        self._camera_combo.currentIndexChanged.connect(self._on_camera_selected)
-
-        self._next_btn = QPushButton("Next ▶")
-        self._next_btn.clicked.connect(self._select_next_camera)
-        self._next_btn.setEnabled(False)
-        if self._theme:
-            self._next_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
-
-        selector_layout.addWidget(self._prev_btn)
-        selector_layout.addWidget(QLabel("Camera:"))
-        selector_layout.addWidget(self._camera_combo, 1)
-        selector_layout.addWidget(self._next_btn)
-        selector_layout.addStretch()
-
-        top_layout.addWidget(selector_group)
-
-        # --- Camera Identity Panel (Read-Only) ---
-        identity_group = QGroupBox("Camera Identity (from Discovery)")
-        identity_layout = QFormLayout(identity_group)
-        identity_layout.setSpacing(6)
-        identity_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
-        self._identity_camera_label = QLabel("—")
-        self._identity_serial_label = QLabel("—")
-        self._identity_model_label = QLabel("—")
-        self._identity_vendor_label = QLabel("—")
-        self._identity_ip_label = QLabel("—")
-        self._identity_status_label = QLabel("—")
-        self._identity_status_label.setStyleSheet("font-weight: bold;")
-
-        # Make all identity labels read-only style
-        for label in (
-            self._identity_camera_label,
-            self._identity_serial_label,
-            self._identity_model_label,
-            self._identity_vendor_label,
-            self._identity_ip_label,
-        ):
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            if self._theme:
-                label.setStyleSheet(f"color: {self._theme.text_muted()};")
-            else:
-                label.setStyleSheet("color: #666666;")
-
-        identity_layout.addRow("Camera:", self._identity_camera_label)
-        identity_layout.addRow("Serial:", self._identity_serial_label)
-        identity_layout.addRow("Model:", self._identity_model_label)
-        identity_layout.addRow("Vendor:", self._identity_vendor_label)
-        identity_layout.addRow("IP Address:", self._identity_ip_label)
-        identity_layout.addRow("Status:", self._identity_status_label)
-
-        top_layout.addWidget(identity_group)
-        parent_layout.addWidget(top_container)
-
-    def _create_acquisition_toolbar(self, parent_layout: QVBoxLayout) -> None:
-        """Create acquisition controls toolbar (does NOT auto-start on selection)."""
-        acq_group = QGroupBox("Acquisition Controls")
-        acq_layout = QFormLayout(acq_group)
-        acq_layout.setSpacing(6)
-
-        self._acq_camera_label = QLabel("—")
-        self._acq_state_label = QLabel("STOPPED")
-        self._acq_state_label.setStyleSheet("font-weight: bold; color: #757575;")
-
-        self._target_fps_spin = QSpinBox()
-        self._target_fps_spin.setRange(1, 60)
-        self._target_fps_spin.setValue(9)
-        self._target_fps_spin.setToolTip("Target acquisition frame rate (1-60 FPS)")
-
-        self._reconnect_spin = QDoubleSpinBox()
-        self._reconnect_spin.setRange(0.1, 60.0)
-        self._reconnect_spin.setSuffix(" s")
-        self._reconnect_spin.setDecimals(2)
-        self._reconnect_spin.setValue(3.0)
-        self._reconnect_spin.setToolTip("Reconnection interval in seconds")
-
-        self._nuc_duration_spin = QDoubleSpinBox()
-        self._nuc_duration_spin.setRange(0.1, 30.0)
-        self._nuc_duration_spin.setSuffix(" s")
-        self._nuc_duration_spin.setDecimals(2)
-        self._nuc_duration_spin.setValue(1.0)
-        self._nuc_duration_spin.setToolTip("NUC (Non-Uniformity Correction) duration in seconds")
-
-        self._grab_timeout_spin = QDoubleSpinBox()
-        self._grab_timeout_spin.setRange(0.1, 60.0)
-        self._grab_timeout_spin.setSuffix(" s")
-        self._grab_timeout_spin.setDecimals(2)
-        self._grab_timeout_spin.setValue(0.5)
-        self._grab_timeout_spin.setToolTip("Frame grab timeout in seconds")
-
-        self._start_btn = QPushButton("Start Acquisition")
-        self._start_btn.clicked.connect(self._on_start_acquisition)
-        self._stop_btn = QPushButton("Stop Acquisition")
-        self._stop_btn.clicked.connect(self._on_stop_acquisition)
-        self._stop_btn.setEnabled(False)
-        self._reconnect_btn = QPushButton("Reconnect")
-        self._reconnect_btn.clicked.connect(self._on_reconnect)
-
-        if self._theme:
-            self._start_btn.setStyleSheet(self._theme.primary_button_stylesheet())
-            self._stop_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
-            self._reconnect_btn.setStyleSheet(self._theme.accent_button_stylesheet())
-
-        btn_layout = QHBoxLayout()
-        btn_layout.addWidget(self._start_btn)
-        btn_layout.addWidget(self._stop_btn)
-        btn_layout.addWidget(self._reconnect_btn)
-
-        acq_layout.addRow("Camera:", self._acq_camera_label)
-        acq_layout.addRow("State:", self._acq_state_label)
-        acq_layout.addRow("Target FPS:", self._target_fps_spin)
-        acq_layout.addRow("Reconnect Interval:", self._reconnect_spin)
-        acq_layout.addRow("NUC Duration:", self._nuc_duration_spin)
-        acq_layout.addRow("Grab Timeout:", self._grab_timeout_spin)
-        acq_layout.addRow("", btn_layout)
-
-        parent_layout.addWidget(acq_group)
-
-    def _create_frame_info_panel(self, parent_splitter: QSplitter) -> None:
-        """Create frame info panel (below image)."""
-        info_widget = QWidget()
-        info_layout = QVBoxLayout(info_widget)
-        info_layout.setContentsMargins(4, 4, 4, 4)
-        info_layout.setSpacing(4)
-
-        frame_group = QGroupBox("Frame Information")
-        frame_form = QFormLayout(frame_group)
-        frame_form.setSpacing(4)
-
-        self._info_camera_id = QLabel("—")
-        self._info_frame_size = QLabel("—")
-        self._info_acq_fps = QLabel("—")
-        self._info_disp_fps = QLabel("—")
-        self._info_sequence = QLabel("—")
-        self._info_timestamp = QLabel("—")
-        self._info_cal_range = QLabel("—")
-        self._info_emissivity = QLabel("—")
-        self._info_ambient = QLabel("—")
-        self._info_proc_time = QLabel("—")
-
-        frame_form.addRow("Camera ID:", self._info_camera_id)
-        frame_form.addRow("Frame Size:", self._info_frame_size)
-        frame_form.addRow("Acquisition FPS:", self._info_acq_fps)
-        frame_form.addRow("Display FPS:", self._info_disp_fps)
-        frame_form.addRow("Sequence:", self._info_sequence)
-        frame_form.addRow("Timestamp:", self._info_timestamp)
-        frame_form.addRow("Calibration Range:", self._info_cal_range)
-        frame_form.addRow("Emissivity:", self._info_emissivity)
-        frame_form.addRow("Ambient Temp:", self._info_ambient)
-        frame_form.addRow("Processing Time:", self._info_proc_time)
-
-        info_layout.addWidget(frame_group)
-        info_layout.addStretch()
-
-        parent_splitter.addWidget(info_widget)
-
-    def _create_temperature_scale_panel(self, parent_layout: QVBoxLayout) -> None:
-        """Create temperature scale / display controls panel."""
-        scale_group = QGroupBox("Temperature Scale")
-        scale_layout = QFormLayout(scale_group)
-        scale_layout.setSpacing(6)
-
-        # Palette
-        self._palette_combo = QComboBox()
-        self._palette_combo.addItems(["temperature", "iron", "rainbow", "gray", "hot"])
-        self._palette_combo.currentTextChanged.connect(self._on_palette_changed)
-
-        # Range mode
-        self._auto_range_check = QCheckBox("Auto Range")
-        self._auto_range_check.setChecked(True)
-        self._auto_range_check.toggled.connect(self._on_auto_range_toggled)
-
-        # Custom range
-        self._custom_min_spin = QDoubleSpinBox()
-        self._custom_min_spin.setRange(-273.15, 2000.0)
-        self._custom_min_spin.setDecimals(1)
-        self._custom_min_spin.setSuffix(" °C")
-        self._custom_min_spin.setValue(20.0)
-        self._custom_min_spin.setEnabled(False)
-        self._custom_min_spin.setToolTip("Minimum temperature for manual range")
-
-        self._custom_max_spin = QDoubleSpinBox()
-        self._custom_max_spin.setRange(-273.15, 2000.0)
-        self._custom_max_spin.setDecimals(1)
-        self._custom_max_spin.setSuffix(" °C")
-        self._custom_max_spin.setValue(80.0)
-        self._custom_max_spin.setEnabled(False)
-        self._custom_max_spin.setToolTip("Maximum temperature for manual range")
-
-        self._apply_range_btn = QPushButton("Apply Range")
-        self._apply_range_btn.clicked.connect(self._on_apply_range)
-        self._apply_range_btn.setEnabled(False)
-
-        # Zoom
-        self._zoom_combo = QComboBox()
-        self._zoom_combo.addItems(["Fit to Window", "50%", "100%", "200%", "400%"])
-        self._zoom_combo.setCurrentIndex(0)
-        self._zoom_combo.currentTextChanged.connect(self._on_zoom_changed)
-
-        # Point temperature readout
-        self._cursor_temp_label = QLabel("Cursor: — °C")
-        self._cursor_temp_label.setStyleSheet("font-family: monospace; font-size: 12px;")
-
-        scale_layout.addRow("Palette:", self._palette_combo)
-        scale_layout.addRow("", self._auto_range_check)
-        scale_layout.addRow("Custom Min:", self._custom_min_spin)
-        scale_layout.addRow("Custom Max:", self._custom_max_spin)
-        scale_layout.addRow("", self._apply_range_btn)
-        scale_layout.addRow("Zoom:", self._zoom_combo)
-        scale_layout.addRow("", self._cursor_temp_label)
-
-        parent_layout.addWidget(scale_group)
-
-    def _create_analysis_panel(self, parent_layout: QVBoxLayout) -> None:
-        """Create analysis/ROI workspace panel."""
+        # Analysis tabs
         self._analysis_tabs = QTabWidget()
-        parent_layout.addWidget(self._analysis_tabs, 1)
+        right_layout.addWidget(self._analysis_tabs, 1)
 
-        # ROI List tab
-        self._roi_list_tab = self._create_roi_list_tab()
-        self._analysis_tabs.addTab(self._roi_list_tab, "ROIs")
+        # ROI tab
+        self._roi_panel = ROIPanel(self._config_service, self._theme)
+        self._roi_panel.roi_selected.connect(self._on_roi_selected)
+        self._roi_panel.roi_created.connect(self._on_roi_created)
+        self._roi_panel.roi_updated.connect(self._on_roi_updated)
+        self._roi_panel.roi_deleted.connect(self._on_roi_deleted)
+        self._analysis_tabs.addTab(self._roi_panel, "ROIs")
 
-        # Alarm Configuration tab
-        self._alarm_tab = self._create_alarm_tab()
-        self._analysis_tabs.addTab(self._alarm_tab, "Alarms")
+        # Alarm tab
+        self._alarm_panel = AlarmPanel(self._config_service, self._theme)
+        self._alarm_panel.alarm_selected.connect(self._on_alarm_selected)
+        self._analysis_tabs.addTab(self._alarm_panel, "Alarms")
 
         # Statistics tab
-        self._stats_tab = self._create_stats_tab()
-        self._analysis_tabs.addTab(self._stats_tab, "Statistics")
+        self._stats_panel = StatisticsPanel(self._theme)
+        self._analysis_tabs.addTab(self._stats_panel, "Statistics")
 
         # Configuration Editor tab (deployment config)
         if self._config_manager:
@@ -434,285 +210,16 @@ class ConfigurationModeWidget(QWidget):
             self._config_editor.restart_required.connect(self._on_restart_required)
             self._analysis_tabs.addTab(self._config_editor, "Configuration Editor")
 
-    def _on_config_saved(self) -> None:
-        """Handle configuration saved signal."""
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.success()};")
-        self._status_label.setText("Configuration saved - restart required")
+        main_splitter.addWidget(right_widget)
 
-    def _on_config_error(self, error: str) -> None:
-        """Handle configuration error signal."""
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.error()};")
-        self._status_label.setText(f"Config error: {error}")
+        # Set splitter proportions: Left(280), Center(700+), Right(400)
+        main_splitter.setSizes([280, 740, 400])
+        main_splitter.setStretchFactor(0, 0)  # Left fixed
+        main_splitter.setStretchFactor(1, 1)  # Center expands
+        main_splitter.setStretchFactor(2, 0)  # Right fixed
 
-    def _on_restart_required(self, message: str) -> None:
-        """Handle restart required signal."""
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.warning()};")
-        self._status_label.setText(message)
-
-    def _create_roi_list_tab(self) -> QWidget:
-        """Create ROI list and editor tab."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-
-        # ROI toolbar
-        roi_toolbar = QHBoxLayout()
-        self._add_roi_btn = QPushButton("Add ROI")
-        self._add_roi_btn.clicked.connect(self._on_add_roi)
-        self._edit_roi_btn = QPushButton("Edit ROI")
-        self._edit_roi_btn.clicked.connect(self._on_edit_roi)
-        self._edit_roi_btn.setEnabled(False)
-        self._delete_roi_btn = QPushButton("Delete ROI")
-        self._delete_roi_btn.clicked.connect(self._on_delete_roi)
-        self._delete_roi_btn.setEnabled(False)
-        roi_toolbar.addWidget(self._add_roi_btn)
-        roi_toolbar.addWidget(self._edit_roi_btn)
-        roi_toolbar.addWidget(self._delete_roi_btn)
-        roi_toolbar.addStretch()
-        layout.addLayout(roi_toolbar)
-
-        # ROI tree
-        self._roi_tree = QTreeWidget()
-        self._roi_tree.setHeaderLabels(["ROI ID", "Name", "Shape", "Enabled", "Alarm", "Min", "Mean", "Max"])
-        self._roi_tree.setColumnWidth(0, 100)
-        self._roi_tree.setColumnWidth(1, 120)
-        self._roi_tree.setColumnWidth(2, 80)
-        self._roi_tree.setColumnWidth(3, 60)
-        self._roi_tree.setColumnWidth(4, 60)
-        self._roi_tree.setColumnWidth(5, 70)
-        self._roi_tree.setColumnWidth(6, 70)
-        self._roi_tree.setColumnWidth(7, 70)
-        self._roi_tree.itemSelectionChanged.connect(self._on_roi_selection_changed)
-        layout.addWidget(self._roi_tree, 1)
-
-        # ROI detail editor (initially hidden)
-        self._roi_editor = self._create_roi_editor()
-        self._roi_editor.setVisible(False)
-        layout.addWidget(self._roi_editor)
-
-        return tab
-
-    def _create_roi_editor(self) -> QWidget:
-        """Create ROI geometry and limits editor."""
-        editor = QWidget()
-        layout = QVBoxLayout(editor)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-
-        group = QGroupBox("ROI Editor")
-        group_layout = QVBoxLayout(group)
-
-        # Shape info (read-only)
-        shape_form = QFormLayout()
-        self._editor_shape_label = QLabel("—")
-        shape_form.addRow("Shape:", self._editor_shape_label)
-        self._editor_roi_id_label = QLabel("—")
-        shape_form.addRow("ROI ID:", self._editor_roi_id_label)
-        self._editor_name_edit = QLineEdit()
-        shape_form.addRow("Name:", self._editor_name_edit)
-        group_layout.addLayout(shape_form)
-
-        # Geometry parameters - dynamic based on shape
-        self._geometry_stack = QWidget()
-        self._geometry_layout = QVBoxLayout(self._geometry_stack)
-        self._geometry_layout.setContentsMargins(0, 0, 0, 0)
-        group_layout.addWidget(self._geometry_stack)
-
-        # Temperature limits
-        limits_group = QGroupBox("Temperature Limits")
-        limits_layout = QFormLayout(limits_group)
-
-        self._editor_unit_combo = QComboBox()
-        self._editor_unit_combo.addItems([u.value for u in TemperatureUnit])
-
-        self._editor_min_warning = QDoubleSpinBox()
-        self._editor_min_warning.setRange(-273.15, 2000.0)
-        self._editor_min_warning.setDecimals(1)
-        self._editor_min_warning.setSpecialValueText("Not set")
-        self._editor_min_warning.setValue(-273.15)
-
-        self._editor_max_warning = QDoubleSpinBox()
-        self._editor_max_warning.setRange(-273.15, 2000.0)
-        self._editor_max_warning.setDecimals(1)
-        self._editor_max_warning.setSpecialValueText("Not set")
-        self._editor_max_warning.setValue(-273.15)
-
-        self._editor_min_critical = QDoubleSpinBox()
-        self._editor_min_critical.setRange(-273.15, 2000.0)
-        self._editor_min_critical.setDecimals(1)
-        self._editor_min_critical.setSpecialValueText("Not set")
-        self._editor_min_critical.setValue(-273.15)
-
-        self._editor_max_critical = QDoubleSpinBox()
-        self._editor_max_critical.setRange(-273.15, 2000.0)
-        self._editor_max_critical.setDecimals(1)
-        self._editor_max_critical.setSpecialValueText("Not set")
-        self._editor_max_critical.setValue(-273.15)
-
-        self._editor_rate_limit = QDoubleSpinBox()
-        self._editor_rate_limit.setRange(0.0, 1000.0)
-        self._editor_rate_limit.setDecimals(1)
-        self._editor_rate_limit.setSuffix(" °C/s")
-        self._editor_rate_limit.setSpecialValueText("Not set")
-
-        limits_layout.addRow("Unit:", self._editor_unit_combo)
-        limits_layout.addRow("Min Warning:", self._editor_min_warning)
-        limits_layout.addRow("Max Warning:", self._editor_max_warning)
-        limits_layout.addRow("Min Critical:", self._editor_min_critical)
-        limits_layout.addRow("Max Critical:", self._editor_max_critical)
-        limits_layout.addRow("Rate of Change:", self._editor_rate_limit)
-
-        group_layout.addWidget(limits_group)
-
-        # Alarm enabled
-        self._editor_alarm_enabled = QCheckBox("Enable Alarm Evaluation")
-        self._editor_alarm_enabled.setChecked(True)
-        group_layout.addWidget(self._editor_alarm_enabled)
-
-        # Save button
-        self._editor_save_btn = QPushButton("Save ROI")
-        self._editor_save_btn.clicked.connect(self._on_save_roi)
-        self._editor_save_btn.setEnabled(False)
-        group_layout.addWidget(self._editor_save_btn)
-
-        group_layout.addStretch()
-        layout.addWidget(group)
-
-        return editor
-
-    def _create_alarm_tab(self) -> QWidget:
-        """Create alarm configuration tab."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-
-        # Alarm toolbar
-        alarm_toolbar = QHBoxLayout()
-        self._add_alarm_btn = QPushButton("Add Alarm Rule")
-        self._add_alarm_btn.clicked.connect(self._on_add_alarm)
-        self._edit_alarm_btn = QPushButton("Edit Alarm")
-        self._edit_alarm_btn.clicked.connect(self._on_edit_alarm)
-        self._edit_alarm_btn.setEnabled(False)
-        self._delete_alarm_btn = QPushButton("Delete Alarm")
-        self._delete_alarm_btn.clicked.connect(self._on_delete_alarm)
-        self._delete_alarm_btn.setEnabled(False)
-        alarm_toolbar.addWidget(self._add_alarm_btn)
-        alarm_toolbar.addWidget(self._edit_alarm_btn)
-        alarm_toolbar.addWidget(self._delete_alarm_btn)
-        alarm_toolbar.addStretch()
-        layout.addLayout(alarm_toolbar)
-
-        # Alarm tree
-        self._alarm_tree = QTreeWidget()
-        self._alarm_tree.setHeaderLabels(["Rule ID", "ROI", "Condition", "Threshold", "Severity", "Enabled"])
-        self._alarm_tree.setColumnWidth(0, 100)
-        self._alarm_tree.setColumnWidth(1, 100)
-        self._alarm_tree.setColumnWidth(2, 100)
-        self._alarm_tree.setColumnWidth(3, 100)
-        self._alarm_tree.setColumnWidth(4, 80)
-        self._alarm_tree.setColumnWidth(5, 60)
-        self._alarm_tree.itemSelectionChanged.connect(self._on_alarm_selection_changed)
-        layout.addWidget(self._alarm_tree, 1)
-
-        # Alarm editor
-        self._alarm_editor = self._create_alarm_editor()
-        self._alarm_editor.setVisible(False)
-        layout.addWidget(self._alarm_editor)
-
-        return tab
-
-    def _create_alarm_editor(self) -> QWidget:
-        """Create alarm rule editor."""
-        editor = QWidget()
-        layout = QVBoxLayout(editor)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-
-        group = QGroupBox("Alarm Rule Editor")
-        form = QFormLayout(group)
-
-        self._alarm_editor_rule_id = QLineEdit()
-        self._alarm_editor_rule_id.setPlaceholderText("e.g., alarm_high_temp")
-        form.addRow("Rule ID:", self._alarm_editor_rule_id)
-
-        self._alarm_editor_roi_combo = QComboBox()
-        form.addRow("ROI:", self._alarm_editor_roi_combo)
-
-        self._alarm_editor_condition = QComboBox()
-        self._alarm_editor_condition.addItems([c.value for c in AlarmCondition])
-        form.addRow("Condition:", self._alarm_editor_condition)
-
-        self._alarm_editor_threshold = QDoubleSpinBox()
-        self._alarm_editor_threshold.setRange(-273.15, 2000.0)
-        self._alarm_editor_threshold.setDecimals(1)
-        self._alarm_editor_threshold.setSuffix(" °C")
-        form.addRow("Threshold:", self._alarm_editor_threshold)
-
-        self._alarm_editor_threshold_low = QDoubleSpinBox()
-        self._alarm_editor_threshold_low.setRange(-273.15, 2000.0)
-        self._alarm_editor_threshold_low.setDecimals(1)
-        self._alarm_editor_threshold_low.setSuffix(" °C")
-        self._alarm_editor_threshold_low.setVisible(False)
-        form.addRow("Threshold Low:", self._alarm_editor_threshold_low)
-
-        self._alarm_editor_threshold_high = QDoubleSpinBox()
-        self._alarm_editor_threshold_high.setRange(-273.15, 2000.0)
-        self._alarm_editor_threshold_high.setDecimals(1)
-        self._alarm_editor_threshold_high.setSuffix(" °C")
-        self._alarm_editor_threshold_high.setVisible(False)
-        form.addRow("Threshold High:", self._alarm_editor_threshold_high)
-
-        self._alarm_editor_severity = QComboBox()
-        self._alarm_editor_severity.addItems([s.value for s in AlarmSeverity])
-        form.addRow("Severity:", self._alarm_editor_severity)
-
-        self._alarm_editor_enabled = QCheckBox("Enabled")
-        self._alarm_editor_enabled.setChecked(True)
-        form.addRow("", self._alarm_editor_enabled)
-
-        self._alarm_editor_save_btn = QPushButton("Save Alarm")
-        self._alarm_editor_save_btn.clicked.connect(self._on_save_alarm)
-        self._alarm_editor_save_btn.setEnabled(False)
-        form.addRow("", self._alarm_editor_save_btn)
-
-        self._alarm_editor_condition.currentTextChanged.connect(self._on_alarm_condition_changed)
-
-        layout.addWidget(group)
-        layout.addStretch()
-
-        return editor
-
-    def _create_stats_tab(self) -> QWidget:
-        """Create statistics tab."""
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(4, 4, 4, 4)
-
-        # Overall stats
-        self._overall_group = QGroupBox("Overall Statistics")
-        overall_form = QFormLayout(self._overall_group)
-        self._overall_min = QLabel("—")
-        self._overall_max = QLabel("—")
-        self._overall_mean = QLabel("—")
-        self._overall_stddev = QLabel("—")
-        overall_form.addRow("Min:", self._overall_min)
-        overall_form.addRow("Max:", self._overall_max)
-        overall_form.addRow("Mean:", self._overall_mean)
-        overall_form.addRow("Std Dev:", self._overall_stddev)
-        layout.addWidget(self._overall_group)
-
-        # Per-ROI stats table
-        self._roi_stats_table = QTableWidget(0, 7)
-        self._roi_stats_table.setHorizontalHeaderLabels(["ROI", "Name", "Min", "Max", "Mean", "Std Dev", "Range"])
-        self._roi_stats_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        layout.addWidget(self._roi_stats_table, 1)
-
-        return tab
+        # --- Bottom: Status bar ---
+        self._create_status_bar(main_layout)
 
     def _create_status_bar(self, parent_layout: QVBoxLayout) -> None:
         """Create status bar at bottom."""
@@ -720,12 +227,18 @@ class ConfigurationModeWidget(QWidget):
         status_frame.setFrameStyle(QFrame.Shape.StyledPanel | QFrame.Shadow.Sunken)
         status_layout = QHBoxLayout(status_frame)
         status_layout.setContentsMargins(8, 4, 8, 4)
+        status_layout.setSpacing(16)
 
         self._status_fps = QLabel("FPS: —")
         self._status_proc = QLabel("Processing: — ms")
         self._status_conn = QLabel("Connection: —")
         self._status_frames = QLabel("Frames: 0")
         self._status_label = QLabel("Ready")
+
+        if self._theme:
+            style = f"color: {self._theme.text_secondary()}; font-size: 11px;"
+            for label in [self._status_fps, self._status_proc, self._status_conn, self._status_frames, self._status_label]:
+                label.setStyleSheet(style)
 
         status_layout.addWidget(self._status_fps)
         status_layout.addWidget(QLabel("|"))
@@ -744,6 +257,9 @@ class ConfigurationModeWidget(QWidget):
         self._config_service.add_camera_change_callback(self._on_camera_config_changed)
         self._config_service.add_analysis_change_callback(self._on_analysis_config_changed)
 
+        # Image widget range changes
+        self._image_widget.range_changed.connect(self._scale_panel.update_range)
+
         # Stats timer
         self._stats_timer = QTimer(self)
         self._stats_timer.timeout.connect(self._update_stats)
@@ -751,53 +267,44 @@ class ConfigurationModeWidget(QWidget):
 
     def _load_initial_data(self) -> None:
         """Load initial configuration data."""
-        self._refresh_camera_selector()
+        self._refresh_camera_list()
         if self._selected_camera_id:
             self._load_camera_config(self._selected_camera_id)
         else:
             # Select first camera if available
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
-                self._camera_combo.setCurrentIndex(0)
+                self._toolbar.select_camera_by_id(cameras[0].identity.camera_id)
 
-    def _refresh_camera_selector(self) -> None:
-        """Refresh the camera selector combo box with all configured cameras."""
-        current_id = self._camera_combo.currentData()
-        self._camera_combo.clear()
-
+    def _refresh_camera_list(self) -> None:
+        """Refresh the camera list in toolbar."""
         cameras = self._config_service.get_all_camera_configs()
+        camera_list = []
         for config in cameras:
             identity = config.identity
             display = f"{identity.serial_number} — {identity.model}"
             if config.name and config.name != identity.camera_id:
                 display = f"{config.name} ({display})"
-            # Add status indicator
             if not config.enabled:
                 display = f"[Disabled] {display}"
-            self._camera_combo.addItem(display, identity.camera_id)
+            camera_list.append((identity.camera_id, display, identity, config.enabled))
 
-        # Restore selection if possible
-        if current_id:
-            index = self._camera_combo.findData(current_id)
-            if index >= 0:
-                self._camera_combo.setCurrentIndex(index)
+        self._toolbar.set_cameras(camera_list)
 
-        self._update_navigation_buttons()
-
-    def _on_camera_selected(self, index: int) -> None:
+    def _on_camera_selected(self, camera_id: str) -> None:
         """Handle camera selection change with dirty state check."""
-        camera_id = self._camera_combo.itemData(index)
-        if camera_id:
-            if self._has_unsaved_changes(camera_id):
-                self._pending_camera_switch = camera_id
-                self._show_unsaved_changes_dialog(camera_id)
-            else:
-                self._switch_camera(camera_id)
-        self._update_navigation_buttons()
+        if self._has_unsaved_changes(camera_id):
+            self._pending_camera_switch = camera_id
+            self._show_unsaved_changes_dialog(camera_id)
+        else:
+            self._switch_camera(camera_id)
 
     def _has_unsaved_changes(self, target_camera_id: str) -> bool:
         """Check if current camera has unsaved changes."""
-        return self._selected_camera_id in self._dirty_camera_configs and self._selected_camera_id != target_camera_id
+        return (
+            self._selected_camera_id in self._dirty_camera_configs
+            and self._selected_camera_id != target_camera_id
+        )
 
     def _show_unsaved_changes_dialog(self, target_camera_id: str) -> None:
         """Show dialog for unsaved changes when switching cameras."""
@@ -812,52 +319,54 @@ class ConfigurationModeWidget(QWidget):
         result = msg.exec()
 
         if result == QMessageBox.StandardButton.Save:
-            # Save current camera config
             self._save_current_camera_config()
             self._switch_camera(target_camera_id)
         elif result == QMessageBox.StandardButton.Discard:
             self._discard_current_camera_changes()
             self._switch_camera(target_camera_id)
         else:  # Cancel
-            # Restore previous selection
-            self._camera_combo.blockSignals(True)
-            current_index = self._camera_combo.findData(self._selected_camera_id)
-            if current_index >= 0:
-                self._camera_combo.setCurrentIndex(current_index)
-            self._camera_combo.blockSignals(False)
+            self._toolbar.select_camera_by_id(self._selected_camera_id)
 
     def _save_current_camera_config(self) -> None:
-        """Save current camera configuration (placeholder - configs are auto-saved via service)."""
-        # The ConfigurationService already persists changes immediately
-        # This is a placeholder for future explicit save if needed
+        """Save current camera configuration."""
         if self._selected_camera_id:
             self._dirty_camera_configs.discard(self._selected_camera_id)
+            self._roi_panel.clear_dirty(self._selected_camera_id)
+            self._alarm_panel.clear_dirty(self._selected_camera_id)
 
     def _discard_current_camera_changes(self) -> None:
         """Discard current camera changes."""
         if self._selected_camera_id:
             self._dirty_camera_configs.discard(self._selected_camera_id)
-            # Reload the config from service
+            self._roi_panel.clear_dirty(self._selected_camera_id)
+            self._alarm_panel.clear_dirty(self._selected_camera_id)
             self._load_camera_config(self._selected_camera_id)
 
     def _select_prev_camera(self) -> None:
         """Select previous camera in list."""
-        current = self._camera_combo.currentIndex()
-        if current > 0:
-            self._camera_combo.setCurrentIndex(current - 1)
+        self._toolbar.select_camera_by_id(self._get_prev_camera_id())
 
     def _select_next_camera(self) -> None:
         """Select next camera in list."""
-        current = self._camera_combo.currentIndex()
-        if current < self._camera_combo.count() - 1:
-            self._camera_combo.setCurrentIndex(current + 1)
+        self._toolbar.select_camera_by_id(self._get_next_camera_id())
 
-    def _update_navigation_buttons(self) -> None:
-        """Update prev/next button states."""
-        current = self._camera_combo.currentIndex()
-        count = self._camera_combo.count()
-        self._prev_btn.setEnabled(current > 0)
-        self._next_btn.setEnabled(current < count - 1 and count > 0)
+    def _get_prev_camera_id(self) -> str | None:
+        cameras = self._config_service.get_all_camera_configs()
+        if not cameras or not self._selected_camera_id:
+            return None
+        current_idx = next((i for i, c in enumerate(cameras) if c.identity.camera_id == self._selected_camera_id), -1)
+        if current_idx > 0:
+            return cameras[current_idx - 1].identity.camera_id
+        return None
+
+    def _get_next_camera_id(self) -> str | None:
+        cameras = self._config_service.get_all_camera_configs()
+        if not cameras or not self._selected_camera_id:
+            return None
+        current_idx = next((i for i, c in enumerate(cameras) if c.identity.camera_id == self._selected_camera_id), -1)
+        if current_idx >= 0 and current_idx < len(cameras) - 1:
+            return cameras[current_idx + 1].identity.camera_id
+        return None
 
     def _switch_camera(self, camera_id: str) -> None:
         """Switch to a different camera (without starting acquisition)."""
@@ -868,7 +377,6 @@ class ConfigurationModeWidget(QWidget):
 
         self._selected_camera_id = camera_id
         self._load_camera_config(camera_id)
-        self._update_acquisition_controls(camera_id)
 
         # Update status
         self._status_label.setText(f"Camera: {camera_id}")
@@ -881,133 +389,64 @@ class ConfigurationModeWidget(QWidget):
             return
 
         identity = config.identity
-        metadata = config.metadata or {}
+        metadata = dict(config.metadata or {})
 
         # Determine connection status
         status = self._get_camera_connection_status(camera_id)
-        status_text = status.value.replace("_", " ").title()
-        status_color = self._get_status_color(status)
 
-        # Update camera selector label
-        self._acq_camera_label.setText(f"{identity.serial_number} ({identity.model})")
+        # Update toolbar
+        self._toolbar.set_connection_state(status)
 
-        # Update identity panel (top, read-only)
-        self._identity_camera_label.setText(identity.camera_id)
-        self._identity_serial_label.setText(identity.serial_number)
-        self._identity_model_label.setText(identity.model or "(not provided)")
-        self._identity_vendor_label.setText(identity.vendor or "(not provided)")
-        self._identity_ip_label.setText(metadata.get("ip_address", "(not provided)"))
-        self._identity_status_label.setText(status_text)
-        self._identity_status_label.setStyleSheet(f"font-weight: bold; color: {status_color};")
+        # Update acquisition panel
+        self._acq_panel.set_camera_identity(identity)
+        self._acq_panel.set_connection_state(status)
 
         # Update acquisition controls from metadata
-        self._target_fps_spin.setValue(int(metadata.get("frame_rate", 9)))
-        self._reconnect_spin.setValue(float(metadata.get("reconnect_interval_s", 3.0)))
-        self._nuc_duration_spin.setValue(float(metadata.get("nuc_duration_s", 1.0)))
-        self._grab_timeout_spin.setValue(float(metadata.get("grab_timeout_ms", 500)) / 1000.0)
+        fps = int(metadata.get("frame_rate", 9))
+        self._acq_panel.set_requested_fps(fps)
 
-        # Update ROI list
-        self._refresh_roi_list(camera_id)
+        # Update panels
+        self._roi_panel.set_camera(camera_id)
+        self._alarm_panel.set_camera(camera_id)
+        self._stats_panel.clear()
 
-        # Update alarm list
-        self._refresh_alarm_list(camera_id)
+        # Update ROI overlays
+        self._update_roi_overlays()
 
-        # Update ROI combo in alarm editor
-        self._update_alarm_roi_combo(camera_id)
+        # Update acquisition button states
+        if self._runtime_service is not None:
+            running = self._runtime_service.is_camera_running(camera_id)
+            self._toolbar.set_acquisition_running(running)
+            self._acq_panel.set_acquisition_running(running)
 
     def _get_camera_connection_status(self, camera_id: str) -> CameraConnectionState:
         """Get the connection status of a camera."""
         if self._runtime_service is not None:
             if self._runtime_service.is_camera_running(camera_id):
                 return CameraConnectionState.ACQUIRING
-            # Check if camera is configured but not running
+            # Check if camera is connected (runtime exists but not acquiring)
+            # For now, we treat any configured camera as DISCONNECTED unless acquiring
             config = self._config_service.get_camera_config(camera_id)
             if config and config.enabled:
                 return CameraConnectionState.DISCONNECTED
-            elif config:
-                return CameraConnectionState.DISCONNECTED  # Disabled
         config = self._config_service.get_camera_config(camera_id)
         if config:
             if not config.enabled:
-                return CameraConnectionState.DISCONNECTED  # Disabled
+                return CameraConnectionState.DISCONNECTED
         return CameraConnectionState.DISCONNECTED
-
-    def _get_status_color(self, status: CameraConnectionState) -> str:
-        """Get color for connection status."""
-        if self._theme:
-            colors = self._theme.colors()
-            if status == CameraConnectionState.ACQUIRING:
-                return colors.success
-            elif status in (CameraConnectionState.CONNECTED, CameraConnectionState.CONNECTING):
-                return colors.info
-            elif status == CameraConnectionState.DEGRADED:
-                return colors.warning
-            elif status == CameraConnectionState.RECONNECTING:
-                return colors.warning
-            elif status == CameraConnectionState.ERROR:
-                return colors.danger
-            else:
-                return colors.disabled
-        else:
-            if status == CameraConnectionState.ACQUIRING:
-                return "#2E7D32"
-            elif status in (CameraConnectionState.CONNECTED, CameraConnectionState.CONNECTING):
-                return "#1976D2"
-            elif status == CameraConnectionState.DEGRADED:
-                return "#FFA000"
-            elif status == CameraConnectionState.RECONNECTING:
-                return "#FFA000"
-            elif status == CameraConnectionState.ERROR:
-                return "#D32F2F"
-            else:
-                return "#757575"
-
-    def _update_acquisition_controls(self, camera_id: str) -> None:
-        """Update acquisition control states based on runtime (observer only, not acquisition)."""
-        if self._runtime_service is not None:
-            running = self._runtime_service.is_camera_running(camera_id)
-            self._acq_state_label.setText("RUNNING" if running else "STOPPED")
-            if self._theme:
-                colors = self._theme.colors()
-                self._acq_state_label.setStyleSheet(
-                    f"color: {colors.success}; font-weight: bold;" if running else f"color: {colors.disabled}; font-weight: bold;"
-                )
-            else:
-                self._acq_state_label.setStyleSheet(
-                    "color: #2E7D32; font-weight: bold;" if running else "color: #757575; font-weight: bold;"
-                )
-            self._start_btn.setEnabled(not running)
-            self._stop_btn.setEnabled(running)
 
     def _clear_all_panels(self) -> None:
         """Clear all panels when no camera selected."""
-        self._acq_camera_label.setText("—")
-        self._acq_state_label.setText("STOPPED")
-        self._acq_state_label.setStyleSheet("color: #757575; font-weight: bold;")
-        self._identity_camera_label.setText("—")
-        self._identity_serial_label.setText("—")
-        self._identity_model_label.setText("—")
-        self._identity_vendor_label.setText("—")
-        self._identity_ip_label.setText("—")
-        self._identity_status_label.setText("—")
-        self._identity_status_label.setStyleSheet("font-weight: bold; color: #757575;")
-        self._info_camera_id.setText("—")
-        self._info_frame_size.setText("—")
-        self._info_acq_fps.setText("—")
-        self._info_disp_fps.setText("—")
-        self._info_sequence.setText("—")
-        self._info_timestamp.setText("—")
-        self._info_cal_range.setText("—")
-        self._info_emissivity.setText("—")
-        self._info_ambient.setText("—")
-        self._info_proc_time.setText("—")
-        self._roi_tree.clear()
-        self._alarm_tree.clear()
-        self._roi_stats_table.setRowCount(0)
-        self._overall_min.setText("—")
-        self._overall_max.setText("—")
-        self._overall_mean.setText("—")
-        self._overall_stddev.setText("—")
+        self._image_widget.clear()
+        self._image_widget.set_roi_overlays([])
+        self._scale_panel.update_cursor_temperature(None)
+        self._roi_panel.set_camera("")
+        self._alarm_panel.set_camera("")
+        self._stats_panel.clear()
+        self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
+        self._acq_panel.set_camera_identity(None)
+        self._acq_panel.set_connection_state(CameraConnectionState.DISCONNECTED)
+        self._acq_panel.clear_image_info()
 
     @pyqtSlot(object)
     def _on_processing_result(self, result: ProcessingResult) -> None:
@@ -1022,797 +461,92 @@ class ConfigurationModeWidget(QWidget):
         frame = result.frame
         self._image_widget.set_frame(temperature_image, frame)
 
-        # Update frame info
-        self._info_sequence.setText(str(frame.descriptor.sequence))
-        self._info_timestamp.setText(f"{frame.descriptor.timestamp:.3f}")
-        self._info_frame_size.setText(f"{frame.descriptor.thermal.width}×{frame.descriptor.thermal.height}")
+        # Update image info
+        if frame:
+            self._acq_panel.update_image_info(
+                image_size=f"{frame.payload.thermal.shape[1]}×{frame.payload.thermal.shape[0]}" if frame.payload.thermal is not None else "—",
+                frame=str(frame.sequence),
+                timestamp=f"{frame.timestamp:.3f}",
+                processing=f"{result.processing_time_ms:.1f} ms",
+            )
 
         # Update analysis results
         analysis = result.analysis_result
         if analysis is not None:
-            unit_symbol = _UNIT_SYMBOLS.get(getattr(analysis, "unit", None), "°C")
+            self._stats_panel.update_from_analysis(analysis)
+            self._roi_panel.update_live_stats(analysis)
+            self._alarm_panel.update_live_alarms(result.alarm_result, analysis)
 
-            if analysis.overall_min is not None:
-                self._overall_min.setText(f"{analysis.overall_min:.2f} {unit_symbol}")
-            if analysis.overall_max is not None:
-                self._overall_max.setText(f"{analysis.overall_max:.2f} {unit_symbol}")
-            if analysis.overall_mean is not None:
-                self._overall_mean.setText(f"{analysis.overall_mean:.2f} {unit_symbol}")
+        # Update ROI overlays
+        self._update_roi_overlays()
 
-            # Update ROI tree with live stats
-            self._update_roi_tree_live(analysis)
+        # Update FPS
+        if self._runtime_service and self._selected_camera_id:
+            stats = self._runtime_service.camera_stats(self._selected_camera_id)
+            if stats:
+                self._acq_panel.set_acquisition_fps(stats.current_fps or stats.average_fps)
 
-            # Update ROI stats table
-            self._update_roi_stats_table(analysis)
+        if self._observer:
+            obs_stats = self._observer.stats()
+            if obs_stats:
+                self._acq_panel.set_display_fps(obs_stats.frames_processed)
 
-        # Update alarm display
-        alarm = result.alarm_result
-        if alarm is not None and alarm.active_alarms:
-            self._update_alarm_tree_live(alarm, analysis)
+    @pyqtSlot(float)
+    def _on_cursor_temperature(self, temp: float) -> None:
+        """Handle cursor temperature from image widget."""
+        unit_symbol = "°C"
+        if self._latest_result and self._latest_result.analysis_result:
+            unit = getattr(self._latest_result.analysis_result, "unit", None)
+            unit_symbol = _UNIT_SYMBOLS.get(unit.value if hasattr(unit, 'value') else str(unit), "°C")
+        self._scale_panel.update_cursor_temperature(temp if not np.isnan(temp) else None, unit_symbol)
 
-        # Update processing time
-        self._info_proc_time.setText(f"{result.processing_time_ms:.1f} ms")
+    # Connection workflow handlers
 
-    @pyqtSlot(str)
-    def _on_observer_error(self, message: str) -> None:
-        self._acq_state_label.setText("ERROR")
-        self._acq_state_label.setStyleSheet("color: #D32F2F; font-weight: bold;")
-        self._status_conn.setText(f"Connection: Error - {message}")
-
-    def _update_roi_tree_live(self, analysis) -> None:
-        """Update ROI tree with live temperature statistics."""
-        for i in range(self._roi_tree.topLevelItemCount()):
-            item = self._roi_tree.topLevelItem(i)
-            roi_id = item.data(0, Qt.ItemDataRole.UserRole)
-            roi_stat = analysis.roi_results.get(roi_id)
-            if roi_stat:
-                unit_symbol = _UNIT_SYMBOLS.get(getattr(analysis, "unit", None), "°C")
-                item.setText(5, f"{roi_stat.min_temp:.1f} {unit_symbol}")
-                item.setText(6, f"{roi_stat.mean_temp:.1f} {unit_symbol}")
-                item.setText(7, f"{roi_stat.max_temp:.1f} {unit_symbol}")
-
-    def _update_roi_stats_table(self, analysis) -> None:
-        """Update ROI statistics table."""
-        self._roi_stats_table.setRowCount(0)
-        for roi_id, stat in analysis.roi_results.items():
-            row = self._roi_stats_table.rowCount()
-            self._roi_stats_table.insertRow(row)
-            unit_symbol = _UNIT_SYMBOLS.get(getattr(analysis, "unit", None), "°C")
-            self._roi_stats_table.setItem(row, 0, QTableWidgetItem(roi_id))
-            self._roi_stats_table.setItem(row, 1, QTableWidgetItem(stat.roi_name))
-            self._roi_stats_table.setItem(row, 2, QTableWidgetItem(f"{stat.min_temp:.2f} {unit_symbol}"))
-            self._roi_stats_table.setItem(row, 3, QTableWidgetItem(f"{stat.max_temp:.2f} {unit_symbol}"))
-            self._roi_stats_table.setItem(row, 4, QTableWidgetItem(f"{stat.mean_temp:.2f} {unit_symbol}"))
-            self._roi_stats_table.setItem(row, 5, QTableWidgetItem(f"{stat.deviation:.2f} {unit_symbol}"))
-            self._roi_stats_table.setItem(row, 6, QTableWidgetItem(f"{stat.range_temp:.2f} {unit_symbol}"))
-
-    def _update_alarm_tree_live(self, alarm_result, analysis) -> None:
-        """Update alarm tree with live alarm state."""
-        for i in range(self._alarm_tree.topLevelItemCount()):
-            item = self._alarm_tree.topLevelItem(i)
-            rule_id = item.data(0, Qt.ItemDataRole.UserRole)
-            if rule_id in alarm_result.active_alarms:
-                item.setBackground(0, QColor("#FFCDD2"))
-                item.setBackground(1, QColor("#FFCDD2"))
-            else:
-                item.setBackground(0, QColor("#FFFFFF"))
-                item.setBackground(1, QColor("#FFFFFF"))
-
-    def _refresh_roi_list(self, camera_id: str) -> None:
-        """Refresh ROI list from analysis config."""
-        self._roi_tree.clear()
-        analysis = self._config_service.get_analysis_config(camera_id)
-        if not analysis:
+    def _on_connect(self) -> None:
+        """Handle Connect button - show camera selection dialog."""
+        if not self._discovery_service:
+            QMessageBox.warning(self, "Connect Failed", "Camera discovery service not available.")
             return
 
-        rois = analysis.get_rois_for_position("default")
-        for roi in rois:
-            limits_text = ""
-            if roi.temperature_limits.is_configured():
-                parts = []
-                if roi.temperature_limits.max_critical:
-                    parts.append(f"crit>={roi.temperature_limits.max_critical:.1f}")
-                if roi.temperature_limits.max_warning:
-                    parts.append(f"warn>={roi.temperature_limits.max_warning:.1f}")
-                if roi.temperature_limits.min_warning:
-                    parts.append(f"warn<={roi.temperature_limits.min_warning:.1f}")
-                if roi.temperature_limits.min_critical:
-                    parts.append(f"crit<={roi.temperature_limits.min_critical:.1f}")
-                limits_text = ", ".join(parts)
-
-            item = QTreeWidgetItem([
-                roi.roi_id,
-                roi.name,
-                roi.geometry.shape.value,
-                "Yes" if roi.enabled else "No",
-                "Yes" if roi.alarm_enabled else "No",
-                "—", "—", "—"
-            ])
-            item.setData(0, Qt.ItemDataRole.UserRole, roi.roi_id)
-            self._roi_tree.addTopLevelItem(item)
-
-    def _refresh_alarm_list(self, camera_id: str) -> None:
-        """Refresh alarm list from analysis config."""
-        self._alarm_tree.clear()
-        analysis = self._config_service.get_analysis_config(camera_id)
-        if not analysis:
-            return
-
-        for rule_id, rule in analysis.alarm_rules.items():
-            threshold_text = f"{rule.threshold:.1f} °C" if rule.threshold is not None else "—"
-            if rule.condition in (AlarmCondition.OUTSIDE_RANGE, AlarmCondition.INSIDE_RANGE):
-                threshold_text = f"[{rule.threshold_low:.1f}, {rule.threshold_high:.1f}] °C" if rule.threshold_low is not None and rule.threshold_high is not None else "—"
-
-            item = QTreeWidgetItem([
-                rule_id,
-                rule.roi_id,
-                rule.condition.value,
-                threshold_text,
-                rule.severity.value.upper(),
-                "Yes" if rule.enabled else "No",
-            ])
-            item.setData(0, Qt.ItemDataRole.UserRole, rule_id)
-            self._alarm_tree.addTopLevelItem(item)
-
-    def _update_alarm_roi_combo(self, camera_id: str) -> None:
-        """Update ROI combo in alarm editor."""
-        self._alarm_editor_roi_combo.clear()
-        analysis = self._config_service.get_analysis_config(camera_id)
-        if analysis:
-            for roi_id in analysis.rois:
-                self._alarm_editor_roi_combo.addItem(roi_id, roi_id)
-
-    def _on_roi_selection_changed(self) -> None:
-        """Handle ROI selection change."""
-        items = self._roi_tree.selectedItems()
-        if items:
-            item = items[0]
-            roi_id = item.data(0, Qt.ItemDataRole.UserRole)
-            self._load_roi_editor(roi_id)
-            self._edit_roi_btn.setEnabled(True)
-            self._delete_roi_btn.setEnabled(True)
-        else:
-            self._roi_editor.setVisible(False)
-            self._edit_roi_btn.setEnabled(False)
-            self._delete_roi_btn.setEnabled(False)
-
-    def _load_roi_editor(self, roi_id: str) -> None:
-        """Load ROI into editor."""
-        if not self._selected_camera_id:
-            return
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis or roi_id not in analysis.rois:
-            return
-
-        roi = analysis.rois[roi_id]
-        self._roi_editor.setVisible(True)
-        self._editor_save_btn.setEnabled(True)
-
-        self._editor_roi_id_label.setText(roi.roi_id)
-        self._editor_shape_label.setText(roi.geometry.shape.value)
-        self._editor_name_edit.setText(roi.name)
-
-        # Build geometry editor
-        self._build_geometry_editor(roi.geometry)
-
-        # Load limits
-        limits = roi.temperature_limits
-        self._editor_unit_combo.setCurrentText(limits.unit.value)
-        self._editor_min_warning.setValue(limits.min_warning if limits.min_warning is not None else -273.15)
-        self._editor_max_warning.setValue(limits.max_warning if limits.max_warning is not None else -273.15)
-        self._editor_min_critical.setValue(limits.min_critical if limits.min_critical is not None else -273.15)
-        self._editor_max_critical.setValue(limits.max_critical if limits.max_critical is not None else -273.15)
-        self._editor_rate_limit.setValue(limits.rate_of_change_limit if limits.rate_of_change_limit is not None else 0.0)
-        self._editor_alarm_enabled.setChecked(roi.alarm_enabled)
-
-        # Mark as dirty when edited
-        self._editor_name_edit.textChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        for spin in [self._editor_min_warning, self._editor_max_warning, self._editor_min_critical, self._editor_max_critical, self._editor_rate_limit]:
-            spin.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._editor_alarm_enabled.toggled.connect(lambda: self._mark_dirty(self._selected_camera_id))
-
-    def _mark_dirty(self, camera_id: str) -> None:
-        """Mark camera configuration as dirty."""
-        self._dirty_camera_configs.add(camera_id)
-
-    def _build_geometry_editor(self, geometry: ROIGeometry) -> None:
-        """Build geometry parameter editors based on shape."""
-        # Clear existing
-        while self._geometry_layout.count():
-            child = self._geometry_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        shape = geometry.shape
-        params = geometry.parameters
-
-        group = QGroupBox("Geometry (row/col coordinates)")
-        form = QFormLayout(group)
-
-        if shape == ROIShape.RECTANGLE1:
-            self._editor_y1 = self._make_spin(params.get("y1", 0.0))
-            self._editor_x1 = self._make_spin(params.get("x1", 0.0))
-            self._editor_y2 = self._make_spin(params.get("y2", 100.0))
-            self._editor_x2 = self._make_spin(params.get("x2", 100.0))
-            form.addRow("Y1 (top):", self._editor_y1)
-            form.addRow("X1 (left):", self._editor_x1)
-            form.addRow("Y2 (bottom):", self._editor_y2)
-            form.addRow("X2 (right):", self._editor_x2)
-
-        elif shape == ROIShape.RECTANGLE2:
-            self._editor_cy = self._make_spin(params.get("center_y", 0.0))
-            self._editor_cx = self._make_spin(params.get("center_x", 0.0))
-            self._editor_phi = self._make_spin(params.get("phi", 0.0), -3.14159, 3.14159, 0.001)
-            self._editor_len1 = self._make_spin(params.get("length1", 50.0), 0.0, 10000.0)
-            self._editor_len2 = self._make_spin(params.get("length2", 50.0), 0.0, 10000.0)
-            form.addRow("Center Y:", self._editor_cy)
-            form.addRow("Center X:", self._editor_cx)
-            form.addRow("Phi (rad):", self._editor_phi)
-            form.addRow("Length 1:", self._editor_len1)
-            form.addRow("Length 2:", self._editor_len2)
-
-        elif shape == ROIShape.CIRCLE:
-            self._editor_cy = self._make_spin(params.get("center_y", 0.0))
-            self._editor_cx = self._make_spin(params.get("center_x", 0.0))
-            self._editor_radius = self._make_spin(params.get("radius", 50.0), 0.0, 10000.0)
-            form.addRow("Center Y:", self._editor_cy)
-            form.addRow("Center X:", self._editor_cx)
-            form.addRow("Radius:", self._editor_radius)
-
-        elif shape == ROIShape.ELLIPSE:
-            self._editor_cy = self._make_spin(params.get("center_y", 0.0))
-            self._editor_cx = self._make_spin(params.get("center_x", 0.0))
-            self._editor_phi = self._make_spin(params.get("phi", 0.0), -3.14159, 3.14159, 0.001)
-            self._editor_r1 = self._make_spin(params.get("radius1", 50.0), 0.0, 10000.0)
-            self._editor_r2 = self._make_spin(params.get("radius2", 30.0), 0.0, 10000.0)
-            form.addRow("Center Y:", self._editor_cy)
-            form.addRow("Center X:", self._editor_cx)
-            form.addRow("Phi (rad):", self._editor_phi)
-            form.addRow("Radius 1:", self._editor_r1)
-            form.addRow("Radius 2:", self._editor_r2)
-
-        elif shape == ROIShape.POLYGON:
-            points = params.get("points", [])
-            self._editor_polygon = QTextEdit()
-            self._editor_polygon.setMaximumHeight(100)
-            self._editor_polygon.setPlaceholderText("One point per line: row,col")
-            point_text = "\n".join(f"{p[0]}, {p[1]}" for p in points)
-            self._editor_polygon.setPlainText(point_text)
-            form.addRow("Points (row,col):", self._editor_polygon)
-
-        self._geometry_layout.addWidget(group)
-
-    def _make_spin(self, value: float, min_val: float = -10000.0, max_val: float = 10000.0, step: float = 0.1) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        spin.setRange(min_val, max_val)
-        spin.setDecimals(2)
-        spin.setSingleStep(step)
-        spin.setValue(value)
-        spin.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        return spin
-
-    def _on_add_roi(self) -> None:
-        """Add new ROI."""
-        if not self._selected_camera_id:
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add ROI")
-        layout = QFormLayout(dialog)
-
-        roi_id_edit = QLineEdit()
-        roi_id_edit.setPlaceholderText("e.g., roi_001")
-        name_edit = QLineEdit()
-        name_edit.setPlaceholderText("e.g., Hot Spot")
-        shape_combo = QComboBox()
-        shape_combo.addItems([s.value for s in ROIShape])
-
-        layout.addRow("ROI ID:", roi_id_edit)
-        layout.addRow("Name:", name_edit)
-        layout.addRow("Shape:", shape_combo)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            roi_id = roi_id_edit.text().strip()
-            name = name_edit.text().strip()
-            shape = ROIShape(shape_combo.currentText())
-
-            if not roi_id:
-                QMessageBox.warning(self, "Invalid Input", "ROI ID is required.")
-                return
-
-            analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-            if not analysis:
-                analysis = self._config_service.create_analysis_config(self._selected_camera_id)
-
-            if roi_id in analysis.rois:
-                QMessageBox.warning(self, "Duplicate", f"ROI '{roi_id}' already exists.")
-                return
-
-            geometry = self._create_default_geometry(shape)
-            roi_config = ROIConfig(roi_id=roi_id, name=name, geometry=geometry)
-
-            new_rois = dict(analysis.rois)
-            new_rois[roi_id] = roi_config
-
-            new_associations = dict(analysis.position_associations)
-            if "default" not in new_associations:
-                new_associations["default"] = PositionROIAssociation(
-                    position_id="default",
-                    position_name="Default",
-                    roi_ids=(roi_id,),
-                )
-            else:
-                assoc = new_associations["default"]
-                new_associations["default"] = PositionROIAssociation(
-                    position_id=assoc.position_id,
-                    position_name=assoc.position_name,
-                    roi_ids=assoc.roi_ids + (roi_id,),
-                )
-
-            updated_config = AnalysisConfig(
-                camera_id=analysis.camera_id,
-                rois=new_rois,
-                position_associations=new_associations,
-                alarm_rules=analysis.alarm_rules,
-                default_emissivity=analysis.default_emissivity,
-                ambient_temperature=analysis.ambient_temperature,
-                distance=analysis.distance,
-                humidity=analysis.humidity,
-                reflected_temperature=analysis.reflected_temperature,
-                unit=analysis.unit,
+        # Create and show camera selection dialog
+        if self._camera_selection_dialog is None:
+            self._camera_selection_dialog = CameraSelectionDialog(
+                discovery_service=self._discovery_service,
+                theme_manager=self._theme,
+                parent=self,
             )
-            self._config_service.set_analysis_config(updated_config)
-            self._refresh_roi_list(self._selected_camera_id)
-            self._update_alarm_roi_combo(self._selected_camera_id)
-            self._mark_dirty(self._selected_camera_id)
+            self._camera_selection_dialog.camera_selected.connect(self._on_camera_selected_from_dialog)
 
-    def _on_edit_roi(self) -> None:
-        """Edit selected ROI."""
-        items = self._roi_tree.selectedItems()
-        if items:
-            roi_id = items[0].data(0, Qt.ItemDataRole.UserRole)
-            self._load_roi_editor(roi_id)
+        self._camera_selection_dialog.show()
+        self._camera_selection_dialog.raise_()
+        self._camera_selection_dialog.activateWindow()
 
-    def _on_delete_roi(self) -> None:
-        """Delete selected ROI."""
-        items = self._roi_tree.selectedItems()
-        if not items or not self._selected_camera_id:
-            return
-
-        roi_id = items[0].data(0, Qt.ItemDataRole.UserRole)
-
-        reply = QMessageBox.question(
-            self,
-            "Delete ROI",
-            f"Delete ROI '{roi_id}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis:
-            return
-
-        new_rois = {k: v for k, v in analysis.rois.items() if k != roi_id}
-
-        new_associations = {}
-        for pos_id, assoc in analysis.position_associations.items():
-            new_roi_ids = tuple(r for r in assoc.roi_ids if r != roi_id)
-            if new_roi_ids:
-                new_associations[pos_id] = PositionROIAssociation(
-                    position_id=assoc.position_id,
-                    position_name=assoc.position_name,
-                    roi_ids=new_roi_ids,
-                )
-
-        updated_config = AnalysisConfig(
-            camera_id=analysis.camera_id,
-            rois=new_rois,
-            position_associations=new_associations,
-            alarm_rules=analysis.alarm_rules,
-            default_emissivity=analysis.default_emissivity,
-            ambient_temperature=analysis.ambient_temperature,
-            distance=analysis.distance,
-            humidity=analysis.humidity,
-            reflected_temperature=analysis.reflected_temperature,
-            unit=analysis.unit,
-        )
-        self._config_service.set_analysis_config(updated_config)
-        self._refresh_roi_list(self._selected_camera_id)
-        self._update_alarm_roi_combo(self._selected_camera_id)
-        self._mark_dirty(self._selected_camera_id)
-
-    def _create_default_geometry(self, shape: ROIShape) -> ROIGeometry:
-        """Create default geometry for a shape type."""
-        if shape == ROIShape.RECTANGLE1:
-            return ROIGeometry(shape=ROIShape.RECTANGLE1, parameters={"y1": 100.0, "x1": 100.0, "y2": 200.0, "x2": 200.0})
-        elif shape == ROIShape.RECTANGLE2:
-            return ROIGeometry(shape=ROIShape.RECTANGLE2, parameters={"center_y": 150.0, "center_x": 150.0, "phi": 0.0, "length1": 50.0, "length2": 50.0})
-        elif shape == ROIShape.CIRCLE:
-            return ROIGeometry(shape=ROIShape.CIRCLE, parameters={"center_y": 150.0, "center_x": 150.0, "radius": 50.0})
-        elif shape == ROIShape.ELLIPSE:
-            return ROIGeometry(shape=ROIShape.ELLIPSE, parameters={"center_y": 150.0, "center_x": 150.0, "phi": 0.0, "radius1": 50.0, "radius2": 30.0})
-        elif shape == ROIShape.POLYGON:
-            return ROIGeometry(shape=ROIShape.POLYGON, parameters={"points": [(100.0, 100.0), (200.0, 100.0), (150.0, 200.0)]})
-        return ROIGeometry(shape=ROIShape.RECTANGLE1)
-
-    def _on_save_roi(self) -> None:
-        """Save ROI changes."""
-        if not self._selected_camera_id or not self._editor_roi_id_label.text():
-            return
-
-        roi_id = self._editor_roi_id_label.text()
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis or roi_id not in analysis.rois:
-            return
-
-        old_roi = analysis.rois[roi_id]
-
-        # Build new geometry
-        geometry = self._read_geometry_editor()
-        if not geometry:
-            return
-
-        # Build new limits
-        limits = TemperatureLimits(
-            unit=TemperatureUnit(self._editor_unit_combo.currentText()),
-            min_warning=self._editor_min_warning.value() if self._editor_min_warning.value() > -273.15 else None,
-            max_warning=self._editor_max_warning.value() if self._editor_max_warning.value() > -273.15 else None,
-            min_critical=self._editor_min_critical.value() if self._editor_min_critical.value() > -273.15 else None,
-            max_critical=self._editor_max_critical.value() if self._editor_max_critical.value() > -273.15 else None,
-            rate_of_change_limit=self._editor_rate_limit.value() if self._editor_rate_limit.value() > 0.0 else None,
-        )
-
-        # Validate limits
-        try:
-            limits.__post_init__()
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid Limits", str(e))
-            return
-
-        new_roi = ROIConfig(
-            roi_id=old_roi.roi_id,
-            name=self._editor_name_edit.text(),
-            enabled=old_roi.enabled,
-            geometry=geometry,
-            temperature_limits=limits,
-            alarm_enabled=self._editor_alarm_enabled.isChecked(),
-            metadata=old_roi.metadata,
-        )
-
-        new_rois = dict(analysis.rois)
-        new_rois[roi_id] = new_roi
-
-        updated_config = AnalysisConfig(
-            camera_id=analysis.camera_id,
-            rois=new_rois,
-            position_associations=analysis.position_associations,
-            alarm_rules=analysis.alarm_rules,
-            default_emissivity=analysis.default_emissivity,
-            ambient_temperature=analysis.ambient_temperature,
-            distance=analysis.distance,
-            humidity=analysis.humidity,
-            reflected_temperature=analysis.reflected_temperature,
-            unit=analysis.unit,
-        )
-        self._config_service.set_analysis_config(updated_config)
-        self._refresh_roi_list(self._selected_camera_id)
-        self._mark_dirty(self._selected_camera_id)
-
-    def _read_geometry_editor(self) -> ROIGeometry | None:
-        """Read geometry parameters from editors."""
-        shape_text = self._editor_shape_label.text()
-        try:
-            shape = ROIShape(shape_text)
-        except ValueError:
-            return None
-
-        if shape == ROIShape.RECTANGLE1:
-            return ROIGeometry(shape=ROIShape.RECTANGLE1, parameters={
-                "y1": self._editor_y1.value(), "x1": self._editor_x1.value(),
-                "y2": self._editor_y2.value(), "x2": self._editor_x2.value(),
-            })
-        elif shape == ROIShape.RECTANGLE2:
-            return ROIGeometry(shape=ROIShape.RECTANGLE2, parameters={
-                "center_y": self._editor_cy.value(), "center_x": self._editor_cx.value(),
-                "phi": self._editor_phi.value(), "length1": self._editor_len1.value(), "length2": self._editor_len2.value(),
-            })
-        elif shape == ROIShape.CIRCLE:
-            return ROIGeometry(shape=ROIShape.CIRCLE, parameters={
-                "center_y": self._editor_cy.value(), "center_x": self._editor_cx.value(),
-                "radius": self._editor_radius.value(),
-            })
-        elif shape == ROIShape.ELLIPSE:
-            return ROIGeometry(shape=ROIShape.ELLIPSE, parameters={
-                "center_y": self._editor_cy.value(), "center_x": self._editor_cx.value(),
-                "phi": self._editor_phi.value(), "radius1": self._editor_r1.value(), "radius2": self._editor_r2.value(),
-            })
-        elif shape == ROIShape.POLYGON:
-            text = self._editor_polygon.toPlainText().strip()
-            points = []
-            for line in text.split("\n"):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    parts = line.split(",")
-                    if len(parts) == 2:
-                        y = float(parts[0].strip())
-                        x = float(parts[1].strip())
-                        points.append((y, x))
-                except ValueError:
-                    continue
-            if len(points) < 3:
-                QMessageBox.warning(self, "Invalid Polygon", "Polygon requires at least 3 points.")
-                return None
-            return ROIGeometry(shape=ROIShape.POLYGON, parameters={"points": points})
-        return None
-
-    # Alarm handlers
-    def _on_alarm_selection_changed(self) -> None:
-        items = self._alarm_tree.selectedItems()
-        if items:
-            rule_id = items[0].data(0, Qt.ItemDataRole.UserRole)
-            self._load_alarm_editor(rule_id)
-            self._edit_alarm_btn.setEnabled(True)
-            self._delete_alarm_btn.setEnabled(True)
-        else:
-            self._alarm_editor.setVisible(False)
-            self._edit_alarm_btn.setEnabled(False)
-            self._delete_alarm_btn.setEnabled(False)
-
-    def _load_alarm_editor(self, rule_id: str) -> None:
-        if not self._selected_camera_id:
-            return
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis or rule_id not in analysis.alarm_rules:
-            return
-
-        rule = analysis.alarm_rules[rule_id]
-        self._alarm_editor.setVisible(True)
-        self._alarm_editor_save_btn.setEnabled(True)
-
-        self._alarm_editor_rule_id.setText(rule.rule_id)
-        self._alarm_editor_roi_combo.setCurrentText(rule.roi_id)
-        self._alarm_editor_condition.setCurrentText(rule.condition.value)
-        self._alarm_editor_threshold.setValue(rule.threshold if rule.threshold is not None else 0.0)
-        self._alarm_editor_threshold_low.setValue(rule.threshold_low if rule.threshold_low is not None else 0.0)
-        self._alarm_editor_threshold_high.setValue(rule.threshold_high if rule.threshold_high is not None else 0.0)
-        self._alarm_editor_severity.setCurrentText(rule.severity.value)
-        self._alarm_editor_enabled.setChecked(rule.enabled)
-
-        # Show/hide range thresholds
-        self._on_alarm_condition_changed(rule.condition.value)
-
-        # Mark dirty on changes
-        self._alarm_editor_rule_id.textChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_roi_combo.currentTextChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_condition.currentTextChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_threshold.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_threshold_low.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_threshold_high.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_severity.currentTextChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
-        self._alarm_editor_enabled.toggled.connect(lambda: self._mark_dirty(self._selected_camera_id))
-
-    def _on_alarm_condition_changed(self, condition: str) -> None:
-        is_range = condition in (AlarmCondition.OUTSIDE_RANGE.value, AlarmCondition.INSIDE_RANGE.value)
-        self._alarm_editor_threshold.setVisible(not is_range)
-        self._alarm_editor_threshold_low.setVisible(is_range)
-        self._alarm_editor_threshold_high.setVisible(is_range)
-
-    def _on_add_alarm(self) -> None:
-        if not self._selected_camera_id:
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Add Alarm Rule")
-        layout = QFormLayout(dialog)
-
-        rule_id_edit = QLineEdit()
-        rule_id_edit.setPlaceholderText("e.g., alarm_high")
-        roi_combo = QComboBox()
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if analysis:
-            for roi_id in analysis.rois:
-                roi_combo.addItem(roi_id, roi_id)
-        condition_combo = QComboBox()
-        condition_combo.addItems([c.value for c in AlarmCondition])
-        threshold_spin = QDoubleSpinBox()
-        threshold_spin.setRange(-273.15, 2000.0)
-        threshold_spin.setDecimals(1)
-        threshold_spin.setSuffix(" °C")
-        severity_combo = QComboBox()
-        severity_combo.addItems([s.value for s in AlarmSeverity])
-
-        layout.addRow("Rule ID:", rule_id_edit)
-        layout.addRow("ROI:", roi_combo)
-        layout.addRow("Condition:", condition_combo)
-        layout.addRow("Threshold:", threshold_spin)
-        layout.addRow("Severity:", severity_combo)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            rule_id = rule_id_edit.text().strip()
-            roi_id = roi_combo.currentData()
-            condition = AlarmCondition(condition_combo.currentText())
-            threshold = threshold_spin.value()
-            severity = AlarmSeverity(severity_combo.currentText())
-
-            if not rule_id or not roi_id:
-                QMessageBox.warning(self, "Invalid Input", "Rule ID and ROI are required.")
-                return
-
-            analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-            if not analysis:
-                analysis = self._config_service.create_analysis_config(self._selected_camera_id)
-
-            if rule_id in analysis.alarm_rules:
-                QMessageBox.warning(self, "Duplicate", f"Alarm rule '{rule_id}' already exists.")
-                return
-
-            new_rule = AlarmRule(
-                rule_id=rule_id,
-                roi_id=roi_id,
-                condition=condition,
-                threshold=threshold,
-                severity=severity,
-                enabled=True,
-            )
-
-            new_rules = dict(analysis.alarm_rules)
-            new_rules[rule_id] = new_rule
-
-            updated_config = AnalysisConfig(
-                camera_id=analysis.camera_id,
-                rois=analysis.rois,
-                position_associations=analysis.position_associations,
-                alarm_rules=new_rules,
-                default_emissivity=analysis.default_emissivity,
-                ambient_temperature=analysis.ambient_temperature,
-                distance=analysis.distance,
-                humidity=analysis.humidity,
-                reflected_temperature=analysis.reflected_temperature,
-                unit=analysis.unit,
-            )
-            self._config_service.set_analysis_config(updated_config)
-            self._refresh_alarm_list(self._selected_camera_id)
-            self._mark_dirty(self._selected_camera_id)
-
-    def _on_edit_alarm(self) -> None:
-        items = self._alarm_tree.selectedItems()
-        if items:
-            rule_id = items[0].data(0, Qt.ItemDataRole.UserRole)
-            self._load_alarm_editor(rule_id)
-
-    def _on_delete_alarm(self) -> None:
-        items = self._alarm_tree.selectedItems()
-        if not items or not self._selected_camera_id:
-            return
-
-        rule_id = items[0].data(0, Qt.ItemDataRole.UserRole)
-
-        reply = QMessageBox.question(
-            self,
-            "Delete Alarm",
-            f"Delete alarm rule '{rule_id}'?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis:
-            return
-
-        new_rules = {k: v for k, v in analysis.alarm_rules.items() if k != rule_id}
-
-        updated_config = AnalysisConfig(
-            camera_id=analysis.camera_id,
-            rois=analysis.rois,
-            position_associations=analysis.position_associations,
-            alarm_rules=new_rules,
-            default_emissivity=analysis.default_emissivity,
-            ambient_temperature=analysis.ambient_temperature,
-            distance=analysis.distance,
-            humidity=analysis.humidity,
-            reflected_temperature=analysis.reflected_temperature,
-            unit=analysis.unit,
-        )
-        self._config_service.set_analysis_config(updated_config)
-        self._refresh_alarm_list(self._selected_camera_id)
-        self._mark_dirty(self._selected_camera_id)
-
-    def _on_save_alarm(self) -> None:
-        if not self._selected_camera_id:
-            return
-
-        rule_id = self._alarm_editor_rule_id.text().strip()
-        roi_id = self._alarm_editor_roi_combo.currentData()
-        condition = AlarmCondition(self._alarm_editor_condition.currentText())
-        threshold = self._alarm_editor_threshold.value() if not self._alarm_editor_threshold_low.isVisible() else None
-        threshold_low = self._alarm_editor_threshold_low.value() if self._alarm_editor_threshold_low.isVisible() else None
-        threshold_high = self._alarm_editor_threshold_high.value() if self._alarm_editor_threshold_high.isVisible() else None
-        severity = AlarmSeverity(self._alarm_editor_severity.currentText())
-        enabled = self._alarm_editor_enabled.isChecked()
-
-        if not rule_id or not roi_id:
-            QMessageBox.warning(self, "Invalid Input", "Rule ID and ROI are required.")
-            return
-
-        # Validate range condition
-        if condition in (AlarmCondition.OUTSIDE_RANGE, AlarmCondition.INSIDE_RANGE):
-            if threshold_low is None or threshold_high is None:
-                QMessageBox.warning(self, "Invalid Input", "Range conditions require both low and high thresholds.")
-                return
-            if threshold_low >= threshold_high:
-                QMessageBox.warning(self, "Invalid Input", "Low threshold must be less than high threshold.")
-                return
-
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis:
-            return
-
-        new_rule = AlarmRule(
-            rule_id=rule_id,
-            roi_id=roi_id,
-            condition=condition,
-            threshold=threshold,
-            threshold_low=threshold_low,
-            threshold_high=threshold_high,
-            severity=severity,
-            enabled=enabled,
-        )
-
-        new_rules = dict(analysis.alarm_rules)
-        new_rules[rule_id] = new_rule
-
-        updated_config = AnalysisConfig(
-            camera_id=analysis.camera_id,
-            rois=analysis.rois,
-            position_associations=analysis.position_associations,
-            alarm_rules=new_rules,
-            default_emissivity=analysis.default_emissivity,
-            ambient_temperature=analysis.ambient_temperature,
-            distance=analysis.distance,
-            humidity=analysis.humidity,
-            reflected_temperature=analysis.reflected_temperature,
-            unit=analysis.unit,
-        )
-        self._config_service.set_analysis_config(updated_config)
-        self._refresh_alarm_list(self._selected_camera_id)
-        self._mark_dirty(self._selected_camera_id)
-
-    # Acquisition control handlers
-    def _on_start_acquisition(self) -> None:
+    def _on_camera_selected_from_dialog(self, discovered_camera) -> None:
+        """Handle camera selection from dialog - connect to the selected camera."""
         if not self._selected_camera_id or not self._runtime_service:
+            QMessageBox.warning(self, "Connect Failed", "No camera selected in configuration.")
             return
+
+        # Update toolbar to connecting state
+        self._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
+        self._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
 
         config = self._config_service.get_camera_config(self._selected_camera_id)
         if not config:
+            QMessageBox.warning(self, "Connect Failed", "No camera configuration found.")
+            self._toolbar.set_connection_state(CameraConnectionState.ERROR)
+            self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
             return
 
-        # Update metadata with current spin values
+        # Update config metadata with discovered camera info
         metadata = dict(config.metadata or {})
-        metadata["frame_rate"] = self._target_fps_spin.value()
-        metadata["reconnect_interval_s"] = self._reconnect_spin.value()
-        metadata["nuc_duration_s"] = self._nuc_duration_spin.value()
-        metadata["grab_timeout_ms"] = int(self._grab_timeout_spin.value() * 1000)
+        metadata["device_identifier"] = discovered_camera.device_identifier
+        metadata["ip_address"] = discovered_camera.ip_address
+        metadata["model"] = discovered_camera.model
+        metadata["vendor"] = discovered_camera.vendor
+        metadata["firmware"] = discovered_camera.firmware
+        metadata["user_name"] = discovered_camera.user_name
 
-        # Create updated config
         updated_config = CameraConfig(
             identity=config.identity,
             name=config.name,
@@ -1827,71 +561,261 @@ class ConfigurationModeWidget(QWidget):
         self._config_service.set_camera_config(updated_config)
 
         try:
+            # Start camera runtime
             self._runtime_service.start_camera(updated_config)
-            self._update_acquisition_controls(self._selected_camera_id)
-            # Start observer for live view
+
+            # Update to CONNECTED state (not yet acquiring)
+            self._toolbar.set_connection_state(CameraConnectionState.CONNECTED)
+            self._acq_panel.set_connection_state(CameraConnectionState.CONNECTED)
+            self._status_conn.setText("Connection: Connected")
+            self._status_label.setText("Camera connected - press Start to begin acquisition")
+
+        except Exception as exc:
+            self._toolbar.set_connection_state(CameraConnectionState.ERROR)
+            self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
+            self._status_conn.setText(f"Connection: Error")
+            QMessageBox.warning(self, "Connect Failed", f"Failed to connect to camera: {exc}")
+
+    def _on_disconnect(self) -> None:
+        """Handle Disconnect button."""
+        if not self._selected_camera_id or not self._runtime_service:
+            return
+
+        try:
+            # Stop acquisition if running
+            if self._runtime_service.is_camera_running(self._selected_camera_id):
+                self._runtime_service.stop_camera(self._selected_camera_id)
+
+            if self._observer:
+                self._observer.stop()
+                self._observer = None
+
+            self._toolbar.set_acquisition_running(False)
+            self._acq_panel.set_acquisition_running(False)
+
+            # Update to DISCONNECTED state
+            self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
+            self._acq_panel.set_connection_state(CameraConnectionState.DISCONNECTED)
+            self._status_conn.setText("Connection: Disconnected")
+            self._status_label.setText("Camera disconnected")
+            self._image_widget.clear()
+
+        except Exception as exc:
+            QMessageBox.warning(self, "Disconnect Failed", f"Failed to disconnect: {exc}")
+
+    def _on_start_acquisition(self) -> None:
+        """Handle Start acquisition button."""
+        if not self._selected_camera_id or not self._runtime_service:
+            return
+
+        config = self._config_service.get_camera_config(self._selected_camera_id)
+        if not config:
+            return
+
+        # Update metadata with current spin values
+        metadata = dict(config.metadata or {})
+        metadata["frame_rate"] = self._acq_panel.get_requested_fps()
+
+        updated_config = CameraConfig(
+            identity=config.identity,
+            name=config.name,
+            description=config.description,
+            enabled=config.enabled,
+            thermal_enabled=config.thermal_enabled,
+            visible_enabled=config.visible_enabled,
+            ptz_config=config.ptz_config,
+            tags=config.tags,
+            metadata=metadata,
+        )
+        self._config_service.set_camera_config(updated_config)
+
+        try:
+            # Camera should already be connected, just start observer for live view
             analysis = self._config_service.get_analysis_config(self._selected_camera_id)
             if analysis is None:
                 analysis = AnalysisConfig(camera_id=self._selected_camera_id)
             self._observer = self._runtime_service.start_observer(self._selected_camera_id, analysis_config=analysis)
             self._observer.result_ready.connect(self._on_processing_result, Qt.ConnectionType.QueuedConnection)
             self._observer.error_occurred.connect(self._on_observer_error, Qt.ConnectionType.QueuedConnection)
+
+            self._toolbar.set_acquisition_running(True)
+            self._acq_panel.set_acquisition_running(True)
+            self._toolbar.set_connection_state(CameraConnectionState.ACQUIRING)
+            self._acq_panel.set_connection_state(CameraConnectionState.ACQUIRING)
+            self._status_conn.setText("Connection: Acquiring")
+            self._status_label.setText("Acquisition started")
+
         except Exception as exc:
-            QMessageBox.warning(self, "Start Failed", f"Failed to start camera: {exc}")
+            QMessageBox.warning(self, "Start Failed", f"Failed to start acquisition: {exc}")
 
     def _on_stop_acquisition(self) -> None:
+        """Handle Stop acquisition button."""
         if not self._selected_camera_id or not self._runtime_service:
             return
 
         try:
-            self._runtime_service.stop_camera(self._selected_camera_id)
             if self._observer:
                 self._observer.stop()
                 self._observer = None
-            self._update_acquisition_controls(self._selected_camera_id)
-        except Exception as exc:
-            QMessageBox.warning(self, "Stop Failed", f"Failed to stop camera: {exc}")
 
-    def _on_reconnect(self) -> None:
-        if not self._selected_camera_id or not self._runtime_service:
+            self._toolbar.set_acquisition_running(False)
+            self._acq_panel.set_acquisition_running(False)
+            self._toolbar.set_connection_state(CameraConnectionState.CONNECTED)
+            self._acq_panel.set_connection_state(CameraConnectionState.CONNECTED)
+            self._status_conn.setText("Connection: Connected")
+            self._status_label.setText("Acquisition stopped")
+
+        except Exception as exc:
+            QMessageBox.warning(self, "Stop Failed", f"Failed to stop acquisition: {exc}")
+
+    def _on_change_acquisition(self) -> None:
+        """Handle Change button - reconfigure acquisition parameters."""
+        # For now, just update the config with current values
+        if not self._selected_camera_id:
             return
 
-        try:
-            self._runtime_service.stop_camera(self._selected_camera_id)
+        config = self._config_service.get_camera_config(self._selected_camera_id)
+        if not config:
+            return
+
+        metadata = dict(config.metadata or {})
+        metadata["frame_rate"] = self._acq_panel.get_requested_fps()
+
+        updated_config = CameraConfig(
+            identity=config.identity,
+            name=config.name,
+            description=config.description,
+            enabled=config.enabled,
+            thermal_enabled=config.thermal_enabled,
+            visible_enabled=config.visible_enabled,
+            ptz_config=config.ptz_config,
+            tags=config.tags,
+            metadata=metadata,
+        )
+        self._config_service.set_camera_config(updated_config)
+        self._status_label.setText("Acquisition parameters updated")
+
+    def _on_fps_changed(self, fps: int) -> None:
+        """Handle FPS change."""
+        if self._selected_camera_id:
             config = self._config_service.get_camera_config(self._selected_camera_id)
             if config:
-                self._runtime_service.start_camera(config)
-            self._update_acquisition_controls(self._selected_camera_id)
-        except Exception as exc:
-            QMessageBox.warning(self, "Reconnect Failed", f"Failed to reconnect: {exc}")
+                metadata = dict(config.metadata or {})
+                metadata["frame_rate"] = fps
+                updated_config = CameraConfig(
+                    identity=config.identity,
+                    name=config.name,
+                    description=config.description,
+                    enabled=config.enabled,
+                    thermal_enabled=config.thermal_enabled,
+                    visible_enabled=config.visible_enabled,
+                    ptz_config=config.ptz_config,
+                    tags=config.tags,
+                    metadata=metadata,
+                )
+                self._config_service.set_camera_config(updated_config)
+
+    def _on_averaging_changed(self, value: str) -> None:
+        """Handle averaging change."""
+        pass  # TODO: Implement averaging
+
+    def _on_history_changed(self, frames: int) -> None:
+        """Handle history length change."""
+        pass  # TODO: Implement history buffer
+
+    def _on_observer_error(self, message: str) -> None:
+        self._toolbar.set_acquisition_running(False)
+        self._acq_panel.set_acquisition_running(False)
+        self._toolbar.set_connection_state(CameraConnectionState.ERROR)
+        self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
+        self._status_conn.setText(f"Connection: Error - {message}")
 
     # Display control handlers
     def _on_palette_changed(self, palette: str) -> None:
         self._image_widget.set_palette(palette)
 
     def _on_auto_range_toggled(self, checked: bool) -> None:
-        self._custom_min_spin.setEnabled(not checked)
-        self._custom_max_spin.setEnabled(not checked)
-        self._apply_range_btn.setEnabled(not checked)
         self._image_widget.set_auto_range(checked)
 
-    def _on_apply_range(self) -> None:
-        self._image_widget.set_temperature_range(self._custom_min_spin.value(), self._custom_max_spin.value())
+    def _on_apply_range(self, min_temp: float, max_temp: float) -> None:
+        self._image_widget.set_temperature_range(min_temp, max_temp)
 
     def _on_zoom_changed(self, zoom_text: str) -> None:
         self._image_widget.set_zoom(zoom_text)
 
+    # ROI/Alarm selection handlers
+    def _on_roi_selected(self, roi_id: str) -> None:
+        """Handle ROI selection - highlight on image."""
+        self._image_widget.highlight_roi(roi_id)
+        self._update_roi_overlays()
+
+    def _update_roi_overlays(self) -> None:
+        """Update ROI overlays on the thermal image from current analysis config."""
+        if not self._selected_camera_id:
+            self._image_widget.set_roi_overlays([])
+            return
+
+        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
+        if not analysis:
+            self._image_widget.set_roi_overlays([])
+            return
+
+        overlays = []
+        # Get alarm states from latest result
+        alarm_active_rois = set()
+        if self._latest_result and self._latest_result.alarm_result:
+            for alarm in self._latest_result.alarm_result.active_alarms:
+                alarm_active_rois.add(alarm.roi_id)
+
+        # Get ROIs for default position
+        rois = analysis.get_rois_for_position("default")
+        for roi in rois:
+            if not roi.enabled:
+                continue
+            geometry = roi.geometry
+            overlay = ROIOverlay(
+                roi_id=roi.roi_id,
+                shape=geometry.shape.value.lower(),
+                geometry=geometry.parameters,
+                color="#FFFF00",
+                selected=(roi.roi_id == self._roi_panel._selected_roi_id),
+                alarm_active=(roi.roi_id in alarm_active_rois),
+            )
+            overlays.append(overlay)
+
+        self._image_widget.set_roi_overlays(overlays)
+
+    def _on_roi_created(self, roi_id: str, roi_config) -> None:
+        self._mark_dirty()
+        self._update_roi_overlays()
+
+    def _on_roi_updated(self, roi_id: str, roi_config) -> None:
+        self._mark_dirty()
+        self._update_roi_overlays()
+
+    def _on_roi_deleted(self, roi_id: str) -> None:
+        self._mark_dirty()
+        self._update_roi_overlays()
+
+    def _on_alarm_selected(self, rule_id: str) -> None:
+        """Handle alarm selection."""
+        pass
+
+    def _mark_dirty(self) -> None:
+        if self._selected_camera_id:
+            self._dirty_camera_configs.add(self._selected_camera_id)
+
     # Callback handlers
     def _on_camera_config_changed(self, camera_id: str, config: CameraConfig) -> None:
-        self._refresh_camera_selector()
+        self._refresh_camera_list()
         if camera_id == self._selected_camera_id:
             self._load_camera_config(camera_id)
 
     def _on_analysis_config_changed(self, camera_id: str, config: AnalysisConfig) -> None:
         if camera_id == self._selected_camera_id:
-            self._refresh_roi_list(camera_id)
-            self._refresh_alarm_list(camera_id)
-            self._update_alarm_roi_combo(camera_id)
+            self._roi_panel.refresh_roi_list()
+            self._alarm_panel.refresh_alarm_list()
+            self._update_roi_overlays()
 
     def _update_stats(self) -> None:
         """Update status bar stats."""
@@ -1901,25 +825,53 @@ class ConfigurationModeWidget(QWidget):
                 fps = cam_stats.current_fps or cam_stats.average_fps
                 if fps:
                     self._status_fps.setText(f"FPS: {fps:.1f}")
-                self._info_acq_fps.setText(f"{fps:.1f}" if fps else "—")
                 self._status_frames.setText(f"Frames: {cam_stats.frames_acquired}")
 
             if self._observer:
                 obs_stats = self._observer.stats()
                 if obs_stats:
                     self._status_proc.setText(f"Processing: {obs_stats.average_processing_time_ms:.1f} ms")
-                    self._info_disp_fps.setText(f"{obs_stats.frames_processed}")
-                    self._info_proc_time.setText(f"{obs_stats.average_processing_time_ms:.1f} ms")
+
+    # Snapshot / Save handlers
+    def _on_snapshot(self) -> None:
+        """Handle snapshot button."""
+        # TODO: Implement snapshot save
+        self._status_label.setText("Snapshot not yet implemented")
+
+    def _on_save_config(self) -> None:
+        """Handle save config button."""
+        if self._config_manager:
+            # Switch to Configuration Editor tab
+            if self._config_editor:
+                self._analysis_tabs.setCurrentWidget(self._config_editor)
+        else:
+            self._status_label.setText("Configuration Editor not available")
+
+    # Config editor handlers
+    def _on_config_saved(self) -> None:
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.success()};")
+        self._status_label.setText("Configuration saved - restart required")
+
+    def _on_config_error(self, error: str) -> None:
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.error()};")
+        self._status_label.setText(f"Config error: {error}")
+
+    def _on_restart_required(self, message: str) -> None:
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.warning()};")
+        self._status_label.setText(message)
 
     def on_mode_activated(self) -> None:
         """Called when configuration mode becomes active."""
-        self._refresh_camera_selector()
+        self._refresh_camera_list()
         if self._selected_camera_id:
             self._load_camera_config(self._selected_camera_id)
         else:
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
-                self._camera_combo.setCurrentIndex(0)
+                self._toolbar.select_camera_by_id(cameras[0].identity.camera_id)
 
     def on_mode_deactivated(self) -> None:
         """Called when configuration mode is deactivated."""
@@ -1943,6 +895,7 @@ class ConfigurationWindow(QMainWindow):
         config_service: ConfigurationService,
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
+        discovery_service: CameraDiscoveryService | None = None,
         theme_manager: Optional[ThemeManager] = None,
         config_manager: Optional[ConfigurationManager] = None,
     ) -> None:
@@ -1951,6 +904,7 @@ class ConfigurationWindow(QMainWindow):
         self._config_service = config_service
         self._mode_service = mode_service
         self._runtime_service = runtime_service
+        self._discovery_service = discovery_service
         self._theme = theme_manager
         self._config_manager = config_manager
 
@@ -1962,10 +916,13 @@ class ConfigurationWindow(QMainWindow):
             config_service=config_service,
             mode_service=mode_service,
             runtime_service=runtime_service,
+            discovery_service=discovery_service,
             theme_manager=theme_manager,
             config_manager=config_manager,
         )
         self.setCentralWidget(self._config_widget)
+
+        self._setup_menu_bar()
 
         # Status bar
         self._status_bar = QStatusBar()
@@ -1980,8 +937,91 @@ class ConfigurationWindow(QMainWindow):
         if self._theme:
             config = self._theme.window_config()
             self.setMinimumSize(config["config_min_width"], config["config_min_height"])
+            if config["start_maximized"]:
+                self.showMaximized()
         else:
             self.setMinimumSize(1400, 900)
+            self.showMaximized()
+
+    def _setup_menu_bar(self) -> None:
+        """Set up ThermoView-style menu bar."""
+        menu_bar = self.menuBar()
+
+        # File menu
+        file_menu = menu_bar.addMenu("File")
+        save_action = QAction("Save Configuration", self)
+        save_action.triggered.connect(self._config_widget._on_save_config)
+        file_menu.addAction(save_action)
+        file_menu.addSeparator()
+        exit_action = QAction("Exit", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        # Camera menu
+        camera_menu = menu_bar.addMenu("Camera")
+        connect_action = QAction("Connect...", self)
+        connect_action.triggered.connect(self._config_widget._on_connect)
+        camera_menu.addAction(connect_action)
+
+        disconnect_action = QAction("Disconnect", self)
+        disconnect_action.triggered.connect(self._config_widget._on_disconnect)
+        camera_menu.addAction(disconnect_action)
+
+        camera_menu.addSeparator()
+
+        refresh_action = QAction("Refresh Cameras", self)
+        refresh_action.triggered.connect(self._config_widget._refresh_camera_list)
+        camera_menu.addAction(refresh_action)
+
+        # View menu
+        view_menu = menu_bar.addMenu("View")
+        fit_action = QAction("Fit to Window", self)
+        fit_action.triggered.connect(lambda: self._config_widget._image_widget.set_zoom("Fit to Window"))
+        view_menu.addAction(fit_action)
+
+        view_menu.addSeparator()
+        for zoom in ["50%", "100%", "200%", "400%"]:
+            action = QAction(zoom, self)
+            action.triggered.connect(lambda checked, z=zoom: self._config_widget._image_widget.set_zoom(z))
+            view_menu.addAction(action)
+
+        view_menu.addSeparator()
+        fullscreen_action = QAction("Fullscreen", self)
+        fullscreen_action.setShortcut("F11")
+        fullscreen_action.triggered.connect(lambda: self.setWindowState(self.windowState() ^ Qt.WindowState.WindowFullScreen))
+        view_menu.addAction(fullscreen_action)
+
+        # Temperature menu
+        temp_menu = menu_bar.addMenu("Temperature")
+        palette_menu = temp_menu.addMenu("Palette")
+        for palette in ["temperature", "iron", "rainbow", "gray", "hot"]:
+            action = QAction(palette.capitalize(), self)
+            action.triggered.connect(lambda checked, p=palette: self._config_widget._image_widget.set_palette(p))
+            palette_menu.addAction(action)
+
+        temp_menu.addSeparator()
+        auto_range_action = QAction("Auto Range", self)
+        auto_range_action.setCheckable(True)
+        auto_range_action.setChecked(True)
+        auto_range_action.triggered.connect(lambda checked: self._config_widget._image_widget.set_auto_range(checked))
+        temp_menu.addAction(auto_range_action)
+
+        # Analysis menu
+        analysis_menu = menu_bar.addMenu("Analysis")
+        add_roi_action = QAction("Add ROI...", self)
+        add_roi_action.triggered.connect(self._config_widget._roi_panel._on_add_roi)
+        analysis_menu.addAction(add_roi_action)
+
+        # Window menu
+        window_menu = menu_bar.addMenu("Window")
+        config_action = QAction("Configuration Editor", self)
+        config_action.triggered.connect(lambda: self._config_widget._analysis_tabs.setCurrentWidget(self._config_widget._config_editor) if self._config_widget._config_editor else None)
+        window_menu.addAction(config_action)
+
+        # Help menu
+        help_menu = menu_bar.addMenu("Help")
+        about_action = QAction("About", self)
+        help_menu.addAction(about_action)
 
     def on_mode_activated(self) -> None:
         """Called when Configuration mode becomes active."""

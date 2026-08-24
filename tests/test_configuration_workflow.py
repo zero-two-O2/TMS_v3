@@ -1,0 +1,593 @@
+"""
+Tests for Configuration Mode ThermoView-style connection workflow.
+"""
+
+from __future__ import annotations
+
+import pytest
+from unittest.mock import Mock, MagicMock, patch, PropertyMock
+
+from PyQt6.QtWidgets import QApplication
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
+
+from thermal_monitor.ui.widgets.camera_selection_dialog import CameraSelectionDialog
+from thermal_monitor.ui.widgets.image_acquisition_panel import ImageAcquisitionPanel
+from thermal_monitor.ui.widgets.config_camera_header import ConfigCameraHeader
+from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverlay
+from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera
+from thermal_monitor.core.models import CameraConnectionState, CameraIdentity
+from thermal_monitor.ui.theme import ThemeManager
+
+
+@pytest.fixture
+def qapp():
+    """Create QApplication instance."""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app
+
+
+@pytest.fixture
+def mock_theme():
+    """Create a mock theme manager."""
+    theme = Mock(spec=ThemeManager)
+    
+    class MockColors:
+        background = "#1e1e1e"
+        panel = "#2d2d2d"
+        border = "#444444"
+        text_primary = "#ffffff"
+        text_secondary = "#aaaaaa"
+        text_muted = "#888888"
+        text_disabled = "#666666"
+        accent = "#0078d4"
+        accent_hover = "#106ebe"
+        hover = "#3e3e3e"
+        disabled = "#666666"
+        success = "#107c10"
+        info = "#0078d4"
+        warning = "#ff8c00"
+        danger = "#e81123"
+    
+    theme.colors = Mock(return_value=MockColors())
+    theme.text_secondary = Mock(return_value="#aaaaaa")
+    theme.success = Mock(return_value="#107c10")
+    theme.error = Mock(return_value="#e81123")
+    theme.warning = Mock(return_value="#ff8c00")
+    theme.primary_button_stylesheet = Mock(return_value="")
+    theme.secondary_button_stylesheet = Mock(return_value="")
+    theme.accent_button_stylesheet = Mock(return_value="")
+    theme.base_stylesheet = Mock(return_value="")
+    theme.window_config = Mock(return_value={
+        "config_min_width": 1400,
+        "config_min_height": 900,
+        "start_maximized": True,
+    })
+    
+    return theme
+
+
+@pytest.fixture
+def mock_discovery_service():
+    """Create a mock discovery service."""
+    service = Mock(spec=CameraDiscoveryService)
+    service._halcon_interface = "GigEVision2"
+    return service
+
+
+@pytest.fixture
+def sample_discovered_cameras():
+    """Sample discovered cameras for testing."""
+    return [
+        DiscoveredCamera(
+            device_identifier="device_001",
+            serial_number="26010002",
+            ip_address="169.254.24.69",
+            model="TV46L",
+            vendor="FLIR",
+            firmware="1.2.3",
+            user_name="Camera1",
+        ),
+        DiscoveredCamera(
+            device_identifier="device_002",
+            serial_number="26010003",
+            ip_address="169.254.24.70",
+            model="TV46L",
+            vendor="FLIR",
+            firmware="1.2.3",
+            user_name="Camera2",
+        ),
+    ]
+
+
+class TestCameraSelectionDialog:
+    """Tests for CameraSelectionDialog."""
+
+    def test_dialog_creation(self, qapp, mock_discovery_service, mock_theme):
+        """Test dialog can be created."""
+        dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        assert dialog.windowTitle() == "Select Camera"
+        assert dialog.isModal()
+        dialog.close()
+
+    def test_dialog_populates_cameras(self, qapp, mock_discovery_service, sample_discovered_cameras, mock_theme):
+        """Test dialog populates camera list from discovery."""
+        mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
+        dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        
+        # Check tree has cameras
+        assert dialog._camera_tree.topLevelItemCount() == 2
+        
+        # Check first camera data
+        item0 = dialog._camera_tree.topLevelItem(0)
+        assert item0.text(1) == "cam_26010002"  # camera_id
+        assert item0.text(2) == "26010002"      # serial
+        assert item0.text(3) == "169.254.24.69"  # IP
+        assert item0.text(4) == "TV46L"          # model
+        
+        cam = item0.data(0, Qt.ItemDataRole.UserRole)
+        assert isinstance(cam, DiscoveredCamera)
+        assert cam.serial_number == "26010002"
+        dialog.close()
+
+    def test_refresh_button_calls_discovery(self, qapp, mock_discovery_service, sample_discovered_cameras, mock_theme):
+        """Test refresh button triggers discovery."""
+        mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
+        dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        
+        # Clear and refresh
+        dialog._camera_tree.clear()
+        dialog._refresh_cameras()
+        
+        assert mock_discovery_service.discover_cameras.call_count == 2  # init + refresh
+        assert dialog._camera_tree.topLevelItemCount() == 2
+        dialog.close()
+
+    def test_selection_enables_connect(self, qapp, mock_discovery_service, sample_discovered_cameras, mock_theme):
+        """Test selecting a camera enables Connect button."""
+        mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
+        dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        
+        # Initially disabled
+        assert not dialog._connect_btn.isEnabled()
+        
+        # Select first camera
+        dialog._camera_tree.setCurrentItem(dialog._camera_tree.topLevelItem(0))
+        
+        # Connect should be enabled
+        assert dialog._connect_btn.isEnabled()
+        assert dialog._selected_camera == sample_discovered_cameras[0]
+        dialog.close()
+
+    def test_double_click_connects(self, qapp, mock_discovery_service, sample_discovered_cameras, mock_theme):
+        """Test double-clicking a camera emits camera_selected."""
+        mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
+        dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        
+        received = []
+        dialog.camera_selected.connect(lambda cam: received.append(cam))
+        
+        # Select first item
+        dialog._camera_tree.setCurrentItem(dialog._camera_tree.topLevelItem(0))
+        
+        # Double-click first item
+        item = dialog._camera_tree.topLevelItem(0)
+        dialog._on_double_click(item, 0)
+        
+        assert len(received) == 1
+        assert received[0] == sample_discovered_cameras[0]
+        dialog.close()
+
+
+class TestImageAcquisitionPanel:
+    """Tests for ImageAcquisitionPanel."""
+
+    def test_panel_creation(self, qapp, mock_theme):
+        """Test panel can be created."""
+        panel = ImageAcquisitionPanel(mock_theme)
+        assert panel.windowTitle() == ""  # No window title for widget
+        assert panel._connect_btn.text() == "Connect"
+        assert panel._disconnect_btn.text() == "Disconnect"
+        assert panel._start_btn.text() == "Start"
+        assert panel._stop_btn.text() == "Stop"
+
+    def test_initial_state_disconnected(self, qapp, mock_theme):
+        """Test initial state shows disconnected."""
+        panel = ImageAcquisitionPanel(mock_theme)
+        
+        assert panel._connection_state == CameraConnectionState.DISCONNECTED
+        assert panel._status_text.text() == "Disconnected"
+        assert panel._connect_btn.isEnabled()  # Connect enabled when disconnected
+        assert not panel._disconnect_btn.isEnabled()
+        assert not panel._start_btn.isEnabled()
+        assert not panel._stop_btn.isEnabled()
+        assert not panel._acq_controls.isEnabled()
+
+    def test_set_camera_identity(self, qapp, mock_theme):
+        """Test setting camera identity updates display."""
+        panel = ImageAcquisitionPanel(mock_theme)
+        identity = CameraIdentity(
+            camera_id="cam_001",
+            serial_number="26010002",
+            model="TV46L",
+            vendor="FLIR",
+        )
+        panel.set_camera_identity(identity)
+        
+        assert "TV46L" in panel._camera_label.text()
+        assert "26010002" in panel._camera_label.text()
+        assert panel._info_camera.text() == "TV46L"
+        assert panel._info_serial.text() == "26010002"
+
+    def test_connection_state_transitions(self, qapp, mock_theme):
+        """Test connection state transitions update UI correctly."""
+        panel = ImageAcquisitionPanel(mock_theme)
+        
+        # DISCONNECTED -> CONNECTING
+        panel.set_connection_state(CameraConnectionState.CONNECTING)
+        assert panel._connection_state == CameraConnectionState.CONNECTING
+        assert "Connecting" in panel._status_text.text()
+        assert not panel._connect_btn.isEnabled()
+        assert not panel._disconnect_btn.isEnabled()
+        
+        # CONNECTING -> CONNECTED
+        panel.set_connection_state(CameraConnectionState.CONNECTED)
+        assert panel._connection_state == CameraConnectionState.CONNECTED
+        assert not panel._connect_btn.isEnabled()
+        assert panel._disconnect_btn.isEnabled()
+        assert panel._start_btn.isEnabled()
+        assert panel._acq_controls.isEnabled()
+        
+        # CONNECTED -> ACQUIRING
+        panel.set_acquisition_running(True)
+        assert panel._acquisition_running
+        assert not panel._start_btn.isEnabled()
+        assert panel._stop_btn.isEnabled()
+        
+        # ACQUIRING -> CONNECTED (stop)
+        panel.set_acquisition_running(False)
+        assert not panel._acquisition_running
+        assert panel._start_btn.isEnabled()
+        assert not panel._stop_btn.isEnabled()
+        
+        # CONNECTED -> DISCONNECTED
+        panel.set_connection_state(CameraConnectionState.DISCONNECTED)
+        assert panel._connection_state == CameraConnectionState.DISCONNECTED
+        assert panel._connect_btn.isEnabled()
+        assert not panel._disconnect_btn.isEnabled()
+        assert not panel._acq_controls.isEnabled()
+
+    def test_error_state(self, qapp, mock_theme):
+        """Test error state displays correctly."""
+        panel = ImageAcquisitionPanel(mock_theme)
+        panel.set_connection_state(CameraConnectionState.ERROR)
+        
+        assert panel._connection_state == CameraConnectionState.ERROR
+        assert "Error" in panel._status_text.text()
+        assert "Error" in panel._status_text.text()
+
+
+class TestConfigCameraHeader:
+    """Tests for ConfigCameraHeader toolbar."""
+
+    def test_toolbar_creation(self, qapp, mock_theme):
+        """Test toolbar can be created."""
+        toolbar = ConfigCameraHeader(mock_theme)
+        assert toolbar._connect_btn.text() == "Connect"
+        assert toolbar._disconnect_btn.text() == "Disconnect"
+        assert toolbar._start_btn.text() == "Start"
+        assert toolbar._stop_btn.text() == "Stop"
+
+    def test_camera_list_population(self, qapp, mock_theme):
+        """Test camera list population."""
+        toolbar = ConfigCameraHeader(mock_theme)
+        identity = CameraIdentity(camera_id="cam_001", serial_number="26010002", model="TV46L")
+        cameras = [("cam_001", "TV46L-26010002", identity, True)]
+        toolbar.set_cameras(cameras)
+        
+        assert toolbar._camera_combo.count() == 1
+        assert toolbar._camera_combo.itemText(0) == "TV46L-26010002"
+        assert toolbar._camera_combo.itemData(0) == "cam_001"
+
+    def test_connection_state_updates(self, qapp, mock_theme):
+        """Test connection state updates toolbar buttons."""
+        toolbar = ConfigCameraHeader(mock_theme)
+        
+        # Initial: disconnected
+        toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
+        assert toolbar._connect_btn.isEnabled()
+        assert not toolbar._disconnect_btn.isEnabled()
+        assert not toolbar._start_btn.isEnabled()
+        assert not toolbar._stop_btn.isEnabled()
+        
+        # Connected
+        toolbar.set_connection_state(CameraConnectionState.CONNECTED)
+        assert not toolbar._connect_btn.isEnabled()
+        assert toolbar._disconnect_btn.isEnabled()
+        assert toolbar._start_btn.isEnabled()
+        assert not toolbar._stop_btn.isEnabled()
+        
+        # Acquiring
+        toolbar.set_connection_state(CameraConnectionState.ACQUIRING)
+        toolbar.set_acquisition_running(True)
+        assert toolbar._stop_btn.isEnabled()
+        assert not toolbar._start_btn.isEnabled()
+        
+        # Stop - must go back to CONNECTED first
+        toolbar.set_connection_state(CameraConnectionState.CONNECTED)
+        toolbar.set_acquisition_running(False)
+        assert toolbar._start_btn.isEnabled()
+        assert not toolbar._stop_btn.isEnabled()
+
+    def test_camera_selection_signal(self, qapp, mock_theme):
+        """Test camera selection emits signal."""
+        toolbar = ConfigCameraHeader(mock_theme)
+        identity = CameraIdentity(camera_id="cam_001", serial_number="26010002", model="TV46L")
+        cameras = [("cam_001", "TV46L-26010002", identity, True)]
+        toolbar.set_cameras(cameras)
+        
+        # Signal should be emitted when set_cameras selects the first camera
+        received = []
+        toolbar.camera_selected.connect(lambda cid: received.append(cid))
+        
+        # Change selection to trigger signal again
+        toolbar._camera_combo.setCurrentIndex(-1)  # Clear selection
+        toolbar._camera_combo.setCurrentIndex(0)   # Re-select
+        
+        assert len(received) == 1
+        assert received[0] == "cam_001"
+
+
+class TestLiveThermalWidget:
+    """Tests for LiveThermalWidget with ROI overlays."""
+
+    def test_widget_creation(self, qapp):
+        """Test widget can be created."""
+        widget = LiveThermalWidget()
+        assert widget.minimumWidth() == 480
+        assert widget.minimumHeight() == 360
+
+    def test_set_frame_updates_display(self, qapp):
+        """Test setting frame updates display."""
+        widget = LiveThermalWidget()
+        import numpy as np
+        temp = np.arange(256, dtype=np.float32).reshape(16, 16)
+        frame = Mock()
+        frame.payload.thermal = np.zeros((16, 16), dtype=np.uint16)
+        frame.sequence = 1
+        frame.timestamp = 1.0
+        
+        widget.set_frame(temp, frame)
+        
+        assert widget._display_array is not None
+        assert widget._display_array.shape == (16, 16, 3)  # RGB
+
+    def test_roi_overlay_rendering(self, qapp):
+        """Test ROI overlays are rendered."""
+        widget = LiveThermalWidget()
+        import numpy as np
+        temp = np.arange(256, dtype=np.float32).reshape(16, 16)
+        frame = Mock()
+        frame.payload.thermal = np.zeros((16, 16), dtype=np.uint16)
+        frame.sequence = 1
+        frame.timestamp = 1.0
+        
+        widget.set_frame(temp, frame)
+        
+        # Add ROI overlay
+        overlay = ROIOverlay(
+            roi_id="roi_001",
+            shape="rectangle1",
+            geometry={"y1": 2, "x1": 2, "y2": 8, "x2": 8},
+            color="#FFFF00",
+            selected=False,
+            alarm_active=False,
+        )
+        widget.set_roi_overlays([overlay])
+        
+        # Should not crash
+        widget.update()
+
+    def test_roi_highlight(self, qapp):
+        """Test ROI highlight functionality."""
+        widget = LiveThermalWidget()
+        import numpy as np
+        temp = np.arange(256, dtype=np.float32).reshape(16, 16)
+        frame = Mock()
+        frame.payload.thermal = np.zeros((16, 16), dtype=np.uint16)
+        frame.sequence = 1
+        frame.timestamp = 1.0
+        
+        widget.set_frame(temp, frame)
+        
+        overlay = ROIOverlay(
+            roi_id="roi_001",
+            shape="rectangle1",
+            geometry={"y1": 2, "x1": 2, "y2": 8, "x2": 8},
+            selected=False,
+        )
+        widget.set_roi_overlays([overlay])
+        
+        # Highlight
+        widget.highlight_roi("roi_001")
+        assert widget._selected_roi_id == "roi_001"
+        assert overlay.selected == True
+        
+        # Unhighlight
+        widget.highlight_roi(None)
+        assert widget._selected_roi_id is None
+        assert overlay.selected == False
+
+    def test_palette_change(self, qapp):
+        """Test palette change updates display."""
+        widget = LiveThermalWidget()
+        import numpy as np
+        temp = np.arange(256, dtype=np.float32).reshape(16, 16)
+        frame = Mock()
+        frame.payload.thermal = np.zeros((16, 16), dtype=np.uint16)
+        frame.sequence = 1
+        frame.timestamp = 1.0
+        
+        widget.set_frame(temp, frame)
+        
+        # Change palette
+        widget.set_palette("iron")
+        assert widget._palette == "iron"
+        
+        widget.set_palette("rainbow")
+        assert widget._palette == "rainbow"
+
+    def test_zoom_modes(self, qapp):
+        """Test zoom modes."""
+        widget = LiveThermalWidget()
+        import numpy as np
+        temp = np.arange(256, dtype=np.float32).reshape(16, 16)
+        frame = Mock()
+        frame.payload.thermal = np.zeros((16, 16), dtype=np.uint16)
+        frame.sequence = 1
+        frame.timestamp = 1.0
+        
+        widget.set_frame(temp, frame)
+        
+        widget.set_zoom("100%")
+        assert widget._zoom_mode == "100%"
+        
+        widget.set_zoom("Fit to Window")
+        assert widget._zoom_mode == "Fit to Window"
+
+    def test_range_changed_signal(self, qapp):
+        """Test range_changed signal is emitted."""
+        widget = LiveThermalWidget()
+        import numpy as np
+        temp = np.arange(256, dtype=np.float32).reshape(16, 16)
+        frame = Mock()
+        frame.payload.thermal = np.zeros((16, 16), dtype=np.uint16)
+        frame.sequence = 1
+        frame.timestamp = 1.0
+        
+        received = []
+        widget.range_changed.connect(lambda lo, hi: received.append((lo, hi)))
+        
+        widget.set_frame(temp, frame)
+        
+        assert len(received) == 1
+        lo, hi = received[0]
+        assert lo == 0.0  # min of temp array
+        assert hi == 255.0  # max of temp array
+
+
+class TestConnectionStateModel:
+    """Tests for CameraConnectionState model."""
+
+    def test_state_values(self):
+        """Test all connection state values."""
+        assert CameraConnectionState.DISCONNECTED.value == "disconnected"
+        assert CameraConnectionState.CONNECTING.value == "connecting"
+        assert CameraConnectionState.CONNECTED.value == "connected"
+        assert CameraConnectionState.ACQUIRING.value == "acquiring"
+        assert CameraConnectionState.DEGRADED.value == "degraded"
+        assert CameraConnectionState.RECONNECTING.value == "reconnecting"
+        assert CameraConnectionState.ERROR.value == "error"
+
+    def test_is_connected_property(self):
+        """Test CameraStatus.is_connected property."""
+        from thermal_monitor.core.models import CameraStatus
+        
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.DISCONNECTED)
+        assert not status.is_connected
+        
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.CONNECTING)
+        assert not status.is_connected
+        
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.CONNECTED)
+        assert status.is_connected
+        
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.ACQUIRING)
+        assert status.is_connected
+        
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.DEGRADED)
+        assert status.is_connected
+        
+        # RECONNECTING is not considered connected in the model
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.RECONNECTING)
+        assert not status.is_connected
+        
+        status = CameraStatus(camera_id="cam_001", connection_state=CameraConnectionState.ERROR)
+        assert not status.is_connected
+
+    def test_is_acquiring_property(self):
+        """Test CameraStatus.is_acquiring property."""
+        from thermal_monitor.core.models import CameraStatus
+        
+        for state in CameraConnectionState:
+            status = CameraStatus(camera_id="cam_001", connection_state=state)
+            if state == CameraConnectionState.ACQUIRING:
+                assert status.is_acquiring
+            else:
+                assert not status.is_acquiring
+
+
+class TestConnectionWorkflow:
+    """Integration tests for connection workflow."""
+
+    def test_discovery_to_connection_flow(self, qapp, mock_discovery_service, sample_discovered_cameras):
+        """Test full flow: discovery -> selection -> connection."""
+        mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
+        
+        # 1. Create dialog
+        dialog = CameraSelectionDialog(mock_discovery_service)
+        assert dialog._camera_tree.topLevelItemCount() == 2
+        
+        # 2. Select camera
+        dialog._camera_tree.setCurrentItem(dialog._camera_tree.topLevelItem(0))
+        assert dialog._connect_btn.isEnabled()
+        
+        # 3. Connect emits signal
+        received = []
+        dialog.camera_selected.connect(lambda cam: received.append(cam))
+        dialog._on_connect()
+        
+        assert len(received) == 1
+        assert received[0].serial_number == "26010002"
+
+    def test_acquisition_panel_fps_control(self, qapp):
+        """Test FPS control in acquisition panel."""
+        panel = ImageAcquisitionPanel()
+        
+        received = []
+        panel.fps_changed.connect(lambda fps: received.append(fps))
+        
+        panel._requested_fps.setValue(15)
+        
+        assert len(received) == 1
+        assert received[0] == 15
+
+    def test_acquisition_panel_averaging_control(self, qapp):
+        """Test averaging control."""
+        panel = ImageAcquisitionPanel()
+        
+        received = []
+        panel.averaging_changed.connect(lambda val: received.append(val))
+        
+        panel._averaging_combo.setCurrentText("4")
+        
+        assert len(received) == 1
+        assert received[0] == "4"
+
+    def test_acquisition_panel_history_control(self, qapp):
+        """Test history length control."""
+        panel = ImageAcquisitionPanel()
+        
+        received = []
+        panel.history_changed.connect(lambda val: received.append(val))
+        
+        panel._history_spin.setValue(200)
+        
+        assert len(received) == 1
+        assert received[0] == 200
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
