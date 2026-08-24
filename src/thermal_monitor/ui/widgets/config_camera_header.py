@@ -2,9 +2,8 @@
 ui.widgets.config_camera_header -- Instrument toolbar for Configuration mode.
 
 Top toolbar with:
-- Menu bar
 - Camera selector (compact)
-- Connect/Disconnect button
+- Connection status indicator
 - Global actions (Save, Snapshot, etc.)
 """
 
@@ -36,10 +35,6 @@ class ConfigCameraHeader(QWidget):
     camera_selected = pyqtSignal(str)  # camera_id
     prev_camera_requested = pyqtSignal()
     next_camera_requested = pyqtSignal()
-    connect_requested = pyqtSignal()
-    disconnect_requested = pyqtSignal()
-    start_requested = pyqtSignal()
-    stop_requested = pyqtSignal()
     snapshot_requested = pyqtSignal()
     save_requested = pyqtSignal()
 
@@ -49,7 +44,6 @@ class ConfigCameraHeader(QWidget):
         self._cameras: list[tuple[str, str, CameraIdentity | None, bool]] = []
         self._selected_camera_id: str | None = None
         self._connection_state = CameraConnectionState.DISCONNECTED
-        self._acquisition_running = False
 
         self._setup_ui()
         self._apply_theme()
@@ -108,44 +102,6 @@ class ConfigCameraHeader(QWidget):
 
         toolbar_layout.addWidget(self._conn_indicator)
         toolbar_layout.addWidget(self._conn_label)
-
-        toolbar_layout.addSpacing(16)
-
-        # Connect/Disconnect button
-        self._connect_btn = QPushButton("Connect")
-        self._connect_btn.clicked.connect(self.connect_requested.emit)
-        self._apply_button_style(self._connect_btn, "primary")
-        toolbar_layout.addWidget(self._connect_btn)
-
-        self._disconnect_btn = QPushButton("Disconnect")
-        self._disconnect_btn.clicked.connect(self.disconnect_requested.emit)
-        self._disconnect_btn.setEnabled(False)
-        self._apply_button_style(self._disconnect_btn, "secondary")
-        toolbar_layout.addWidget(self._disconnect_btn)
-
-        toolbar_layout.addSpacing(16)
-
-        # Separator
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.Shape.VLine)
-        sep2.setFrameShadow(QFrame.Shadow.Sunken)
-        self._apply_border_style(sep2)
-        toolbar_layout.addWidget(sep2)
-
-        toolbar_layout.addSpacing(8)
-
-        # Acquisition buttons (only enabled when connected)
-        self._start_btn = QPushButton("Start")
-        self._start_btn.clicked.connect(self.start_requested.emit)
-        self._start_btn.setEnabled(False)
-        self._apply_button_style(self._start_btn, "primary")
-        toolbar_layout.addWidget(self._start_btn)
-
-        self._stop_btn = QPushButton("Stop")
-        self._stop_btn.clicked.connect(self.stop_requested.emit)
-        self._stop_btn.setEnabled(False)
-        self._apply_button_style(self._stop_btn, "secondary")
-        toolbar_layout.addWidget(self._stop_btn)
 
         toolbar_layout.addStretch()
 
@@ -316,21 +272,6 @@ class ConfigCameraHeader(QWidget):
         self._conn_indicator.setStyleSheet(f"color: {color}; font-size: 14px;")
         self._conn_label.setText(status_text)
         self._conn_label.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {color};")
-
-        # Update button states
-        connected = state in (CameraConnectionState.CONNECTED, CameraConnectionState.ACQUIRING)
-        connecting = state == CameraConnectionState.CONNECTING
-
-        self._connect_btn.setEnabled(not connected and not connecting)
-        self._disconnect_btn.setEnabled(connected)
-        self._start_btn.setEnabled(connected and not self._acquisition_running)
-        self._stop_btn.setEnabled(self._acquisition_running)
-
-    def set_acquisition_running(self, running: bool) -> None:
-        """Update acquisition running state."""
-        self._acquisition_running = running
-        self._start_btn.setEnabled(not running and self._connection_state == CameraConnectionState.CONNECTED)
-        self._stop_btn.setEnabled(running)
 
     def select_camera_by_id(self, camera_id: str) -> bool:
         """Select camera by ID. Returns True if found."""

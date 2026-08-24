@@ -69,7 +69,7 @@ class CameraDiscoveryConfig:
 @dataclass(frozen=True, slots=True)
 class CameraAcquisitionConfig:
     target_fps: int = 9
-    grab_timeout_ms: int = 500
+    grab_timeout_ms: int = 2000
     socket_buffer_size: int = 1048576
     num_buffers: int = 8
     stream_source_thermal: str = "IR_Data"

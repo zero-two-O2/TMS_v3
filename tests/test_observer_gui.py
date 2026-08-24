@@ -451,7 +451,8 @@ class TestCameraTileUpdates:
         temp = np.arange(256, dtype=np.float32).reshape(16, 16)
         tile.on_result(make_processing_result("cam_img", 1, temperature_image=temp))
         assert tile._image_widget.display_array is not None
-        assert tile._image_widget.display_array.shape == (16, 16)
+        # display_array is now RGB (3 channels) due to palette application
+        assert tile._image_widget.display_array.shape == (16, 16, 3)
         assert tile._image_widget.display_array.dtype == np.uint8
 
     def test_camera_tile_copies_temperature_buffer(self, qapp):
@@ -460,10 +461,12 @@ class TestCameraTileUpdates:
         tile.on_result(make_processing_result("cam_copy", 1, temperature_image=temp))
         disp = tile._image_widget.display_array
         assert disp is not None
+        # display_array is RGB, check first channel
         assert not np.shares_memory(disp, temp)
-        pixel_before = int(disp[0, 0])
+        pixel_before = int(disp[0, 0, 0])  # First channel (R)
         temp[0, 0] = 1e6
-        assert int(disp[0, 0]) == pixel_before
+        # The display buffer should not change since it's a copy
+        assert int(disp[0, 0, 0]) == pixel_before
 
     def test_camera_tile_updates_fps(self, qapp):
         tile = CameraTile("cam_fps")

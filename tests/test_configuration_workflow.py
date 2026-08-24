@@ -191,8 +191,6 @@ class TestImageAcquisitionPanel:
         """Test panel can be created."""
         panel = ImageAcquisitionPanel(mock_theme)
         assert panel.windowTitle() == ""  # No window title for widget
-        assert panel._connect_btn.text() == "Connect"
-        assert panel._disconnect_btn.text() == "Disconnect"
         assert panel._start_btn.text() == "Start"
         assert panel._stop_btn.text() == "Stop"
 
@@ -202,8 +200,6 @@ class TestImageAcquisitionPanel:
         
         assert panel._connection_state == CameraConnectionState.DISCONNECTED
         assert panel._status_text.text() == "Disconnected"
-        assert panel._connect_btn.isEnabled()  # Connect enabled when disconnected
-        assert not panel._disconnect_btn.isEnabled()
         assert not panel._start_btn.isEnabled()
         assert not panel._stop_btn.isEnabled()
         assert not panel._acq_controls.isEnabled()
@@ -232,14 +228,10 @@ class TestImageAcquisitionPanel:
         panel.set_connection_state(CameraConnectionState.CONNECTING)
         assert panel._connection_state == CameraConnectionState.CONNECTING
         assert "Connecting" in panel._status_text.text()
-        assert not panel._connect_btn.isEnabled()
-        assert not panel._disconnect_btn.isEnabled()
         
         # CONNECTING -> CONNECTED
         panel.set_connection_state(CameraConnectionState.CONNECTED)
         assert panel._connection_state == CameraConnectionState.CONNECTED
-        assert not panel._connect_btn.isEnabled()
-        assert panel._disconnect_btn.isEnabled()
         assert panel._start_btn.isEnabled()
         assert panel._acq_controls.isEnabled()
         
@@ -258,8 +250,7 @@ class TestImageAcquisitionPanel:
         # CONNECTED -> DISCONNECTED
         panel.set_connection_state(CameraConnectionState.DISCONNECTED)
         assert panel._connection_state == CameraConnectionState.DISCONNECTED
-        assert panel._connect_btn.isEnabled()
-        assert not panel._disconnect_btn.isEnabled()
+        assert not panel._start_btn.isEnabled()
         assert not panel._acq_controls.isEnabled()
 
     def test_error_state(self, qapp, mock_theme):
@@ -269,7 +260,6 @@ class TestImageAcquisitionPanel:
         
         assert panel._connection_state == CameraConnectionState.ERROR
         assert "Error" in panel._status_text.text()
-        assert "Error" in panel._status_text.text()
 
 
 class TestConfigCameraHeader:
@@ -278,10 +268,17 @@ class TestConfigCameraHeader:
     def test_toolbar_creation(self, qapp, mock_theme):
         """Test toolbar can be created."""
         toolbar = ConfigCameraHeader(mock_theme)
-        assert toolbar._connect_btn.text() == "Connect"
-        assert toolbar._disconnect_btn.text() == "Disconnect"
-        assert toolbar._start_btn.text() == "Start"
-        assert toolbar._stop_btn.text() == "Stop"
+        # Toolbar should have camera selector, connection status, and global actions
+        assert toolbar._camera_combo is not None
+        assert toolbar._conn_indicator is not None
+        assert toolbar._conn_label is not None
+        assert toolbar._snapshot_btn is not None
+        assert toolbar._save_btn is not None
+        # Should NOT have connection/acquisition buttons (moved to ImageAcquisitionPanel)
+        assert not hasattr(toolbar, '_connect_btn')
+        assert not hasattr(toolbar, '_disconnect_btn')
+        assert not hasattr(toolbar, '_start_btn')
+        assert not hasattr(toolbar, '_stop_btn')
 
     def test_camera_list_population(self, qapp, mock_theme):
         """Test camera list population."""
@@ -295,34 +292,24 @@ class TestConfigCameraHeader:
         assert toolbar._camera_combo.itemData(0) == "cam_001"
 
     def test_connection_state_updates(self, qapp, mock_theme):
-        """Test connection state updates toolbar buttons."""
+        """Test connection state updates toolbar status indicator."""
         toolbar = ConfigCameraHeader(mock_theme)
         
         # Initial: disconnected
         toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
-        assert toolbar._connect_btn.isEnabled()
-        assert not toolbar._disconnect_btn.isEnabled()
-        assert not toolbar._start_btn.isEnabled()
-        assert not toolbar._stop_btn.isEnabled()
+        assert "Disconnected" in toolbar._conn_label.text()
         
         # Connected
         toolbar.set_connection_state(CameraConnectionState.CONNECTED)
-        assert not toolbar._connect_btn.isEnabled()
-        assert toolbar._disconnect_btn.isEnabled()
-        assert toolbar._start_btn.isEnabled()
-        assert not toolbar._stop_btn.isEnabled()
+        assert "Connected" in toolbar._conn_label.text()
         
         # Acquiring
         toolbar.set_connection_state(CameraConnectionState.ACQUIRING)
-        toolbar.set_acquisition_running(True)
-        assert toolbar._stop_btn.isEnabled()
-        assert not toolbar._start_btn.isEnabled()
+        assert "Acquiring" in toolbar._conn_label.text()
         
-        # Stop - must go back to CONNECTED first
-        toolbar.set_connection_state(CameraConnectionState.CONNECTED)
-        toolbar.set_acquisition_running(False)
-        assert toolbar._start_btn.isEnabled()
-        assert not toolbar._stop_btn.isEnabled()
+        # Error
+        toolbar.set_connection_state(CameraConnectionState.ERROR)
+        assert "Error" in toolbar._conn_label.text()
 
     def test_camera_selection_signal(self, qapp, mock_theme):
         """Test camera selection emits signal."""

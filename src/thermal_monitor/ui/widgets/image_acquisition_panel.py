@@ -3,8 +3,7 @@ ui.widgets.image_acquisition_panel -- Left sidebar panel for Image Acquisition c
 
 ThermoView-style instrument panel:
 - Camera identity (compact)
-- Connection status with indicator
-- Connect/Disconnect buttons
+- Connection status indicator
 - Start/Stop acquisition
 - Requested/Acquisition/Display FPS
 - Averaging, History
@@ -90,7 +89,14 @@ class ImageAcquisitionPanel(QWidget):
         status_layout.addStretch()
         group_layout.addLayout(status_layout)
 
-        # Connect/Disconnect buttons
+        # Separator
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setFrameShadow(QFrame.Shadow.Sunken)
+        self._apply_border_style(sep)
+        group_layout.addWidget(sep)
+
+        # Connection controls (Connect/Disconnect)
         conn_btn_layout = QHBoxLayout()
         conn_btn_layout.setSpacing(6)
 
@@ -108,11 +114,11 @@ class ImageAcquisitionPanel(QWidget):
         group_layout.addLayout(conn_btn_layout)
 
         # Separator
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setFrameShadow(QFrame.Shadow.Sunken)
-        self._apply_border_style(sep)
-        group_layout.addWidget(sep)
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setFrameShadow(QFrame.Shadow.Sunken)
+        self._apply_border_style(sep2)
+        group_layout.addWidget(sep2)
 
         # Acquisition controls (enabled only when connected)
         self._acq_controls = QWidget()
@@ -330,11 +336,40 @@ class ImageAcquisitionPanel(QWidget):
     def _update_button_states(self) -> None:
         connected = self._connection_state in (CameraConnectionState.CONNECTED, CameraConnectionState.ACQUIRING)
         acquiring = self._connection_state == CameraConnectionState.ACQUIRING
+        connecting = self._connection_state == CameraConnectionState.CONNECTING
 
-        self._connect_btn.setEnabled(not connected and self._connection_state != CameraConnectionState.CONNECTING)
-        self._disconnect_btn.setEnabled(connected)
-        self._start_btn.setEnabled(connected and not acquiring)
-        self._stop_btn.setEnabled(acquiring)
+        # DISCONNECTED: Connect=ENABLED, Disconnect=DISABLED, Start=DISABLED, Stop=DISABLED
+        # CONNECTING: Connect=DISABLED, Disconnect=DISABLED, Start=DISABLED, Stop=DISABLED
+        # CONNECTED/IDLE: Connect=DISABLED, Disconnect=ENABLED, Start=ENABLED, Stop=DISABLED
+        # ACQUIRING: Connect=DISABLED, Disconnect=DISABLED, Start=DISABLED, Stop=ENABLED
+        # ERROR/DEGRADED/RECONNECTING: similar to DISCONNECTED but with error state
+
+        if self._connection_state == CameraConnectionState.DISCONNECTED:
+            self._connect_btn.setEnabled(True)
+            self._disconnect_btn.setEnabled(False)
+            self._start_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
+        elif self._connection_state == CameraConnectionState.CONNECTING:
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(False)
+            self._start_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
+        elif self._connection_state == CameraConnectionState.CONNECTED:
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(True)
+            self._start_btn.setEnabled(True)
+            self._stop_btn.setEnabled(False)
+        elif self._connection_state == CameraConnectionState.ACQUIRING:
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(False)
+            self._start_btn.setEnabled(False)
+            self._stop_btn.setEnabled(True)
+        else:  # ERROR, DEGRADED, RECONNECTING
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(True)
+            self._start_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
+
         self._change_btn.setEnabled(connected)
         self._acq_controls.setEnabled(connected)
 
@@ -382,8 +417,12 @@ class ImageAcquisitionPanel(QWidget):
     def set_acquisition_running(self, running: bool) -> None:
         """Update acquisition running state."""
         self._acquisition_running = running
-        self._start_btn.setEnabled(not running and self._connection_state == CameraConnectionState.CONNECTED)
-        self._stop_btn.setEnabled(running)
+        # Button states are now managed by set_connection_state
+        # This method is kept for compatibility but delegates to connection state
+        if running:
+            self.set_connection_state(CameraConnectionState.ACQUIRING)
+        elif self._connection_state == CameraConnectionState.ACQUIRING:
+            self.set_connection_state(CameraConnectionState.CONNECTED)
 
     def set_acquisition_fps(self, fps: float | None) -> None:
         """Update acquisition FPS display."""

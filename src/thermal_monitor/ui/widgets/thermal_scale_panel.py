@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal, QRect
-from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen, QBrush
+from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen, QBrush, QImage, QPixmap
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
 )
+
+import numpy as np
 
 from thermal_monitor.ui.theme import ThemeManager
 
@@ -462,6 +464,42 @@ class ThermalScalePanel(QWidget):
             self._cursor_temp_label.setText(f"Cursor: {temp:.1f} {unit_symbol}")
         else:
             self._cursor_temp_label.setText(f"Cursor: — {unit_symbol}")
+
+    def update_view_finder(self, temperature_image: np.ndarray | None) -> None:
+        """Update the View Finder with a thumbnail of the thermal image."""
+        if temperature_image is None:
+            self._view_finder.setText("View Finder\n(thumbnail)")
+            return
+        
+        # Create a small thumbnail
+        from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
+        # Use the same palette logic to create a display image
+        temp_img = temperature_image
+        finite = np.isfinite(temp_img)
+        if not np.any(finite):
+            display = np.zeros(temp_img.shape, dtype=np.uint8)
+        else:
+            lo = float(temp_img[finite].min())
+            hi = float(temp_img[finite].max())
+            if hi <= lo:
+                hi = lo + 1.0
+            normalized = np.clip((temp_img - lo) / (hi - lo), 0.0, 1.0)
+            normalized[~finite] = 0.0
+            display = (normalized * 255.0).astype(np.uint8)
+        
+        # Apply palette (simplified - grayscale for thumbnail)
+        h, w = display.shape
+        qimg = QImage(display.data, w, h, display.strides[0], QImage.Format.Format_Grayscale8)
+        
+        # Scale to fit the view finder
+        pixmap = QPixmap.fromImage(qimg)
+        scaled = pixmap.scaled(
+            self._view_finder.width() - 4,
+            self._view_finder.height() - 4,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._view_finder.setPixmap(scaled)
 
     def set_unit(self, unit_symbol: str) -> None:
         self._custom_min_spin.setSuffix(f" {unit_symbol}")

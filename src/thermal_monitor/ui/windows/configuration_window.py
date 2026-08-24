@@ -4,15 +4,15 @@ ui.windows.configuration_window -- Configuration mode window.
 Industrial thermal-camera configuration workstation inspired by ThermoView workflow:
 
     CONNECT CAMERA
-          ↓
+          ->
     CONFIGURE ACQUISITION
-          ↓
+          ->
     START ACQUISITION
-          ↓
+          ->
     LIVE THERMAL IMAGE (dominant workspace)
-          ↓
+          ->
     ANALYZE IMAGE
-          ↓
+          ->
     CONFIGURE ROIs / ALARMS / MEASUREMENTS
 
 Layout:
@@ -128,10 +128,6 @@ class ConfigurationModeWidget(QWidget):
         self._toolbar.camera_selected.connect(self._on_camera_selected)
         self._toolbar.prev_camera_requested.connect(self._select_prev_camera)
         self._toolbar.next_camera_requested.connect(self._select_next_camera)
-        self._toolbar.connect_requested.connect(self._on_connect)
-        self._toolbar.disconnect_requested.connect(self._on_disconnect)
-        self._toolbar.start_requested.connect(self._on_start_acquisition)
-        self._toolbar.stop_requested.connect(self._on_stop_acquisition)
         self._toolbar.snapshot_requested.connect(self._on_snapshot)
         self._toolbar.save_requested.connect(self._on_save_config)
         main_layout.addWidget(self._toolbar)
@@ -479,6 +475,10 @@ class ConfigurationModeWidget(QWidget):
 
         # Update ROI overlays
         self._update_roi_overlays()
+
+        # Update View Finder with thumbnail
+        if result.temperature_image is not None:
+            self._scale_panel.update_view_finder(result.temperature_image)
 
         # Update FPS
         if self._runtime_service and self._selected_camera_id:
@@ -848,10 +848,10 @@ class ConfigurationModeWidget(QWidget):
                     self._status_fps.setText(f"FPS: {fps:.1f}")
                 self._status_frames.setText(f"Frames: {cam_stats.frames_received}")
 
-            if self._observer:
-                obs_stats = self._observer.stats()
-                if obs_stats:
-                    self._status_proc.setText(f"Processing: {obs_stats.average_processing_time_ms:.1f} ms")
+        if self._observer:
+            obs_stats = self._observer.stats()
+            if obs_stats:
+                self._status_proc.setText(f"Processing: {obs_stats.average_processing_time_ms:.1f} ms")
 
     # Snapshot / Save handlers
     def _on_snapshot(self) -> None:
