@@ -1,13 +1,16 @@
 """
 ui.windows.configuration_window -- Configuration mode window.
 
-ThermoView-style configuration workspace for one selected camera:
-- Camera selector
+Industrial thermal-camera configuration workstation for one selected camera:
+- Camera selector with status (all configured cameras shown, unavailable included)
+- Camera identity panel (read-only: Camera, Serial, Model, Vendor, IP, Status)
+- Acquisition controls (does NOT start acquisition on selection)
 - Live thermal image with temperature display controls
-- Camera information panel
-- Acquisition controls
-- ROI/Analysis workspace
-- Alarm configuration
+- Temperature scale panel (palette, range, zoom)
+- ROI workspace (create, edit, delete, configure limits/alarms)
+- Alarm configuration (add, edit, delete rules)
+- Statistics display
+- Configuration Editor tab (deployment config)
 """
 
 from __future__ import annotations
@@ -40,8 +43,11 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QFrame,
     QLineEdit,
+    QDialog,
+    QDialogButtonBox,
+    QTextEdit,
 )
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor
 
 import numpy as np
 
@@ -59,6 +65,7 @@ from thermal_monitor.core.models import (
     AlarmCondition,
     AlarmSeverity,
     PositionROIAssociation,
+    CameraConnectionState,
 )
 from thermal_monitor.processing import ProcessingResult
 from thermal_monitor.services.configuration import ConfigurationService
@@ -81,6 +88,9 @@ _UNIT_SYMBOLS = {
 class ConfigurationModeWidget(QWidget):
     """Main widget for Configuration mode - single camera detailed configuration."""
 
+    # Signal emitted when there are unsaved changes and user tries to switch cameras
+    camera_switch_blocked = pyqtSignal(str, str)  # (current_camera_id, target_camera_id)
+
     def __init__(
         self,
         config_service: ConfigurationService,
@@ -101,30 +111,34 @@ class ConfigurationModeWidget(QWidget):
         self._latest_result: ProcessingResult | None = None
         self._config_editor: Optional[ConfigurationEditor] = None
 
+        # Dirty state tracking for camera-specific configurations
+        self._dirty_camera_configs: set[str] = set()
+        self._pending_camera_switch: str | None = None
+
         self._setup_ui()
         self._connect_signals()
         self._load_initial_data()
 
     def _setup_ui(self) -> None:
-        """Set up the ThermoView-style UI layout."""
+        """Set up the industrial workstation-style UI layout."""
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(4, 4, 4, 4)
-        main_layout.setSpacing(4)
+        main_layout.setContentsMargins(8, 8, 8, 8)
+        main_layout.setSpacing(6)
 
-        # --- Top: Camera selector toolbar ---
-        self._create_camera_selector(main_layout)
+        # --- Top: Camera selector + Identity panel ---
+        self._create_camera_selector_and_identity(main_layout)
 
         # --- Main content area: splitter ---
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(main_splitter, 1)
 
-        # Left side: Image + controls
+        # Left side: Image + acquisition controls
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
-        left_layout.setSpacing(4)
+        left_layout.setSpacing(6)
 
-        # Camera/Acquisition toolbar
+        # Acquisition controls
         self._create_acquisition_toolbar(left_layout)
 
         # Image display area
@@ -136,14 +150,14 @@ class ConfigurationModeWidget(QWidget):
         self._image_widget.setMinimumSize(480, 360)
         image_splitter.addWidget(self._image_widget)
 
-        # Image info panel (below image)
-        self._create_image_info_panel(image_splitter)
+        # Frame info panel (below image)
+        self._create_frame_info_panel(image_splitter)
 
         # Right side: Temperature/Scale + Analysis/ROI
         right_widget = QWidget()
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(4)
+        right_layout.setSpacing(6)
 
         # Temperature scale panel
         self._create_temperature_scale_panel(right_layout)
@@ -153,13 +167,20 @@ class ConfigurationModeWidget(QWidget):
 
         main_splitter.addWidget(left_widget)
         main_splitter.addWidget(right_widget)
-        main_splitter.setSizes([800, 400])
+        main_splitter.setSizes([800, 420])
 
         # Status bar at bottom
         self._create_status_bar(main_layout)
 
-    def _create_camera_selector(self, parent_layout: QVBoxLayout) -> None:
-        """Create camera selector toolbar."""
+    def _create_camera_selector_and_identity(self, parent_layout: QVBoxLayout) -> None:
+        """Create camera selector toolbar with identity panel at the top."""
+        # Main container for selector and identity
+        top_container = QWidget()
+        top_layout = QVBoxLayout(top_container)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(6)
+
+        # --- Camera Selector Row ---
         selector_group = QGroupBox("Camera Selection")
         selector_layout = QHBoxLayout(selector_group)
         selector_layout.setSpacing(8)
@@ -171,7 +192,7 @@ class ConfigurationModeWidget(QWidget):
             self._prev_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
 
         self._camera_combo = QComboBox()
-        self._camera_combo.setMinimumWidth(300)
+        self._camera_combo.setMinimumWidth(350)
         self._camera_combo.currentIndexChanged.connect(self._on_camera_selected)
 
         self._next_btn = QPushButton("Next ▶")
@@ -181,56 +202,90 @@ class ConfigurationModeWidget(QWidget):
             self._next_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
 
         selector_layout.addWidget(self._prev_btn)
-        if self._theme:
-            selector_layout.addWidget(QLabel("Camera:"))
-        else:
-            selector_layout.addWidget(QLabel("Camera:"))
+        selector_layout.addWidget(QLabel("Camera:"))
         selector_layout.addWidget(self._camera_combo, 1)
         selector_layout.addWidget(self._next_btn)
         selector_layout.addStretch()
 
-        parent_layout.addWidget(selector_group)
+        top_layout.addWidget(selector_group)
+
+        # --- Camera Identity Panel (Read-Only) ---
+        identity_group = QGroupBox("Camera Identity (from Discovery)")
+        identity_layout = QFormLayout(identity_group)
+        identity_layout.setSpacing(6)
+        identity_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+
+        self._identity_camera_label = QLabel("—")
+        self._identity_serial_label = QLabel("—")
+        self._identity_model_label = QLabel("—")
+        self._identity_vendor_label = QLabel("—")
+        self._identity_ip_label = QLabel("—")
+        self._identity_status_label = QLabel("—")
+        self._identity_status_label.setStyleSheet("font-weight: bold;")
+
+        # Make all identity labels read-only style
+        for label in (
+            self._identity_camera_label,
+            self._identity_serial_label,
+            self._identity_model_label,
+            self._identity_vendor_label,
+            self._identity_ip_label,
+        ):
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            if self._theme:
+                label.setStyleSheet(f"color: {self._theme.text_muted()};")
+            else:
+                label.setStyleSheet("color: #666666;")
+
+        identity_layout.addRow("Camera:", self._identity_camera_label)
+        identity_layout.addRow("Serial:", self._identity_serial_label)
+        identity_layout.addRow("Model:", self._identity_model_label)
+        identity_layout.addRow("Vendor:", self._identity_vendor_label)
+        identity_layout.addRow("IP Address:", self._identity_ip_label)
+        identity_layout.addRow("Status:", self._identity_status_label)
+
+        top_layout.addWidget(identity_group)
+        parent_layout.addWidget(top_container)
 
     def _create_acquisition_toolbar(self, parent_layout: QVBoxLayout) -> None:
-        """Create acquisition controls toolbar."""
-        acq_group = QGroupBox("Acquisition")
+        """Create acquisition controls toolbar (does NOT auto-start on selection)."""
+        acq_group = QGroupBox("Acquisition Controls")
         acq_layout = QFormLayout(acq_group)
         acq_layout.setSpacing(6)
 
         self._acq_camera_label = QLabel("—")
         self._acq_state_label = QLabel("STOPPED")
-        state_style = "font-weight: bold;"
-        if self._theme:
-            state_style += f" color: {self._theme.disabled_text()};"
-        else:
-            state_style += " color: #757575;"
-        self._acq_state_label.setStyleSheet(state_style)
+        self._acq_state_label.setStyleSheet("font-weight: bold; color: #757575;")
 
         self._target_fps_spin = QSpinBox()
         self._target_fps_spin.setRange(1, 60)
         self._target_fps_spin.setValue(9)
+        self._target_fps_spin.setToolTip("Target acquisition frame rate (1-60 FPS)")
 
         self._reconnect_spin = QDoubleSpinBox()
         self._reconnect_spin.setRange(0.1, 60.0)
         self._reconnect_spin.setSuffix(" s")
         self._reconnect_spin.setDecimals(2)
         self._reconnect_spin.setValue(3.0)
+        self._reconnect_spin.setToolTip("Reconnection interval in seconds")
 
         self._nuc_duration_spin = QDoubleSpinBox()
         self._nuc_duration_spin.setRange(0.1, 30.0)
         self._nuc_duration_spin.setSuffix(" s")
         self._nuc_duration_spin.setDecimals(2)
         self._nuc_duration_spin.setValue(1.0)
+        self._nuc_duration_spin.setToolTip("NUC (Non-Uniformity Correction) duration in seconds")
 
         self._grab_timeout_spin = QDoubleSpinBox()
         self._grab_timeout_spin.setRange(0.1, 60.0)
         self._grab_timeout_spin.setSuffix(" s")
         self._grab_timeout_spin.setDecimals(2)
         self._grab_timeout_spin.setValue(0.5)
+        self._grab_timeout_spin.setToolTip("Frame grab timeout in seconds")
 
-        self._start_btn = QPushButton("Start")
+        self._start_btn = QPushButton("Start Acquisition")
         self._start_btn.clicked.connect(self._on_start_acquisition)
-        self._stop_btn = QPushButton("Stop")
+        self._stop_btn = QPushButton("Stop Acquisition")
         self._stop_btn.clicked.connect(self._on_stop_acquisition)
         self._stop_btn.setEnabled(False)
         self._reconnect_btn = QPushButton("Reconnect")
@@ -256,22 +311,18 @@ class ConfigurationModeWidget(QWidget):
 
         parent_layout.addWidget(acq_group)
 
-    def _create_image_info_panel(self, parent_splitter: QSplitter) -> None:
-        """Create image info panel (like ThermoView's Image Info)."""
+    def _create_frame_info_panel(self, parent_splitter: QSplitter) -> None:
+        """Create frame info panel (below image)."""
         info_widget = QWidget()
         info_layout = QVBoxLayout(info_widget)
         info_layout.setContentsMargins(4, 4, 4, 4)
         info_layout.setSpacing(4)
 
-        # Frame info
         frame_group = QGroupBox("Frame Information")
         frame_form = QFormLayout(frame_group)
         frame_form.setSpacing(4)
 
         self._info_camera_id = QLabel("—")
-        self._info_serial = QLabel("—")
-        self._info_model = QLabel("—")
-        self._info_ip = QLabel("—")
         self._info_frame_size = QLabel("—")
         self._info_acq_fps = QLabel("—")
         self._info_disp_fps = QLabel("—")
@@ -283,9 +334,6 @@ class ConfigurationModeWidget(QWidget):
         self._info_proc_time = QLabel("—")
 
         frame_form.addRow("Camera ID:", self._info_camera_id)
-        frame_form.addRow("Serial:", self._info_serial)
-        frame_form.addRow("Model:", self._info_model)
-        frame_form.addRow("IP Address:", self._info_ip)
         frame_form.addRow("Frame Size:", self._info_frame_size)
         frame_form.addRow("Acquisition FPS:", self._info_acq_fps)
         frame_form.addRow("Display FPS:", self._info_disp_fps)
@@ -297,23 +345,6 @@ class ConfigurationModeWidget(QWidget):
         frame_form.addRow("Processing Time:", self._info_proc_time)
 
         info_layout.addWidget(frame_group)
-
-        # Camera info (read-only identity)
-        cam_group = QGroupBox("Camera Identity (from Discovery)")
-        cam_form = QFormLayout(cam_group)
-        cam_form.setSpacing(4)
-
-        self._cam_vendor = QLabel("—")
-        self._cam_firmware = QLabel("—")
-        self._cam_user_name = QLabel("—")
-        self._cam_device_id = QLabel("—")
-
-        cam_form.addRow("Vendor:", self._cam_vendor)
-        cam_form.addRow("Firmware:", self._cam_firmware)
-        cam_form.addRow("User Name:", self._cam_user_name)
-        cam_form.addRow("Device ID:", self._cam_device_id)
-
-        info_layout.addWidget(cam_group)
         info_layout.addStretch()
 
         parent_splitter.addWidget(info_widget)
@@ -341,6 +372,7 @@ class ConfigurationModeWidget(QWidget):
         self._custom_min_spin.setSuffix(" °C")
         self._custom_min_spin.setValue(20.0)
         self._custom_min_spin.setEnabled(False)
+        self._custom_min_spin.setToolTip("Minimum temperature for manual range")
 
         self._custom_max_spin = QDoubleSpinBox()
         self._custom_max_spin.setRange(-273.15, 2000.0)
@@ -348,6 +380,7 @@ class ConfigurationModeWidget(QWidget):
         self._custom_max_spin.setSuffix(" °C")
         self._custom_max_spin.setValue(80.0)
         self._custom_max_spin.setEnabled(False)
+        self._custom_max_spin.setToolTip("Maximum temperature for manual range")
 
         self._apply_range_btn = QPushButton("Apply Range")
         self._apply_range_btn.clicked.connect(self._on_apply_range)
@@ -375,7 +408,6 @@ class ConfigurationModeWidget(QWidget):
 
     def _create_analysis_panel(self, parent_layout: QVBoxLayout) -> None:
         """Create analysis/ROI workspace panel."""
-        # Use tab widget for different analysis views
         self._analysis_tabs = QTabWidget()
         parent_layout.addWidget(self._analysis_tabs, 1)
 
@@ -391,7 +423,7 @@ class ConfigurationModeWidget(QWidget):
         self._stats_tab = self._create_stats_tab()
         self._analysis_tabs.addTab(self._stats_tab, "Statistics")
 
-        # Configuration Editor tab (new)
+        # Configuration Editor tab (deployment config)
         if self._config_manager:
             self._config_editor = ConfigurationEditor(
                 config_manager=self._config_manager,
@@ -693,6 +725,7 @@ class ConfigurationModeWidget(QWidget):
         self._status_proc = QLabel("Processing: — ms")
         self._status_conn = QLabel("Connection: —")
         self._status_frames = QLabel("Frames: 0")
+        self._status_label = QLabel("Ready")
 
         status_layout.addWidget(self._status_fps)
         status_layout.addWidget(QLabel("|"))
@@ -702,6 +735,7 @@ class ConfigurationModeWidget(QWidget):
         status_layout.addWidget(QLabel("|"))
         status_layout.addWidget(self._status_frames)
         status_layout.addStretch()
+        status_layout.addWidget(self._status_label)
 
         parent_layout.addWidget(status_frame)
 
@@ -720,18 +754,27 @@ class ConfigurationModeWidget(QWidget):
         self._refresh_camera_selector()
         if self._selected_camera_id:
             self._load_camera_config(self._selected_camera_id)
+        else:
+            # Select first camera if available
+            cameras = self._config_service.get_all_camera_configs()
+            if cameras:
+                self._camera_combo.setCurrentIndex(0)
 
     def _refresh_camera_selector(self) -> None:
-        """Refresh the camera selector combo box."""
+        """Refresh the camera selector combo box with all configured cameras."""
         current_id = self._camera_combo.currentData()
         self._camera_combo.clear()
 
         cameras = self._config_service.get_all_camera_configs()
         for config in cameras:
-            display = f"{config.identity.serial_number} — {config.identity.model}"
-            if config.name and config.name != config.identity.camera_id:
+            identity = config.identity
+            display = f"{identity.serial_number} — {identity.model}"
+            if config.name and config.name != identity.camera_id:
                 display = f"{config.name} ({display})"
-            self._camera_combo.addItem(display, config.identity.camera_id)
+            # Add status indicator
+            if not config.enabled:
+                display = f"[Disabled] {display}"
+            self._camera_combo.addItem(display, identity.camera_id)
 
         # Restore selection if possible
         if current_id:
@@ -742,11 +785,60 @@ class ConfigurationModeWidget(QWidget):
         self._update_navigation_buttons()
 
     def _on_camera_selected(self, index: int) -> None:
-        """Handle camera selection change."""
+        """Handle camera selection change with dirty state check."""
         camera_id = self._camera_combo.itemData(index)
         if camera_id:
-            self._switch_camera(camera_id)
+            if self._has_unsaved_changes(camera_id):
+                self._pending_camera_switch = camera_id
+                self._show_unsaved_changes_dialog(camera_id)
+            else:
+                self._switch_camera(camera_id)
         self._update_navigation_buttons()
+
+    def _has_unsaved_changes(self, target_camera_id: str) -> bool:
+        """Check if current camera has unsaved changes."""
+        return self._selected_camera_id in self._dirty_camera_configs and self._selected_camera_id != target_camera_id
+
+    def _show_unsaved_changes_dialog(self, target_camera_id: str) -> None:
+        """Show dialog for unsaved changes when switching cameras."""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Unsaved Changes")
+        msg.setText(f"Camera '{self._selected_camera_id}' has unsaved changes.")
+        msg.setInformativeText("Do you want to save before switching?")
+        msg.setStandardButtons(
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel
+        )
+        msg.setDefaultButton(QMessageBox.StandardButton.Save)
+        result = msg.exec()
+
+        if result == QMessageBox.StandardButton.Save:
+            # Save current camera config
+            self._save_current_camera_config()
+            self._switch_camera(target_camera_id)
+        elif result == QMessageBox.StandardButton.Discard:
+            self._discard_current_camera_changes()
+            self._switch_camera(target_camera_id)
+        else:  # Cancel
+            # Restore previous selection
+            self._camera_combo.blockSignals(True)
+            current_index = self._camera_combo.findData(self._selected_camera_id)
+            if current_index >= 0:
+                self._camera_combo.setCurrentIndex(current_index)
+            self._camera_combo.blockSignals(False)
+
+    def _save_current_camera_config(self) -> None:
+        """Save current camera configuration (placeholder - configs are auto-saved via service)."""
+        # The ConfigurationService already persists changes immediately
+        # This is a placeholder for future explicit save if needed
+        if self._selected_camera_id:
+            self._dirty_camera_configs.discard(self._selected_camera_id)
+
+    def _discard_current_camera_changes(self) -> None:
+        """Discard current camera changes."""
+        if self._selected_camera_id:
+            self._dirty_camera_configs.discard(self._selected_camera_id)
+            # Reload the config from service
+            self._load_camera_config(self._selected_camera_id)
 
     def _select_prev_camera(self) -> None:
         """Select previous camera in list."""
@@ -768,8 +860,8 @@ class ConfigurationModeWidget(QWidget):
         self._next_btn.setEnabled(current < count - 1 and count > 0)
 
     def _switch_camera(self, camera_id: str) -> None:
-        """Switch to a different camera."""
-        # Stop previous camera's observer
+        """Switch to a different camera (without starting acquisition)."""
+        # Stop previous camera's observer (but NOT acquisition)
         if self._observer is not None:
             self._observer.stop()
             self._observer = None
@@ -778,24 +870,8 @@ class ConfigurationModeWidget(QWidget):
         self._load_camera_config(camera_id)
         self._update_acquisition_controls(camera_id)
 
-        # Start observer for new camera
-        if self._runtime_service is not None:
-            analysis = self._config_service.get_analysis_config(camera_id)
-            if analysis is None:
-                analysis = AnalysisConfig(camera_id=camera_id)
-
-            try:
-                self._observer = self._runtime_service.start_observer(camera_id, analysis_config=analysis)
-                self._observer.result_ready.connect(self._on_processing_result, Qt.ConnectionType.QueuedConnection)
-                self._observer.error_occurred.connect(self._on_observer_error, Qt.ConnectionType.QueuedConnection)
-                self._acq_state_label.setText("RUNNING")
-                self._acq_state_label.setStyleSheet("color: #2E7D32; font-weight: bold;")
-                self._start_btn.setEnabled(False)
-                self._stop_btn.setEnabled(True)
-            except Exception as exc:
-                self._acq_state_label.setText("ERROR")
-                self._acq_state_label.setStyleSheet("color: #D32F2F; font-weight: bold;")
-                QMessageBox.warning(self, "Observer Error", f"Failed to start observer: {exc}")
+        # Update status
+        self._status_label.setText(f"Camera: {camera_id}")
 
     def _load_camera_config(self, camera_id: str) -> None:
         """Load configuration for the selected camera into all panels."""
@@ -807,18 +883,22 @@ class ConfigurationModeWidget(QWidget):
         identity = config.identity
         metadata = config.metadata or {}
 
+        # Determine connection status
+        status = self._get_camera_connection_status(camera_id)
+        status_text = status.value.replace("_", " ").title()
+        status_color = self._get_status_color(status)
+
         # Update camera selector label
         self._acq_camera_label.setText(f"{identity.serial_number} ({identity.model})")
 
-        # Update image info panel
-        self._info_camera_id.setText(identity.camera_id)
-        self._info_serial.setText(identity.serial_number)
-        self._info_model.setText(identity.model or "(not provided)")
-        self._info_ip.setText(metadata.get("ip_address", "(not provided)"))
-        self._cam_vendor.setText(identity.vendor or "(not provided)")
-        self._cam_firmware.setText(identity.firmware or "(not provided)")
-        self._cam_user_name.setText(identity.user_name or "(not provided)")
-        self._cam_device_id.setText(metadata.get("device_identifier", "(not provided)"))
+        # Update identity panel (top, read-only)
+        self._identity_camera_label.setText(identity.camera_id)
+        self._identity_serial_label.setText(identity.serial_number)
+        self._identity_model_label.setText(identity.model or "(not provided)")
+        self._identity_vendor_label.setText(identity.vendor or "(not provided)")
+        self._identity_ip_label.setText(metadata.get("ip_address", "(not provided)"))
+        self._identity_status_label.setText(status_text)
+        self._identity_status_label.setStyleSheet(f"font-weight: bold; color: {status_color};")
 
         # Update acquisition controls from metadata
         self._target_fps_spin.setValue(int(metadata.get("frame_rate", 9)))
@@ -835,14 +915,67 @@ class ConfigurationModeWidget(QWidget):
         # Update ROI combo in alarm editor
         self._update_alarm_roi_combo(camera_id)
 
+    def _get_camera_connection_status(self, camera_id: str) -> CameraConnectionState:
+        """Get the connection status of a camera."""
+        if self._runtime_service is not None:
+            if self._runtime_service.is_camera_running(camera_id):
+                return CameraConnectionState.ACQUIRING
+            # Check if camera is configured but not running
+            config = self._config_service.get_camera_config(camera_id)
+            if config and config.enabled:
+                return CameraConnectionState.DISCONNECTED
+            elif config:
+                return CameraConnectionState.DISCONNECTED  # Disabled
+        config = self._config_service.get_camera_config(camera_id)
+        if config:
+            if not config.enabled:
+                return CameraConnectionState.DISCONNECTED  # Disabled
+        return CameraConnectionState.DISCONNECTED
+
+    def _get_status_color(self, status: CameraConnectionState) -> str:
+        """Get color for connection status."""
+        if self._theme:
+            colors = self._theme.colors()
+            if status == CameraConnectionState.ACQUIRING:
+                return colors.success
+            elif status in (CameraConnectionState.CONNECTED, CameraConnectionState.CONNECTING):
+                return colors.info
+            elif status == CameraConnectionState.DEGRADED:
+                return colors.warning
+            elif status == CameraConnectionState.RECONNECTING:
+                return colors.warning
+            elif status == CameraConnectionState.ERROR:
+                return colors.danger
+            else:
+                return colors.disabled
+        else:
+            if status == CameraConnectionState.ACQUIRING:
+                return "#2E7D32"
+            elif status in (CameraConnectionState.CONNECTED, CameraConnectionState.CONNECTING):
+                return "#1976D2"
+            elif status == CameraConnectionState.DEGRADED:
+                return "#FFA000"
+            elif status == CameraConnectionState.RECONNECTING:
+                return "#FFA000"
+            elif status == CameraConnectionState.ERROR:
+                return "#D32F2F"
+            else:
+                return "#757575"
+
     def _update_acquisition_controls(self, camera_id: str) -> None:
-        """Update acquisition control states based on runtime."""
+        """Update acquisition control states based on runtime (observer only, not acquisition)."""
         if self._runtime_service is not None:
             running = self._runtime_service.is_camera_running(camera_id)
             self._acq_state_label.setText("RUNNING" if running else "STOPPED")
-            self._acq_state_label.setStyleSheet(
-                "color: #2E7D32; font-weight: bold;" if running else "color: #757575; font-weight: bold;"
-            )
+            if self._theme:
+                colors = self._theme.colors()
+                self._acq_state_label.setStyleSheet(
+                    f"color: {colors.success}; font-weight: bold;" if running else f"color: {colors.disabled}; font-weight: bold;"
+                )
+            else:
+                self._acq_state_label.setStyleSheet(
+                    "color: #2E7D32; font-weight: bold;" if running else "color: #757575; font-weight: bold;"
+                )
             self._start_btn.setEnabled(not running)
             self._stop_btn.setEnabled(running)
 
@@ -851,10 +984,14 @@ class ConfigurationModeWidget(QWidget):
         self._acq_camera_label.setText("—")
         self._acq_state_label.setText("STOPPED")
         self._acq_state_label.setStyleSheet("color: #757575; font-weight: bold;")
+        self._identity_camera_label.setText("—")
+        self._identity_serial_label.setText("—")
+        self._identity_model_label.setText("—")
+        self._identity_vendor_label.setText("—")
+        self._identity_ip_label.setText("—")
+        self._identity_status_label.setText("—")
+        self._identity_status_label.setStyleSheet("font-weight: bold; color: #757575;")
         self._info_camera_id.setText("—")
-        self._info_serial.setText("—")
-        self._info_model.setText("—")
-        self._info_ip.setText("—")
         self._info_frame_size.setText("—")
         self._info_acq_fps.setText("—")
         self._info_disp_fps.setText("—")
@@ -864,10 +1001,6 @@ class ConfigurationModeWidget(QWidget):
         self._info_emissivity.setText("—")
         self._info_ambient.setText("—")
         self._info_proc_time.setText("—")
-        self._cam_vendor.setText("—")
-        self._cam_firmware.setText("—")
-        self._cam_user_name.setText("—")
-        self._cam_device_id.setText("—")
         self._roi_tree.clear()
         self._alarm_tree.clear()
         self._roi_stats_table.setRowCount(0)
@@ -928,7 +1061,6 @@ class ConfigurationModeWidget(QWidget):
 
     def _update_roi_tree_live(self, analysis) -> None:
         """Update ROI tree with live temperature statistics."""
-        # Update existing items with live data
         for i in range(self._roi_tree.topLevelItemCount()):
             item = self._roi_tree.topLevelItem(i)
             roi_id = item.data(0, Qt.ItemDataRole.UserRole)
@@ -956,16 +1088,15 @@ class ConfigurationModeWidget(QWidget):
 
     def _update_alarm_tree_live(self, alarm_result, analysis) -> None:
         """Update alarm tree with live alarm state."""
-        # Mark active alarms in tree
         for i in range(self._alarm_tree.topLevelItemCount()):
             item = self._alarm_tree.topLevelItem(i)
             rule_id = item.data(0, Qt.ItemDataRole.UserRole)
             if rule_id in alarm_result.active_alarms:
-                item.setBackground(0, Qt.GlobalColor.red)
-                item.setBackground(1, Qt.GlobalColor.red)
+                item.setBackground(0, QColor("#FFCDD2"))
+                item.setBackground(1, QColor("#FFCDD2"))
             else:
-                item.setBackground(0, Qt.GlobalColor.white)
-                item.setBackground(1, Qt.GlobalColor.white)
+                item.setBackground(0, QColor("#FFFFFF"))
+                item.setBackground(1, QColor("#FFFFFF"))
 
     def _refresh_roi_list(self, camera_id: str) -> None:
         """Refresh ROI list from analysis config."""
@@ -974,7 +1105,6 @@ class ConfigurationModeWidget(QWidget):
         if not analysis:
             return
 
-        # Get ROIs for default position
         rois = analysis.get_rois_for_position("default")
         for roi in rois:
             limits_text = ""
@@ -996,7 +1126,7 @@ class ConfigurationModeWidget(QWidget):
                 roi.geometry.shape.value,
                 "Yes" if roi.enabled else "No",
                 "Yes" if roi.alarm_enabled else "No",
-                "—", "—", "—"  # Live stats placeholders
+                "—", "—", "—"
             ])
             item.setData(0, Qt.ItemDataRole.UserRole, roi.roi_id)
             self._roi_tree.addTopLevelItem(item)
@@ -1009,11 +1139,15 @@ class ConfigurationModeWidget(QWidget):
             return
 
         for rule_id, rule in analysis.alarm_rules.items():
+            threshold_text = f"{rule.threshold:.1f} °C" if rule.threshold is not None else "—"
+            if rule.condition in (AlarmCondition.OUTSIDE_RANGE, AlarmCondition.INSIDE_RANGE):
+                threshold_text = f"[{rule.threshold_low:.1f}, {rule.threshold_high:.1f}] °C" if rule.threshold_low is not None and rule.threshold_high is not None else "—"
+
             item = QTreeWidgetItem([
                 rule_id,
                 rule.roi_id,
                 rule.condition.value,
-                f"{rule.threshold:.1f} °C" if rule.threshold is not None else "—",
+                threshold_text,
                 rule.severity.value.upper(),
                 "Yes" if rule.enabled else "No",
             ])
@@ -1071,10 +1205,18 @@ class ConfigurationModeWidget(QWidget):
         self._editor_rate_limit.setValue(limits.rate_of_change_limit if limits.rate_of_change_limit is not None else 0.0)
         self._editor_alarm_enabled.setChecked(roi.alarm_enabled)
 
+        # Mark as dirty when edited
+        self._editor_name_edit.textChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        for spin in [self._editor_min_warning, self._editor_max_warning, self._editor_min_critical, self._editor_max_critical, self._editor_rate_limit]:
+            spin.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._editor_alarm_enabled.toggled.connect(lambda: self._mark_dirty(self._selected_camera_id))
+
+    def _mark_dirty(self, camera_id: str) -> None:
+        """Mark camera configuration as dirty."""
+        self._dirty_camera_configs.add(camera_id)
+
     def _build_geometry_editor(self, geometry: ROIGeometry) -> None:
         """Build geometry parameter editors based on shape."""
-        from PyQt6.QtWidgets import QFormLayout, QDoubleSpinBox, QGroupBox, QTextEdit
-
         # Clear existing
         while self._geometry_layout.count():
             child = self._geometry_layout.takeAt(0)
@@ -1146,14 +1288,13 @@ class ConfigurationModeWidget(QWidget):
         spin.setDecimals(2)
         spin.setSingleStep(step)
         spin.setValue(value)
+        spin.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
         return spin
 
     def _on_add_roi(self) -> None:
         """Add new ROI."""
         if not self._selected_camera_id:
             return
-
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QComboBox
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Add ROI")
@@ -1230,6 +1371,7 @@ class ConfigurationModeWidget(QWidget):
             self._config_service.set_analysis_config(updated_config)
             self._refresh_roi_list(self._selected_camera_id)
             self._update_alarm_roi_combo(self._selected_camera_id)
+            self._mark_dirty(self._selected_camera_id)
 
     def _on_edit_roi(self) -> None:
         """Edit selected ROI."""
@@ -1286,6 +1428,7 @@ class ConfigurationModeWidget(QWidget):
         self._config_service.set_analysis_config(updated_config)
         self._refresh_roi_list(self._selected_camera_id)
         self._update_alarm_roi_combo(self._selected_camera_id)
+        self._mark_dirty(self._selected_camera_id)
 
     def _create_default_geometry(self, shape: ROIShape) -> ROIGeometry:
         """Create default geometry for a shape type."""
@@ -1328,6 +1471,13 @@ class ConfigurationModeWidget(QWidget):
             rate_of_change_limit=self._editor_rate_limit.value() if self._editor_rate_limit.value() > 0.0 else None,
         )
 
+        # Validate limits
+        try:
+            limits.__post_init__()
+        except ValueError as e:
+            QMessageBox.warning(self, "Invalid Limits", str(e))
+            return
+
         new_roi = ROIConfig(
             roi_id=old_roi.roi_id,
             name=self._editor_name_edit.text(),
@@ -1355,6 +1505,7 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_analysis_config(updated_config)
         self._refresh_roi_list(self._selected_camera_id)
+        self._mark_dirty(self._selected_camera_id)
 
     def _read_geometry_editor(self) -> ROIGeometry | None:
         """Read geometry parameters from editors."""
@@ -1400,6 +1551,7 @@ class ConfigurationModeWidget(QWidget):
                 except ValueError:
                     continue
             if len(points) < 3:
+                QMessageBox.warning(self, "Invalid Polygon", "Polygon requires at least 3 points.")
                 return None
             return ROIGeometry(shape=ROIShape.POLYGON, parameters={"points": points})
         return None
@@ -1440,6 +1592,16 @@ class ConfigurationModeWidget(QWidget):
         # Show/hide range thresholds
         self._on_alarm_condition_changed(rule.condition.value)
 
+        # Mark dirty on changes
+        self._alarm_editor_rule_id.textChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_roi_combo.currentTextChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_condition.currentTextChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_threshold.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_threshold_low.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_threshold_high.valueChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_severity.currentTextChanged.connect(lambda: self._mark_dirty(self._selected_camera_id))
+        self._alarm_editor_enabled.toggled.connect(lambda: self._mark_dirty(self._selected_camera_id))
+
     def _on_alarm_condition_changed(self, condition: str) -> None:
         is_range = condition in (AlarmCondition.OUTSIDE_RANGE.value, AlarmCondition.INSIDE_RANGE.value)
         self._alarm_editor_threshold.setVisible(not is_range)
@@ -1449,8 +1611,6 @@ class ConfigurationModeWidget(QWidget):
     def _on_add_alarm(self) -> None:
         if not self._selected_camera_id:
             return
-
-        from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QComboBox, QDoubleSpinBox
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Add Alarm Rule")
@@ -1530,6 +1690,7 @@ class ConfigurationModeWidget(QWidget):
             )
             self._config_service.set_analysis_config(updated_config)
             self._refresh_alarm_list(self._selected_camera_id)
+            self._mark_dirty(self._selected_camera_id)
 
     def _on_edit_alarm(self) -> None:
         items = self._alarm_tree.selectedItems()
@@ -1573,6 +1734,7 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_analysis_config(updated_config)
         self._refresh_alarm_list(self._selected_camera_id)
+        self._mark_dirty(self._selected_camera_id)
 
     def _on_save_alarm(self) -> None:
         if not self._selected_camera_id:
@@ -1590,6 +1752,15 @@ class ConfigurationModeWidget(QWidget):
         if not rule_id or not roi_id:
             QMessageBox.warning(self, "Invalid Input", "Rule ID and ROI are required.")
             return
+
+        # Validate range condition
+        if condition in (AlarmCondition.OUTSIDE_RANGE, AlarmCondition.INSIDE_RANGE):
+            if threshold_low is None or threshold_high is None:
+                QMessageBox.warning(self, "Invalid Input", "Range conditions require both low and high thresholds.")
+                return
+            if threshold_low >= threshold_high:
+                QMessageBox.warning(self, "Invalid Input", "Low threshold must be less than high threshold.")
+                return
 
         analysis = self._config_service.get_analysis_config(self._selected_camera_id)
         if not analysis:
@@ -1623,6 +1794,7 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_analysis_config(updated_config)
         self._refresh_alarm_list(self._selected_camera_id)
+        self._mark_dirty(self._selected_camera_id)
 
     # Acquisition control handlers
     def _on_start_acquisition(self) -> None:
@@ -1657,6 +1829,13 @@ class ConfigurationModeWidget(QWidget):
         try:
             self._runtime_service.start_camera(updated_config)
             self._update_acquisition_controls(self._selected_camera_id)
+            # Start observer for live view
+            analysis = self._config_service.get_analysis_config(self._selected_camera_id)
+            if analysis is None:
+                analysis = AnalysisConfig(camera_id=self._selected_camera_id)
+            self._observer = self._runtime_service.start_observer(self._selected_camera_id, analysis_config=analysis)
+            self._observer.result_ready.connect(self._on_processing_result, Qt.ConnectionType.QueuedConnection)
+            self._observer.error_occurred.connect(self._on_observer_error, Qt.ConnectionType.QueuedConnection)
         except Exception as exc:
             QMessageBox.warning(self, "Start Failed", f"Failed to start camera: {exc}")
 
@@ -1688,21 +1867,19 @@ class ConfigurationModeWidget(QWidget):
 
     # Display control handlers
     def _on_palette_changed(self, palette: str) -> None:
-        # Palette is handled by LiveThermalWidget internally
-        pass
+        self._image_widget.set_palette(palette)
 
     def _on_auto_range_toggled(self, checked: bool) -> None:
         self._custom_min_spin.setEnabled(not checked)
         self._custom_max_spin.setEnabled(not checked)
         self._apply_range_btn.setEnabled(not checked)
+        self._image_widget.set_auto_range(checked)
 
     def _on_apply_range(self) -> None:
-        # Range is applied in LiveThermalWidget display logic
-        pass
+        self._image_widget.set_temperature_range(self._custom_min_spin.value(), self._custom_max_spin.value())
 
     def _on_zoom_changed(self, zoom_text: str) -> None:
-        # Zoom is handled by LiveThermalWidget
-        pass
+        self._image_widget.set_zoom(zoom_text)
 
     # Callback handlers
     def _on_camera_config_changed(self, camera_id: str, config: CameraConfig) -> None:
@@ -1817,10 +1994,6 @@ class ConfigurationWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self.on_mode_deactivated()
         super().closeEvent(event)
-
-
-# Need to import QLineEdit for ROI editor
-from PyQt6.QtWidgets import QLineEdit
 
 
 __all__ = ["ConfigurationModeWidget", "ConfigurationWindow"]
