@@ -203,6 +203,7 @@ class AppController(QObject):
                 mode_service=self._mode_service,
                 runtime_service=self._runtime_service,
                 theme_manager=self._theme_manager,
+                config_manager=self._config_manager,
             )
             self._config_window.destroyed.connect(self._on_config_window_destroyed)
         return self._config_window

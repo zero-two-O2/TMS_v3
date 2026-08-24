@@ -66,6 +66,8 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
+from thermal_monitor.config import ConfigurationManager
+from thermal_monitor.ui.configuration_editor import ConfigurationEditor
 from thermal_monitor.ui.theme import ThemeManager
 
 
@@ -85,6 +87,7 @@ class ConfigurationModeWidget(QWidget):
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
         theme_manager: Optional[ThemeManager] = None,
+        config_manager: Optional[ConfigurationManager] = None,
     ) -> None:
         super().__init__()
 
@@ -92,9 +95,11 @@ class ConfigurationModeWidget(QWidget):
         self._mode_service = mode_service
         self._runtime_service = runtime_service
         self._theme = theme_manager
+        self._config_manager = config_manager
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
+        self._config_editor: Optional[ConfigurationEditor] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -385,6 +390,35 @@ class ConfigurationModeWidget(QWidget):
         # Statistics tab
         self._stats_tab = self._create_stats_tab()
         self._analysis_tabs.addTab(self._stats_tab, "Statistics")
+
+        # Configuration Editor tab (new)
+        if self._config_manager:
+            self._config_editor = ConfigurationEditor(
+                config_manager=self._config_manager,
+                theme_manager=self._theme,
+            )
+            self._config_editor.config_saved.connect(self._on_config_saved)
+            self._config_editor.config_error.connect(self._on_config_error)
+            self._config_editor.restart_required.connect(self._on_restart_required)
+            self._analysis_tabs.addTab(self._config_editor, "Configuration Editor")
+
+    def _on_config_saved(self) -> None:
+        """Handle configuration saved signal."""
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.success()};")
+        self._status_label.setText("Configuration saved - restart required")
+
+    def _on_config_error(self, error: str) -> None:
+        """Handle configuration error signal."""
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.error()};")
+        self._status_label.setText(f"Config error: {error}")
+
+    def _on_restart_required(self, message: str) -> None:
+        """Handle restart required signal."""
+        if self._theme:
+            self._status_label.setStyleSheet(f"color: {self._theme.warning()};")
+        self._status_label.setText(message)
 
     def _create_roi_list_tab(self) -> QWidget:
         """Create ROI list and editor tab."""
@@ -1733,6 +1767,7 @@ class ConfigurationWindow(QMainWindow):
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
         theme_manager: Optional[ThemeManager] = None,
+        config_manager: Optional[ConfigurationManager] = None,
     ) -> None:
         super().__init__()
 
@@ -1740,6 +1775,7 @@ class ConfigurationWindow(QMainWindow):
         self._mode_service = mode_service
         self._runtime_service = runtime_service
         self._theme = theme_manager
+        self._config_manager = config_manager
 
         self.setWindowTitle("Thermal Monitoring System V3 - Configuration Mode")
         self._apply_window_config()
@@ -1750,6 +1786,7 @@ class ConfigurationWindow(QMainWindow):
             mode_service=mode_service,
             runtime_service=runtime_service,
             theme_manager=theme_manager,
+            config_manager=config_manager,
         )
         self.setCentralWidget(self._config_widget)
 
