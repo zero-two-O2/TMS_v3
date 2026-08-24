@@ -150,8 +150,17 @@ class TemperatureConverter(Protocol):
         distance: float,
         humidity: float,
         reflected_temp: float,
+        camera_id: str | None = None,
     ) -> np.ndarray:
-        """Convert raw thermal data to temperature values."""
+        """Convert raw thermal data to temperature values.
+
+        Parameters
+        ----------
+        camera_id : str | None
+            Optional camera identifier. When provided and calibration is None,
+            implementations with a calibration_provider should attempt to fetch
+            camera-specific calibration.
+        """
         ...
 
 
@@ -228,6 +237,11 @@ class SimpleProcessingPipeline(ProcessingPipeline):
             if self.calibration_provider is not None:
                 calibration = self.calibration_provider.get_calibration(frame.descriptor.camera_id)
 
+            # If no calibration found for this camera, use identity LUT as default
+            # (maps raw value directly to temperature in °C)
+            if calibration is None:
+                calibration = np.arange(65536, dtype=np.float32)
+
             temperature_data = self.temperature_converter.raw_to_temperature(
                 raw_data=thermal_data,
                 calibration=calibration,
@@ -236,6 +250,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
                 distance=self._config.distance,
                 humidity=self._config.humidity,
                 reflected_temp=self._config.reflected_temperature,
+                camera_id=frame.descriptor.camera_id,
             )
             self._last_temperature_image = temperature_data
 

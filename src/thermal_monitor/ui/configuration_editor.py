@@ -451,13 +451,8 @@ class ConfigurationEditor(QWidget):
 
     def _setup_ui(self) -> None:
         """Set up the main UI layout."""
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
         # Splitter for navigation and editor
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
 
         # Left: Navigation tree
         self._nav_tree = QTreeWidget()
@@ -510,14 +505,12 @@ class ConfigurationEditor(QWidget):
         toolbar_layout.addWidget(self._search_btn)
         toolbar_layout.addWidget(self._status_label)
 
-        # Add toolbar above splitter
+        # Main layout: toolbar above splitter
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
         outer_layout.addWidget(toolbar)
         outer_layout.addWidget(splitter, 1)
-
-        self.setLayout(outer_layout)
 
     def _build_sections(self) -> None:
         """Build all configuration sections."""

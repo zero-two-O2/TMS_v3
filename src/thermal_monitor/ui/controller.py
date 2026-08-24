@@ -202,6 +202,7 @@ class AppController(QObject):
                 config_service=self._config_service,
                 mode_service=self._mode_service,
                 runtime_service=self._runtime_service,
+                discovery_service=self._discovery_service,
                 theme_manager=self._theme_manager,
                 config_manager=self._config_manager,
             )

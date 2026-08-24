@@ -465,8 +465,8 @@ class ConfigurationModeWidget(QWidget):
         if frame:
             self._acq_panel.update_image_info(
                 image_size=f"{frame.payload.thermal.shape[1]}×{frame.payload.thermal.shape[0]}" if frame.payload.thermal is not None else "—",
-                frame=str(frame.sequence),
-                timestamp=f"{frame.timestamp:.3f}",
+                frame=str(frame.descriptor.sequence),
+                timestamp=f"{frame.descriptor.timestamp:.3f}",
                 processing=f"{result.processing_time_ms:.1f} ms",
             )
 
@@ -523,20 +523,33 @@ class ConfigurationModeWidget(QWidget):
 
     def _on_camera_selected_from_dialog(self, discovered_camera) -> None:
         """Handle camera selection from dialog - connect to the selected camera."""
-        if not self._selected_camera_id or not self._runtime_service:
-            QMessageBox.warning(self, "Connect Failed", "No camera selected in configuration.")
+        if not self._runtime_service:
+            QMessageBox.warning(self, "Connect Failed", "Runtime service not available.")
             return
 
-        # Update toolbar to connecting state
-        self._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
-        self._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
+        # Create or find camera identity from discovered camera
+        camera_id = discovered_camera.camera_id  # e.g., "cam_HB25100004"
 
-        config = self._config_service.get_camera_config(self._selected_camera_id)
-        if not config:
-            QMessageBox.warning(self, "Connect Failed", "No camera configuration found.")
-            self._toolbar.set_connection_state(CameraConnectionState.ERROR)
-            self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
-            return
+        # Check if configuration already exists for this camera
+        existing_config = self._config_service.get_camera_config(camera_id)
+
+        if existing_config:
+            # Use existing configuration, update metadata with discovered info
+            config = existing_config
+        else:
+            # Create new default configuration from discovered camera
+            identity = self._config_service.create_camera_identity(
+                camera_id=camera_id,
+                serial_number=discovered_camera.serial_number,
+                model=discovered_camera.model,
+                vendor=discovered_camera.vendor,
+                firmware=discovered_camera.firmware,
+                user_name=discovered_camera.user_name,
+            )
+            config = self._config_service.create_camera_config(
+                identity=identity,
+                name=discovered_camera.user_name or camera_id,
+            )
 
         # Update config metadata with discovered camera info
         metadata = dict(config.metadata or {})
@@ -559,6 +572,14 @@ class ConfigurationModeWidget(QWidget):
             metadata=metadata,
         )
         self._config_service.set_camera_config(updated_config)
+
+        # Select this camera in the toolbar (sets _selected_camera_id)
+        self._toolbar.select_camera_by_id(camera_id)
+        self._selected_camera_id = camera_id
+
+        # Update toolbar to connecting state
+        self._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
+        self._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
 
         try:
             # Start camera runtime
@@ -825,7 +846,7 @@ class ConfigurationModeWidget(QWidget):
                 fps = cam_stats.current_fps or cam_stats.average_fps
                 if fps:
                     self._status_fps.setText(f"FPS: {fps:.1f}")
-                self._status_frames.setText(f"Frames: {cam_stats.frames_acquired}")
+                self._status_frames.setText(f"Frames: {cam_stats.frames_received}")
 
             if self._observer:
                 obs_stats = self._observer.stats()

@@ -50,6 +50,9 @@ def mock_theme():
         info = "#0078d4"
         warning = "#ff8c00"
         danger = "#e81123"
+        secondary_hover = "#3e3e3e"
+        primary_disabled_text = "#888888"
+        secondary_disabled_text = "#888888"
     
     theme.colors = Mock(return_value=MockColors())
     theme.text_secondary = Mock(return_value="#aaaaaa")
@@ -587,6 +590,106 @@ class TestConnectionWorkflow:
         
         assert len(received) == 1
         assert received[0] == 200
+
+
+class TestDependencyInjectionRegression:
+    """Regression tests for CameraDiscoveryService dependency injection."""
+
+    def test_controller_passes_discovery_service_to_config_window(self, qapp):
+        """Test that AppController passes discovery_service to ConfigurationWindow."""
+        from thermal_monitor.ui.controller import AppController
+        from thermal_monitor.services.mode import ModeService
+        from thermal_monitor.services.configuration import ConfigurationService
+        from thermal_monitor.services.offline import OfflineService
+        from thermal_monitor.services.runtime import CameraRuntimeService
+        from thermal_monitor.services.discovery import CameraDiscoveryService
+        from thermal_monitor.config import ConfigurationManager, create_config_manager
+        from thermal_monitor.ui.theme import ThemeManager
+
+        # Create real services
+        config_manager = create_config_manager()
+        config = config_manager.get_config()
+
+        mode_service = ModeService()
+        config_service = ConfigurationService()
+        offline_service = OfflineService()
+        discovery_service = CameraDiscoveryService()
+        runtime_service = CameraRuntimeService(
+            cameras_config=config.cameras,
+            system_config=config.system,
+            recording_config=config.recording,
+            storage_config=config.storage,
+            calibration_config=config.calibration,
+        )
+        theme_manager = ThemeManager(config_manager)
+
+        # Create controller
+        controller = AppController(
+            mode_service=mode_service,
+            config_service=config_service,
+            offline_service=offline_service,
+            runtime_service=runtime_service,
+            discovery_service=discovery_service,
+            config_manager=config_manager,
+            theme_manager=theme_manager,
+        )
+
+        # Access the private discovery service to verify it's set
+        assert controller._discovery_service is not None
+        assert controller._discovery_service is discovery_service
+
+        # Create config window - this should pass discovery_service
+        config_window = controller._create_config_window()
+
+        # Verify ConfigurationWindow received discovery_service
+        assert config_window._discovery_service is not None
+        assert config_window._discovery_service is discovery_service
+
+        # Verify ConfigurationModeWidget received discovery_service
+        config_widget = config_window._config_widget
+        assert config_widget._discovery_service is not None
+        assert config_widget._discovery_service is discovery_service
+
+        # Cleanup
+        config_window.close()
+        controller.shutdown()
+        runtime_service.shutdown()
+
+    def test_camera_selection_dialog_receives_discovery_service(self, qapp, mock_discovery_service, mock_theme):
+        """Test that CameraSelectionDialog receives discovery_service and can call discover_cameras."""
+        from thermal_monitor.ui.widgets.camera_selection_dialog import CameraSelectionDialog
+        from thermal_monitor.services.discovery import DiscoveredCamera
+
+        sample_cameras = [
+            DiscoveredCamera(
+                device_identifier="device_001",
+                serial_number="26010002",
+                ip_address="169.254.24.69",
+                model="TV46L",
+                vendor="FLIR",
+                firmware="1.2.3",
+                user_name="Camera1",
+            ),
+        ]
+
+        mock_discovery_service.discover_cameras.return_value = sample_cameras
+
+        # Create dialog with mock discovery service
+        dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+
+        # Verify the dialog has the discovery service
+        assert dialog._discovery_service is mock_discovery_service
+
+        # Call refresh - this should invoke discover_cameras
+        dialog._refresh_cameras()
+
+        # Verify discover_cameras was called
+        mock_discovery_service.discover_cameras.assert_called()
+
+        # Verify cameras were populated
+        assert dialog._camera_tree.topLevelItemCount() == 1
+
+        dialog.close()
 
 
 if __name__ == "__main__":

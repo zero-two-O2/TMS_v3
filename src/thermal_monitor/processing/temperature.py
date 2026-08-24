@@ -73,6 +73,7 @@ class CPUTemperatureConverter:
         distance: float,
         humidity: float,
         reflected_temp: float,
+        camera_id: str | None = None,
     ) -> np.ndarray:
         """
         Convert raw thermal data to temperature values.
@@ -83,7 +84,6 @@ class CPUTemperatureConverter:
             Raw uint16 thermal image (H, W)
         calibration : np.ndarray | None
             Calibration LUT array (65536, float32) or CameraCalibration object.
-            If None and calibration_provider is set, attempts to fetch from provider.
         emissivity : float
             Emissivity (accepted for protocol, not used in V2 algorithm)
         ambient_temp : float
@@ -94,6 +94,8 @@ class CPUTemperatureConverter:
             Relative humidity % (accepted for protocol, not used in V2 algorithm)
         reflected_temp : float
             Reflected temperature °C (accepted for protocol, not used in V2 algorithm)
+        camera_id : str | None
+            Optional camera identifier. Reserved for future use (e.g., GPU multi-camera LUT isolation).
 
         Returns
         -------
@@ -109,9 +111,9 @@ class CPUTemperatureConverter:
         """
         # Handle calibration input
         if calibration is None:
-            if self._calibration_provider is not None:
-                raise ValueError("Calibration array required when no camera_id available")
-            else:
+            if self._calibration_provider is not None and camera_id is not None:
+                calibration = self._calibration_provider.get_calibration(camera_id)
+            if calibration is None:
                 raise ValueError("Calibration LUT is None")
 
         # Determine the LUT to use

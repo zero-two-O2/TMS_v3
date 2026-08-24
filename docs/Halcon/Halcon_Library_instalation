@@ -11,7 +11,8 @@ For future versions, use the corresponding MVTec Python binding rather than gues
 Check available versions:
 
 pip index versions mvtec-halcon
-5. Set HALCON environment variables
+
+# 5. Set HALCON environment variables
 
 For the current PowerShell session:
 
@@ -25,7 +26,8 @@ echo $env:HALCONROOT
 and:
 
 $env:PATH -split ";" | Where-Object { $_ -match "HALCON" }
-6. Verify Python HALCON
+
+# 6. Verify Python HALCON
 python -c "import halcon as ha; print('HALCON:', ha.__file__); print('open_framegrabber:', hasattr(ha,'open_framegrabber')); print('grab_image:', hasattr(ha,'grab_image')); print('gen_rectangle1:', hasattr(ha,'gen_rectangle1'))"
 
 Expected:
@@ -33,13 +35,15 @@ Expected:
 open_framegrabber: True
 grab_image: True
 gen_rectangle1: True
-7. Verify the native DLL
+
+# 7. Verify the native DLL
 Test-Path "$env:HALCONROOT\bin\x64-win64\halcon.dll"
 
 Expected:
 
 True
-8. Only then test TMS
+
+# 8. Only then test TMS
 
 Set the camera:
 
