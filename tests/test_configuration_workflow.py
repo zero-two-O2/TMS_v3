@@ -5,6 +5,7 @@ Tests for Configuration Mode ThermoView-style connection workflow.
 from __future__ import annotations
 
 import pytest
+import time
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
 
 from PyQt6.QtWidgets import QApplication
@@ -80,6 +81,22 @@ def mock_discovery_service():
     return service
 
 
+def wait_for_discovery(qapp, dialog, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while dialog._discovery_worker is not None and dialog._discovery_worker.isRunning() and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    qapp.processEvents()
+
+
+def wait_for_render(qapp, widget, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while widget.display_array is None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+    qapp.processEvents()
+
+
 @pytest.fixture
 def sample_discovered_cameras():
     """Sample discovered cameras for testing."""
@@ -111,6 +128,7 @@ class TestCameraSelectionDialog:
     def test_dialog_creation(self, qapp, mock_discovery_service, mock_theme):
         """Test dialog can be created."""
         dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        wait_for_discovery(qapp, dialog)
         assert dialog.windowTitle() == "Select Camera"
         assert dialog.isModal()
         dialog.close()
@@ -119,6 +137,7 @@ class TestCameraSelectionDialog:
         """Test dialog populates camera list from discovery."""
         mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
         dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        wait_for_discovery(qapp, dialog)
         
         # Check tree has cameras
         assert dialog._camera_tree.topLevelItemCount() == 2
@@ -139,10 +158,12 @@ class TestCameraSelectionDialog:
         """Test refresh button triggers discovery."""
         mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
         dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        wait_for_discovery(qapp, dialog)
         
         # Clear and refresh
         dialog._camera_tree.clear()
         dialog._refresh_cameras()
+        wait_for_discovery(qapp, dialog)
         
         assert mock_discovery_service.discover_cameras.call_count == 2  # init + refresh
         assert dialog._camera_tree.topLevelItemCount() == 2
@@ -152,6 +173,7 @@ class TestCameraSelectionDialog:
         """Test selecting a camera enables Connect button."""
         mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
         dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        wait_for_discovery(qapp, dialog)
         
         # Initially disabled
         assert not dialog._connect_btn.isEnabled()
@@ -168,6 +190,7 @@ class TestCameraSelectionDialog:
         """Test double-clicking a camera emits camera_selected."""
         mock_discovery_service.discover_cameras.return_value = sample_discovered_cameras
         dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        wait_for_discovery(qapp, dialog)
         
         received = []
         dialog.camera_selected.connect(lambda cam: received.append(cam))
@@ -350,6 +373,7 @@ class TestLiveThermalWidget:
         frame.timestamp = 1.0
         
         widget.set_frame(temp, frame)
+        wait_for_render(qapp, widget)
         
         assert widget._display_array is not None
         assert widget._display_array.shape == (16, 16, 3)  # RGB
@@ -365,6 +389,7 @@ class TestLiveThermalWidget:
         frame.timestamp = 1.0
         
         widget.set_frame(temp, frame)
+        wait_for_render(qapp, widget)
         
         # Add ROI overlay
         overlay = ROIOverlay(
@@ -391,6 +416,7 @@ class TestLiveThermalWidget:
         frame.timestamp = 1.0
         
         widget.set_frame(temp, frame)
+        wait_for_render(qapp, widget)
         
         overlay = ROIOverlay(
             roi_id="roi_001",
@@ -421,6 +447,7 @@ class TestLiveThermalWidget:
         frame.timestamp = 1.0
         
         widget.set_frame(temp, frame)
+        wait_for_render(qapp, widget)
         
         # Change palette
         widget.set_palette("iron")
@@ -440,6 +467,7 @@ class TestLiveThermalWidget:
         frame.timestamp = 1.0
         
         widget.set_frame(temp, frame)
+        wait_for_render(qapp, widget)
         
         widget.set_zoom("100%")
         assert widget._zoom_mode == "100%"
@@ -461,6 +489,7 @@ class TestLiveThermalWidget:
         widget.range_changed.connect(lambda lo, hi: received.append((lo, hi)))
         
         widget.set_frame(temp, frame)
+        wait_for_render(qapp, widget)
         
         assert len(received) == 1
         lo, hi = received[0]
@@ -528,6 +557,7 @@ class TestConnectionWorkflow:
         
         # 1. Create dialog
         dialog = CameraSelectionDialog(mock_discovery_service)
+        wait_for_discovery(qapp, dialog)
         assert dialog._camera_tree.topLevelItemCount() == 2
         
         # 2. Select camera
@@ -663,12 +693,14 @@ class TestDependencyInjectionRegression:
 
         # Create dialog with mock discovery service
         dialog = CameraSelectionDialog(mock_discovery_service, mock_theme)
+        wait_for_discovery(qapp, dialog)
 
         # Verify the dialog has the discovery service
         assert dialog._discovery_service is mock_discovery_service
 
         # Call refresh - this should invoke discover_cameras
         dialog._refresh_cameras()
+        wait_for_discovery(qapp, dialog)
 
         # Verify discover_cameras was called
         mock_discovery_service.discover_cameras.assert_called()

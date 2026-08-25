@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -29,10 +29,27 @@ from thermal_monitor.services.discovery import CameraDiscoveryService, Discovere
 from thermal_monitor.ui.theme import ThemeManager
 
 
+class _DiscoveryWorker(QThread):
+    completed = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(self, service: CameraDiscoveryService) -> None:
+        super().__init__()
+        self._service = service
+
+    def run(self) -> None:
+        try:
+            self.completed.emit(self._service.discover_cameras())
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class CameraSelectionDialog(QDialog):
     """Dialog for selecting a discovered camera to connect."""
 
     camera_selected = pyqtSignal(DiscoveredCamera)
+    discovery_finished = pyqtSignal()
+    discovery_failed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -44,6 +61,7 @@ class CameraSelectionDialog(QDialog):
         self._discovery_service = discovery_service
         self._theme = theme_manager
         self._selected_camera: DiscoveredCamera | None = None
+        self._discovery_worker: _DiscoveryWorker | None = None
 
         self.setWindowTitle("Select Camera")
         self.setModal(True)
@@ -208,30 +226,36 @@ class CameraSelectionDialog(QDialog):
 
     def _refresh_cameras(self) -> None:
         """Discover and populate cameras."""
+        if self._discovery_worker is not None and self._discovery_worker.isRunning():
+            return
         self._camera_tree.clear()
         self._refresh_btn.setEnabled(False)
         self._refresh_btn.setText("Discovering...")
 
-        try:
-            cameras = self._discovery_service.discover_cameras()
-            for cam in cameras:
-                interface = self._discovery_service._halcon_interface if hasattr(self._discovery_service, '_halcon_interface') else "GigEVision2"
-                item = QTreeWidgetItem([
-                    interface,
-                    cam.camera_id,
-                    cam.serial_number or "—",
-                    cam.ip_address or "—",
-                    cam.model or "—",
-                ])
-                item.setData(0, Qt.ItemDataRole.UserRole, cam)
-                self._camera_tree.addTopLevelItem(item)
-            self._selection_info.setText(f"{len(cameras)} camera(s) discovered")
-        except Exception as exc:
-            self._selection_info.setText(f"Discovery failed: {exc}")
-            QMessageBox.warning(self, "Discovery Failed", f"Failed to discover cameras:\n{exc}")
-        finally:
-            self._refresh_btn.setEnabled(True)
-            self._refresh_btn.setText("Refresh")
+        self._selection_info.setText("Discovering cameras...")
+        self._discovery_worker = _DiscoveryWorker(self._discovery_service)
+        self._discovery_worker.completed.connect(self._on_discovery_completed)
+        self._discovery_worker.failed.connect(self._on_discovery_failed)
+        self._discovery_worker.finished.connect(self._on_discovery_finished)
+        self._discovery_worker.start()
+
+    def _on_discovery_completed(self, cameras) -> None:
+        for cam in cameras:
+            interface = getattr(self._discovery_service, "_halcon_interface", "GigEVision2")
+            item = QTreeWidgetItem([interface, cam.camera_id, cam.serial_number or "—", cam.ip_address or "—", cam.model or "—"])
+            item.setData(0, Qt.ItemDataRole.UserRole, cam)
+            self._camera_tree.addTopLevelItem(item)
+        self._selection_info.setText(f"{len(cameras)} camera(s) discovered")
+        self.discovery_finished.emit()
+
+    def _on_discovery_failed(self, message: str) -> None:
+        self._selection_info.setText(f"Discovery failed: {message}")
+        self.discovery_failed.emit(message)
+        QMessageBox.warning(self, "Discovery Failed", f"Failed to discover cameras:\n{message}")
+
+    def _on_discovery_finished(self) -> None:
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("Refresh")
 
     def _on_selection_changed(self) -> None:
         items = self._camera_tree.selectedItems()
@@ -254,6 +278,12 @@ class CameraSelectionDialog(QDialog):
         if self._selected_camera:
             self.camera_selected.emit(self._selected_camera)
             self.accept()
+
+    def closeEvent(self, event) -> None:
+        if self._discovery_worker is not None and self._discovery_worker.isRunning():
+            self._discovery_worker.quit()
+            self._discovery_worker.wait()
+        super().closeEvent(event)
 
     def get_selected_camera(self) -> DiscoveredCamera | None:
         return self._selected_camera

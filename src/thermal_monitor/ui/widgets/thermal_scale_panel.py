@@ -501,6 +501,13 @@ class ThermalScalePanel(QWidget):
         )
         self._view_finder.setPixmap(scaled)
 
+    def update_view_finder_image(self, image: QImage | None) -> None:
+        """Display a thumbnail already rendered by the thermal renderer."""
+        if image is None:
+            self._view_finder.setText("View Finder\n(thumbnail)")
+            return
+        self._view_finder.setPixmap(QPixmap.fromImage(image))
+
     def set_unit(self, unit_symbol: str) -> None:
         self._custom_min_spin.setSuffix(f" {unit_symbol}")
         self._custom_max_spin.setSuffix(f" {unit_symbol}")

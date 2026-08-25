@@ -10,12 +10,15 @@ Provides both CPU and GPU implementations behind the same protocol.
 from __future__ import annotations
 
 import numpy as np
+import logging
 from pathlib import Path
 
 from thermal_monitor.calibration.processor import CalibrationProcessor
 from thermal_monitor.calibration.models import CameraCalibration
 from thermal_monitor.calibration.parser import CalibrationParser
 from thermal_monitor.processing.pipeline import TemperatureConverter, CalibrationProvider
+
+logger = logging.getLogger(__name__)
 
 
 def is_gpu_available() -> bool:
@@ -195,7 +198,14 @@ class CachingCalibrationProvider:
         """Resolve calibration file path relative to app_root if needed."""
         path = Path(file_path)
         if not path.is_absolute() and self._app_root is not None:
-            return (self._app_root / path).resolve()
+            configured = (self._app_root / path).resolve()
+            if configured.exists():
+                return configured
+            # Configured storage roots and the application asset root are
+            # separate in V3; retain support for the documented relative path.
+            project_path = (self._app_root.parent / path).resolve()
+            if project_path.exists():
+                return project_path
         return path.resolve()
 
     def _get_or_load_calibration(self, camera_id: str) -> CameraCalibration | None:
@@ -214,18 +224,34 @@ class CachingCalibrationProvider:
                 if fallback_path.exists():
                     file_path = str(fallback_path)
                 else:
+                    logger.warning(
+                        "No calibration file for camera_id=%s (default=%s)",
+                        camera_id,
+                        self._calibration_default_file,
+                    )
                     return None
 
         try:
             resolved_path = self._resolve_calibration_path(file_path)
+            logger.info(
+                "Loading calibration for camera_id=%s path=%s camera_specific=%s",
+                camera_id,
+                resolved_path,
+                camera_id in self._calibration_file_map,
+            )
             calibration = self._parser.load(resolved_path)
             CalibrationProcessor.build_lookup_tables(calibration)
             self._cache[camera_id] = calibration
+            logger.info(
+                "Calibration loaded camera_id=%s path=%s ranges=%d fallback=%s",
+                camera_id,
+                resolved_path,
+                calibration.enabled_ranges,
+                camera_id not in self._calibration_file_map,
+            )
             return calibration
         except Exception as e:
             # Log error but don't crash - return None
-            from thermal_monitor.core.logging import get_logger
-            logger = get_logger(__name__)
             logger.error(f"Failed to load calibration for {camera_id}: {e}")
             return None
 

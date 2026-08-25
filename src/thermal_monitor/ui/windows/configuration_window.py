@@ -39,6 +39,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMenuBar,
     QMenu,
+    QApplication,
 )
 from PyQt6.QtGui import QColor, QAction
 
@@ -59,6 +60,7 @@ from thermal_monitor.services.discovery import CameraDiscoveryService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.config import ConfigurationManager
 from thermal_monitor.ui.configuration_editor import ConfigurationEditor
+from thermal_monitor.ui.frame_rate import UniqueFrameRate
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverlay
 from thermal_monitor.ui.widgets import (
     ConfigCameraHeader,
@@ -106,6 +108,7 @@ class ConfigurationModeWidget(QWidget):
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
+        self._display_rate = UniqueFrameRate()
         self._config_editor: Optional[ConfigurationEditor] = None
         self._camera_selection_dialog: CameraSelectionDialog | None = None
 
@@ -156,6 +159,8 @@ class ConfigurationModeWidget(QWidget):
 
         self._image_widget = LiveThermalWidget()
         self._image_widget.cursor_temperature_changed.connect(self._on_cursor_temperature)
+        self._image_widget.rendered_frame.connect(self._on_rendered_frame)
+        self._image_widget.render_error.connect(self._on_render_error)
         center_layout.addWidget(self._image_widget, 1)
 
         main_splitter.addWidget(center_widget)
@@ -409,10 +414,9 @@ class ConfigurationModeWidget(QWidget):
         # Update ROI overlays
         self._update_roi_overlays()
 
-        # Update acquisition button states
+        # Update acquisition button states (only on acq_panel now)
         if self._runtime_service is not None:
             running = self._runtime_service.is_camera_running(camera_id)
-            self._toolbar.set_acquisition_running(running)
             self._acq_panel.set_acquisition_running(running)
 
     def _get_camera_connection_status(self, camera_id: str) -> CameraConnectionState:
@@ -447,15 +451,21 @@ class ConfigurationModeWidget(QWidget):
     @pyqtSlot(object)
     def _on_processing_result(self, result: ProcessingResult) -> None:
         """Receive ProcessingResult from observer."""
+        frame = result.frame
+        sequence = frame.descriptor.sequence if frame is not None else None
+        if sequence is not None and not self._display_rate.add(sequence):
+            return
+
         self._latest_result = result
 
-        # Copy temperature buffer for display
+        # The renderer owns the expensive conversion. The processing contract
+        # publishes immutable arrays, so no GUI-thread frame copy is needed.
         temperature_image = result.temperature_image
-        if temperature_image is not None:
-            temperature_image = np.asarray(temperature_image).copy()
-
-        frame = result.frame
-        self._image_widget.set_frame(temperature_image, frame)
+        minimum = maximum = None
+        if result.analysis_result is not None:
+            minimum = result.analysis_result.overall_min
+            maximum = result.analysis_result.overall_max
+        self._image_widget.set_frame(temperature_image, frame, minimum, maximum)
 
         # Update image info
         if frame:
@@ -476,10 +486,6 @@ class ConfigurationModeWidget(QWidget):
         # Update ROI overlays
         self._update_roi_overlays()
 
-        # Update View Finder with thumbnail
-        if result.temperature_image is not None:
-            self._scale_panel.update_view_finder(result.temperature_image)
-
         # Update FPS
         if self._runtime_service and self._selected_camera_id:
             stats = self._runtime_service.camera_stats(self._selected_camera_id)
@@ -489,7 +495,16 @@ class ConfigurationModeWidget(QWidget):
         if self._observer:
             obs_stats = self._observer.stats()
             if obs_stats:
-                self._acq_panel.set_display_fps(obs_stats.frames_processed)
+                self._acq_panel.set_display_fps(self._display_rate.fps())
+
+    @pyqtSlot(object, object)
+    def _on_rendered_frame(self, image, thumbnail) -> None:
+        """Use the worker's single rendered image for both displays."""
+        self._scale_panel.update_view_finder_image(thumbnail)
+
+    @pyqtSlot(str)
+    def _on_render_error(self, message: str) -> None:
+        self._status_label.setText(f"Thermal render error: {message}")
 
     @pyqtSlot(float)
     def _on_cursor_temperature(self, temp: float) -> None:
@@ -516,10 +531,25 @@ class ConfigurationModeWidget(QWidget):
                 parent=self,
             )
             self._camera_selection_dialog.camera_selected.connect(self._on_camera_selected_from_dialog)
+            self._camera_selection_dialog.discovery_finished.connect(self._restore_connect_cursor)
+            self._camera_selection_dialog.discovery_failed.connect(self._on_discovery_failed)
 
         self._camera_selection_dialog.show()
         self._camera_selection_dialog.raise_()
         self._camera_selection_dialog.activateWindow()
+        self._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
+        self._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
+        self._status_conn.setText("Connection: Discovering...")
+        self._status_label.setText("Discovering cameras...")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+    def _restore_connect_cursor(self, *args) -> None:
+        if QApplication.overrideCursor() is not None:
+            QApplication.restoreOverrideCursor()
+
+    def _on_discovery_failed(self, message: str) -> None:
+        self._restore_connect_cursor()
+        self._status_conn.setText("Connection: Discovery failed")
 
     def _on_camera_selected_from_dialog(self, discovered_camera) -> None:
         """Handle camera selection from dialog - connect to the selected camera."""
@@ -611,7 +641,6 @@ class ConfigurationModeWidget(QWidget):
                 self._observer.stop()
                 self._observer = None
 
-            self._toolbar.set_acquisition_running(False)
             self._acq_panel.set_acquisition_running(False)
 
             # Update to DISCONNECTED state
@@ -650,8 +679,9 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_camera_config(updated_config)
 
+        previous_state = self._acq_panel._connection_state
         try:
-            # Camera should already be connected, just start observer for live view
+            # Camera runtime is the authority; this attaches the single consumer.
             analysis = self._config_service.get_analysis_config(self._selected_camera_id)
             if analysis is None:
                 analysis = AnalysisConfig(camera_id=self._selected_camera_id)
@@ -659,15 +689,19 @@ class ConfigurationModeWidget(QWidget):
             self._observer.result_ready.connect(self._on_processing_result, Qt.ConnectionType.QueuedConnection)
             self._observer.error_occurred.connect(self._on_observer_error, Qt.ConnectionType.QueuedConnection)
 
-            self._toolbar.set_acquisition_running(True)
-            self._acq_panel.set_acquisition_running(True)
-            self._toolbar.set_connection_state(CameraConnectionState.ACQUIRING)
-            self._acq_panel.set_connection_state(CameraConnectionState.ACQUIRING)
-            self._status_conn.setText("Connection: Acquiring")
-            self._status_label.setText("Acquisition started")
-
         except Exception as exc:
+            self._observer = None
+            self._acq_panel.set_connection_state(previous_state)
             QMessageBox.warning(self, "Start Failed", f"Failed to start acquisition: {exc}")
+            return
+
+        # Presentation updates are outside the runtime transaction.
+        self._display_rate.reset()
+        self._acq_panel.set_acquisition_running(True)
+        self._toolbar.set_connection_state(CameraConnectionState.ACQUIRING)
+        self._acq_panel.set_connection_state(CameraConnectionState.ACQUIRING)
+        self._status_conn.setText("Connection: Acquiring")
+        self._status_label.setText("Acquisition started")
 
     def _on_stop_acquisition(self) -> None:
         """Handle Stop acquisition button."""
@@ -679,7 +713,6 @@ class ConfigurationModeWidget(QWidget):
                 self._observer.stop()
                 self._observer = None
 
-            self._toolbar.set_acquisition_running(False)
             self._acq_panel.set_acquisition_running(False)
             self._toolbar.set_connection_state(CameraConnectionState.CONNECTED)
             self._acq_panel.set_connection_state(CameraConnectionState.CONNECTED)
@@ -745,7 +778,6 @@ class ConfigurationModeWidget(QWidget):
         pass  # TODO: Implement history buffer
 
     def _on_observer_error(self, message: str) -> None:
-        self._toolbar.set_acquisition_running(False)
         self._acq_panel.set_acquisition_running(False)
         self._toolbar.set_connection_state(CameraConnectionState.ERROR)
         self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
@@ -896,6 +928,9 @@ class ConfigurationModeWidget(QWidget):
 
     def on_mode_deactivated(self) -> None:
         """Called when configuration mode is deactivated."""
+        self._restore_connect_cursor()
+        if self._camera_selection_dialog is not None:
+            self._camera_selection_dialog.close()
         if self._observer:
             self._observer.stop()
             self._observer = None

@@ -8,6 +8,7 @@ The pipeline operates on the V3 Frame contract and produces AnalysisResults.
 from __future__ import annotations
 
 import time
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -25,6 +26,8 @@ from thermal_monitor.core.models import (
 )
 from thermal_monitor.core.roi_resolver import CachedROIResolver, resolve_rois
 from thermal_monitor.processing.halcon import HalconROIAdapter, process_rois_with_halcon
+
+logger = logging.getLogger(__name__)
 
 
 class FrameSource(Protocol):
@@ -237,10 +240,15 @@ class SimpleProcessingPipeline(ProcessingPipeline):
             if self.calibration_provider is not None:
                 calibration = self.calibration_provider.get_calibration(frame.descriptor.camera_id)
 
-            # If no calibration found for this camera, use identity LUT as default
-            # (maps raw value directly to temperature in °C)
             if calibration is None:
-                calibration = np.arange(65536, dtype=np.float32)
+                logger.error(
+                    "No calibration available for camera %s; refusing to interpret "
+                    "Mono16 detector values as Celsius",
+                    frame.descriptor.camera_id,
+                )
+                raise RuntimeError(
+                    f"No valid calibration available for camera {frame.descriptor.camera_id}"
+                )
 
             temperature_data = self.temperature_converter.raw_to_temperature(
                 raw_data=thermal_data,
@@ -253,6 +261,21 @@ class SimpleProcessingPipeline(ProcessingPipeline):
                 camera_id=frame.descriptor.camera_id,
             )
             self._last_temperature_image = temperature_data
+            finite = np.isfinite(temperature_data)
+            logger.debug(
+                "Thermal frame camera_id=%s size=%sx%s pixel_type=%s raw_min=%s raw_max=%s "
+                "temperature_min=%s temperature_max=%s calibration=loaded emissivity=%.3f ambient=%.2f",
+                frame.descriptor.camera_id,
+                thermal_data.shape[1],
+                thermal_data.shape[0],
+                thermal_data.dtype,
+                int(np.min(thermal_data)),
+                int(np.max(thermal_data)),
+                float(np.min(temperature_data[finite])) if np.any(finite) else None,
+                float(np.max(temperature_data[finite])) if np.any(finite) else None,
+                self._config.default_emissivity,
+                self._config.ambient_temperature,
+            )
 
         # Process ROIs using HALCON adapter
         if rois:

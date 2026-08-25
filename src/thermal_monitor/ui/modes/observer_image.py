@@ -14,11 +14,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QPointF
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QPointF, pyqtSlot
 from PyQt6.QtGui import QImage, QPainter, QColor, QFont, QPen, QBrush, QMouseEvent, QWheelEvent
 from PyQt6.QtWidgets import QWidget
 
 import numpy as np
+
+from thermal_monitor.ui.modes.thermal_render_worker import RenderRequest, ThermalRenderWorker
 
 
 @dataclass
@@ -39,6 +41,8 @@ class LiveThermalWidget(QWidget):
     cursor_temperature_changed = pyqtSignal(float)
     # Signal emitted when temperature range changes (auto or manual)
     range_changed = pyqtSignal(float, float)  # min, max
+    rendered_frame = pyqtSignal(object, object)  # QImage, thumbnail QImage
+    render_error = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -46,6 +50,12 @@ class LiveThermalWidget(QWidget):
         self._raw_thermal: np.ndarray | None = None
         self._display_image: QImage | None = None
         self._display_array: np.ndarray | None = None
+        self._render_worker = ThermalRenderWorker(parent=self)
+        self._render_worker.rendered.connect(self._on_rendered)
+        self._render_worker.render_error.connect(self._on_render_error)
+        self.destroyed.connect(self._render_worker.stop)
+        self._render_worker.start()
+        self._last_submitted_sequence = -1
 
         # Display settings
         self._palette = "temperature"
@@ -79,12 +89,25 @@ class LiveThermalWidget(QWidget):
     def temperature_image(self) -> np.ndarray | None:
         return self._temperature_image
 
-    def set_frame(self, temperature_image: np.ndarray | None, frame) -> None:
-        """Update the displayed image from a processed frame."""
-        self._temperature_image = temperature_image
+    def set_frame(self, temperature_image: np.ndarray | None, frame, minimum: float | None = None, maximum: float | None = None) -> None:
+        """Submit an immutable frame snapshot; rendering is never synchronous."""
+        self._temperature_image = np.asarray(temperature_image) if temperature_image is not None else None
         self._raw_thermal = frame.payload.thermal if frame is not None else None
-        self._rebuild_display()
-        self.update()
+        source = self._temperature_image
+        if source is None and self._raw_thermal is not None:
+            source = np.asarray(self._raw_thermal)
+        if source is None or np.asarray(source).ndim != 2:
+            self.clear()
+            return
+        sequence_value = getattr(getattr(frame, "descriptor", None), "sequence", None)
+        try:
+            sequence = int(sequence_value)
+        except (TypeError, ValueError):
+            sequence = self._last_submitted_sequence + 1
+        if sequence <= self._last_submitted_sequence:
+            return
+        self._last_submitted_sequence = sequence
+        self._render_worker.submit(RenderRequest(np.asarray(source), sequence, minimum, maximum))
 
     def clear(self) -> None:
         self._temperature_image = None
@@ -98,13 +121,12 @@ class LiveThermalWidget(QWidget):
     def set_palette(self, palette: str) -> None:
         """Set color palette for thermal display."""
         self._palette = palette
-        self._rebuild_display()
+        self._render_worker.set_palette(palette)
         self.update()
 
     def set_auto_range(self, enabled: bool) -> None:
         """Enable/disable automatic temperature range."""
         self._auto_range = enabled
-        self._rebuild_display()
         self.update()
 
     def set_temperature_range(self, min_temp: float, max_temp: float) -> None:
@@ -112,7 +134,6 @@ class LiveThermalWidget(QWidget):
         self._manual_min = min_temp
         self._manual_max = max_temp
         if not self._auto_range:
-            self._rebuild_display()
             self.update()
 
     def set_zoom(self, zoom_text: str) -> None:
@@ -134,153 +155,51 @@ class LiveThermalWidget(QWidget):
             overlay.selected = (overlay.roi_id == roi_id)
         self.update()
 
-    def _rebuild_display(self) -> None:
-        src = self._temperature_image
-        if src is None:
-            src = self._raw_thermal
-        if src is None:
-            self._display_image = None
-            self._display_array = None
-            return
+    def _resubmit_latest(self) -> None:
+        source = self._temperature_image if self._temperature_image is not None else self._raw_thermal
+        if source is not None:
+            minimum = None if self._auto_range else self._manual_min
+            maximum = None if self._auto_range else self._manual_max
+            self._render_worker.submit(RenderRequest(np.asarray(source), self._last_submitted_sequence + 1, minimum, maximum))
 
-        src = np.asarray(src)
-        if src.ndim != 2:
-            self._display_image = None
-            self._display_array = None
-            return
+    @pyqtSlot(object, object, float, float, int, object, object)
+    def _on_rendered(self, image: QImage, temperature: np.ndarray, minimum: float, maximum: float, sequence: int, thumbnail: QImage, rgb: np.ndarray) -> None:
+        self._display_image = image
+        self._display_array = rgb
+        self.range_changed.emit(minimum, maximum)
+        self.rendered_frame.emit(image, thumbnail)
+        self._temperature_image = temperature
+        self.update()
 
-        finite = np.isfinite(src)
-        if not np.any(finite):
-            display = np.zeros(src.shape, dtype=np.uint8)
-            lo = 0.0
-            hi = 1.0
-        else:
-            if self._auto_range:
-                lo = float(src[finite].min())
-                hi = float(src[finite].max())
-            else:
-                lo = self._manual_min
-                hi = self._manual_max
-            if hi <= lo:
-                hi = lo + 1.0
-            normalized = np.clip((src - lo) / (hi - lo), 0.0, 1.0)
-            normalized[~finite] = 0.0
-            display = (normalized * 255.0).astype(np.uint8)
+    @pyqtSlot(str)
+    def _on_render_error(self, message: str) -> None:
+        self._display_image = None
+        self._display_array = None
+        self.render_error.emit(message)
 
-        # Emit range changed signal
-        self.range_changed.emit(lo, hi)
+    def closeEvent(self, event) -> None:
+        self._render_worker.stop()
+        super().closeEvent(event)
 
-        # Apply palette
-        display_rgb = self._apply_palette(display)
-        self._display_array = display_rgb  # fresh array, no view of the source
-        h, w = display_rgb.shape[:2]
-        self._display_image = QImage(
-            display_rgb.data, w, h, display_rgb.strides[0], QImage.Format.Format_RGB888
-        ).copy()
+    def close(self) -> bool:
+        """Stop the persistent renderer even for widgets never shown."""
+        if self._render_worker.isRunning():
+            self._render_worker.stop()
+        return super().close()
 
+    def __del__(self) -> None:
+        try:
+            worker = getattr(self, "_render_worker", None)
+            if worker is not None and worker.isRunning():
+                worker.stop()
+        except RuntimeError:
+            pass
+
+    # Kept as a non-GUI utility for compatibility and unit-level palette tests.
     def _apply_palette(self, display: np.ndarray) -> np.ndarray:
-        """Apply color palette to grayscale display."""
-        h, w = display.shape
-        rgb = np.zeros((h, w, 3), dtype=np.uint8)
-
-        if self._palette == "temperature":
-            # Temperature palette: blue -> cyan -> green -> yellow -> orange -> red
-            for i in range(h):
-                for j in range(w):
-                    v = display[i, j] / 255.0
-                    if v < 0.125:
-                        # Dark blue to blue
-                        t = v / 0.125
-                        rgb[i, j] = [0, int(255 * t), int(128 + 127 * t)]
-                    elif v < 0.25:
-                        # Blue to cyan
-                        t = (v - 0.125) / 0.125
-                        rgb[i, j] = [0, 255, int(255 * t)]
-                    elif v < 0.375:
-                        # Cyan to green
-                        t = (v - 0.25) / 0.125
-                        rgb[i, j] = [0, int(255 * (1 - t) + 255 * t), int(255 * (1 - t))]
-                    elif v < 0.5:
-                        # Green to yellow
-                        t = (v - 0.375) / 0.125
-                        rgb[i, j] = [int(255 * t), 255, 0]
-                    elif v < 0.625:
-                        # Yellow to orange
-                        t = (v - 0.5) / 0.125
-                        rgb[i, j] = [255, int(255 * (1 - t) + 128 * t), 0]
-                    elif v < 0.75:
-                        # Orange to red
-                        t = (v - 0.625) / 0.125
-                        rgb[i, j] = [255, int(128 * (1 - t)), 0]
-                    else:
-                        # Red to dark red
-                        t = (v - 0.75) / 0.25
-                        rgb[i, j] = [int(255 * (1 - t) + 128 * t), 0, 0]
-        elif self._palette == "iron":
-            # Iron palette: black -> red -> orange -> yellow -> white
-            for i in range(h):
-                for j in range(w):
-                    v = display[i, j] / 255.0
-                    if v < 0.25:
-                        t = v / 0.25
-                        rgb[i, j] = [int(64 + 191 * t), 0, 0]
-                    elif v < 0.5:
-                        t = (v - 0.25) / 0.25
-                        rgb[i, j] = [255, int(64 * t), 0]
-                    elif v < 0.75:
-                        t = (v - 0.5) / 0.25
-                        rgb[i, j] = [255, int(64 + 191 * t), 0]
-                    else:
-                        t = (v - 0.75) / 0.25
-                        rgb[i, j] = [255, 255, int(128 * t)]
-        elif self._palette == "rainbow":
-            # Rainbow palette
-            for i in range(h):
-                for j in range(w):
-                    v = display[i, j] / 255.0
-                    if v < 1/6:
-                        t = v * 6
-                        rgb[i, j] = [int(128 * (1 - t)), 0, int(128 + 127 * t)]
-                    elif v < 2/6:
-                        t = (v - 1/6) * 6
-                        rgb[i, j] = [0, int(255 * t), 255]
-                    elif v < 3/6:
-                        t = (v - 2/6) * 6
-                        rgb[i, j] = [0, 255, int(255 * (1 - t))]
-                    elif v < 4/6:
-                        t = (v - 3/6) * 6
-                        rgb[i, j] = [int(255 * t), 255, 0]
-                    elif v < 5/6:
-                        t = (v - 4/6) * 6
-                        rgb[i, j] = [255, int(255 * (1 - t)), 0]
-                    else:
-                        t = (v - 5/6) * 6
-                        rgb[i, j] = [255, 0, 0]
-        elif self._palette == "gray":
-            rgb[:, :, 0] = display
-            rgb[:, :, 1] = display
-            rgb[:, :, 2] = display
-        elif self._palette == "hot":
-            # Hot palette: black -> red -> yellow -> white
-            for i in range(h):
-                for j in range(w):
-                    v = display[i, j] / 255.0
-                    if v < 1/3:
-                        t = v * 3
-                        rgb[i, j] = [int(255 * t), 0, 0]
-                    elif v < 2/3:
-                        t = (v - 1/3) * 3
-                        rgb[i, j] = [255, int(255 * t), 0]
-                    else:
-                        t = (v - 2/3) * 3
-                        rgb[i, j] = [255, 255, int(255 * t)]
-        else:
-            # Default: grayscale
-            rgb[:, :, 0] = display
-            rgb[:, :, 1] = display
-            rgb[:, :, 2] = display
-
-        return rgb
+        """Vectorized palette conversion; called only by the render worker path."""
+        from thermal_monitor.ui.modes.thermal_render_worker import PALETTE_LUTS
+        return PALETTE_LUTS.get(self._palette, PALETTE_LUTS["gray"])[np.asarray(display, dtype=np.uint8)]
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)

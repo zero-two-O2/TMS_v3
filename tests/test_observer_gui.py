@@ -265,6 +265,15 @@ def make_widget(runtime_service: FakeRuntimeService, *camera_ids: str) -> Observ
     )
 
 
+def wait_for_render(qapp, widget, timeout: float = 2.0) -> None:
+    """Wait for the persistent renderer's queued GUI handoff."""
+    deadline = time.monotonic() + timeout
+    target = getattr(widget, "_image_widget", widget)
+    while target.display_array is None and time.monotonic() < deadline:
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
 # ─── Grid policy ─────────────────────────────────────────────────────────────
 
 class TestGridPolicy:
@@ -450,6 +459,7 @@ class TestCameraTileUpdates:
         tile = CameraTile("cam_img")
         temp = np.arange(256, dtype=np.float32).reshape(16, 16)
         tile.on_result(make_processing_result("cam_img", 1, temperature_image=temp))
+        wait_for_render(qapp, tile)
         assert tile._image_widget.display_array is not None
         # display_array is now RGB (3 channels) due to palette application
         assert tile._image_widget.display_array.shape == (16, 16, 3)
@@ -459,6 +469,7 @@ class TestCameraTileUpdates:
         tile = CameraTile("cam_copy")
         temp = (np.arange(256, dtype=np.float32).reshape(16, 16)) * 0.5
         tile.on_result(make_processing_result("cam_copy", 1, temperature_image=temp))
+        wait_for_render(qapp, tile)
         disp = tile._image_widget.display_array
         assert disp is not None
         # display_array is RGB, check first channel
@@ -527,11 +538,13 @@ class TestLiveThermalWidgetReuse:
         frame = make_frame("cam_none", 1)
         frame = Frame(descriptor=frame.descriptor, payload=FramePayload(thermal=None, visible=None))
         w.set_frame(None, frame)
+        wait_for_render(qapp, w)
         assert w.display_array is None
 
     def test_live_thermal_widget_clear(self, qapp):
         w = LiveThermalWidget()
         w.set_frame(np.zeros((4, 4), dtype=np.float32), make_frame("cam_clear", 0))
+        wait_for_render(qapp, w)
         assert w.display_array is not None
         w.clear()
         assert w.display_array is None
