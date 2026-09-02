@@ -156,7 +156,7 @@ class CameraRuntime:
 
     def is_alive(self) -> bool:
         """True while the acquisition worker is not stopped or failed."""
-        return self.worker.state not in (AcquisitionState.STOPPED, AcquisitionState.ERROR)
+        return self.worker.state not in (AcquisitionState.STOPPED, AcquisitionState.FAILED)
 
 
 class CameraRuntimeService:
@@ -167,6 +167,12 @@ class CameraRuntimeService:
     the default calibration provider is :class:`CachingCalibrationProvider`.
     Tests inject a synthetic ``source_factory`` and a fixed calibration
     provider; the controller itself never knows the difference.
+
+    Serialized startup: ``_lock`` is held for the entire ``start_camera``
+    call, ensuring that camera connections are serialized.  This prevents
+    HALCON/SDK contention when multiple cameras connect simultaneously.
+    Evidence from the SCDA investigation shows that concurrent
+    ``UnmanagedConnect`` calls are not proven safe.
     """
 
     def __init__(
@@ -289,7 +295,7 @@ class CameraRuntimeService:
                     f"Failed to start acquisition for camera {camera_id}: {exc}"
                 ) from exc
 
-            if not worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=timeout):
+            if not worker.wait_for_state(AcquisitionState.STREAMING, timeout=timeout):
                 message = self._failure_message(runtime)
                 self._stop_runtime_locked(runtime, timeout=timeout)
                 self._runtimes.pop(camera_id, None)

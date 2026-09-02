@@ -31,7 +31,12 @@ from typing import Protocol
 
 import numpy as np
 
-from thermal_monitor.camera.model import CameraConfig, GrabResult
+from thermal_monitor.camera.model import (
+    CameraConfig,
+    CameraValidationResult,
+    GrabResult,
+    RegisterValidation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +74,15 @@ class FrameSource(Protocol):
     def is_connected(self) -> bool: ...
 
     def reopen(self) -> None: ...
+
+    def validate_registers(self, expected_scda_ip: str = "", expected_fusion_value: int = 3) -> CameraValidationResult:
+        """Validate camera registers match expected configuration.
+
+        Called during CONTROL_READY → STREAM_CONFIGURED → FUSION_READY
+        transitions. Returns a CameraValidationResult indicating which
+        checks passed/failed.
+        """
+        ...
 
 
 class TV46LDriver:
@@ -163,6 +177,99 @@ class TV46LDriver:
 
     def is_connected(self) -> bool:
         return self._connected
+
+    # ------------------------------------------------------------------
+    # Register validation (SCDA / SCP / Fusion)
+    # ------------------------------------------------------------------
+
+    def _read_register_param(self, param_name: str) -> object:
+        """Read a single framegrabber parameter, returning None on failure."""
+        ha = self._import_halcon()
+        with self._halcon_lock:
+            if not self._connected:
+                return None
+            try:
+                value = ha.get_framegrabber_param(self._framegrabber, param_name)
+                if isinstance(value, (list, tuple)) and len(value) == 1:
+                    return value[0]
+                return value
+            except Exception:
+                return None
+
+    def _int_from_ip(ip_str: str) -> int:
+        """Convert dotted-quad IP string to a 32-bit integer."""
+        parts = ip_str.split(".")
+        if len(parts) != 4:
+            return 0
+        return (int(parts[0]) << 24) | (int(parts[1]) << 16) | (int(parts[2]) << 8) | int(parts[3])
+
+    def _ip_from_int(value: int) -> str:
+        """Convert a 32-bit integer to dotted-quad IP string."""
+        return ".".join(str((value >> shift) & 0xFF) for shift in (24, 16, 8, 0))
+
+    def validate_registers(
+        self,
+        expected_scda_ip: str = "",
+        expected_fusion_value: int = 3,
+    ) -> CameraValidationResult:
+        """Validate SCDA, SCP, and Fusion registers.
+
+        Returns a CameraValidationResult with per-check pass/fail.
+        """
+        checks: list[RegisterValidation] = []
+
+        # SCDA check (Stream Channel Destination Address)
+        scda_raw = self._read_register_param("[Stream]GevSCDA")
+        scda_ok = False
+        if scda_raw is not None and expected_scda_ip:
+            if isinstance(scda_raw, int) and scda_raw > 0:
+                actual_ip = self._ip_from_int(scda_raw)
+                scda_ok = actual_ip == expected_scda_ip
+            elif isinstance(scda_raw, str):
+                scda_ok = scda_raw == expected_scda_ip
+        checks.append(RegisterValidation(
+            name="SCDA",
+            expected=expected_scda_ip,
+            actual=scda_raw,
+            passed=scda_ok,
+        ))
+
+        # SCP check (Stream Channel Port)
+        scp_raw = self._read_register_param("[Stream]GevSCP")
+        scp_ok = False
+        if scp_raw is not None:
+            if isinstance(scp_raw, int):
+                scp_ok = scp_raw != 0
+            elif isinstance(scp_raw, (list, tuple)) and len(scp_raw) > 0:
+                scp_ok = scp_raw[0] != 0
+        checks.append(RegisterValidation(
+            name="SCP",
+            expected="non-zero",
+            actual=scp_raw,
+            passed=scp_ok,
+        ))
+
+        # Fusion register check (FLK_TI_StreamDataSourceSelector)
+        fusion_raw = self._read_register_param("FLK_TI_StreamDataSourceSelector")
+        fusion_ok = False
+        if fusion_raw is not None:
+            if isinstance(fusion_raw, int):
+                fusion_ok = fusion_raw == expected_fusion_value
+            elif isinstance(fusion_raw, (list, tuple)) and len(fusion_raw) > 0:
+                fusion_ok = fusion_raw[0] == expected_fusion_value
+        checks.append(RegisterValidation(
+            name="FUSION",
+            expected=expected_fusion_value,
+            actual=fusion_raw,
+            passed=fusion_ok,
+        ))
+
+        return CameraValidationResult(
+            scda_ok=scda_ok,
+            scp_ok=scp_ok,
+            fusion_ok=fusion_ok,
+            checks=tuple(checks),
+        )
 
     # ------------------------------------------------------------------
     # Configuration

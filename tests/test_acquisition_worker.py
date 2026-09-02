@@ -32,7 +32,7 @@ def test_sequence_numbers_are_monotonic():
     )
     worker.start()
     try:
-        assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+        assert worker.wait_for_state(AcquisitionState.STREAMING, timeout=5.0)
         deadline = time.monotonic() + 2.0
         while len(publisher.frames) < 5 and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -50,7 +50,7 @@ def test_timestamps_are_available():
     worker = AcquisitionWorker("cam_1", source, publisher, make_camera_config())
     worker.start()
     try:
-        assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+        assert worker.wait_for_state(AcquisitionState.STREAMING, timeout=5.0)
         deadline = time.monotonic() + 2.0
         while not publisher.frames and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -70,10 +70,10 @@ def test_timestamps_are_available():
 def test_state_transitions_to_acquiring():
     source = FakeFrameSource()
     worker = AcquisitionWorker("cam_1", source, FakePublisher(), make_camera_config())
-    assert worker.state is AcquisitionState.CREATED
+    assert worker.state is AcquisitionState.DISCOVERED
     worker.start()
     try:
-        assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+        assert worker.wait_for_state(AcquisitionState.STREAMING, timeout=5.0)
         assert source.connect_calls == 1
     finally:
         worker.stop()
@@ -85,7 +85,7 @@ def test_clean_shutdown():
     publisher = FakePublisher()
     worker = AcquisitionWorker("cam_1", source, publisher, make_camera_config())
     worker.start()
-    assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+    assert worker.wait_for_state(AcquisitionState.STREAMING, timeout=5.0)
     worker.stop(timeout=5.0)
     assert worker.state is AcquisitionState.STOPPED
     assert source.disconnect_calls == 1
@@ -102,7 +102,7 @@ def test_grab_failures_drive_degraded_then_reconnect():
     try:
         # After the failure limit is reached the worker enters recovery and
         # reopens the source, then continues acquiring.
-        assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+        assert worker.wait_for_state(AcquisitionState.STREAMING, timeout=5.0)
         deadline = time.monotonic() + 3.0
         while source.reopen_calls == 0 and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -128,9 +128,9 @@ def test_reconnection_exhaustion_ends_in_error():
     worker = AcquisitionWorker("cam_1", source, FakePublisher(), config)
     worker.start()
     try:
-        assert worker.wait_for_state(AcquisitionState.ERROR, timeout=5.0)
+        assert worker.wait_for_state(AcquisitionState.FAILED, timeout=5.0)
         stats = worker.stats()
-        assert stats.state is AcquisitionState.ERROR
+        assert stats.state is AcquisitionState.FAILED
         assert stats.last_error is not None
     finally:
         worker.stop()
@@ -145,8 +145,8 @@ def test_connection_failure_goes_to_error_or_recovery():
     try:
         # Connection keeps failing; worker is in recovery/error states, never
         # acquiring.  It must not crash and must remain stoppable.
-        assert not worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=1.0)
-        assert worker.state in (AcquisitionState.RECONNECTING, AcquisitionState.ERROR)
+        assert not worker.wait_for_state(AcquisitionState.STREAMING, timeout=1.0)
+        assert worker.state in (AcquisitionState.RECONNECTING, AcquisitionState.FAILED)
     finally:
         worker.stop()
 
@@ -157,7 +157,7 @@ def test_frame_publication_delivers_frames():
     worker = AcquisitionWorker("cam_1", source, publisher, make_camera_config())
     worker.start()
     try:
-        assert worker.wait_for_state(AcquisitionState.ACQUIRING, timeout=5.0)
+        assert worker.wait_for_state(AcquisitionState.STREAMING, timeout=5.0)
         deadline = time.monotonic() + 2.0
         while len(publisher.frames) < 3 and time.monotonic() < deadline:
             time.sleep(0.01)

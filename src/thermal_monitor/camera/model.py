@@ -14,17 +14,33 @@ import numpy as np
 
 
 class AcquisitionState(str, Enum):
-    """Lifecycle state of one camera acquisition worker."""
+    """Lifecycle state of one camera acquisition worker.
 
-    CREATED = "created"
+    Startup sequence:
+        DISCOVERED -> CONNECTING -> CONTROL_READY -> STREAM_CONFIGURED
+        -> FUSION_READY -> STREAMING
+
+    Reconnect sequence:
+        STREAMING -> DISCONNECTED -> RECONNECTING -> CONTROL_READY -> ...
+
+    Failure:
+        Any state -> FAILED (max retries exhausted)
+
+    Shutdown:
+        Any state -> STOPPING -> STOPPED
+    """
+
+    DISCOVERED = "discovered"
     CONNECTING = "connecting"
-    CONNECTED = "connected"
-    ACQUIRING = "acquiring"
-    DEGRADED = "degraded"
+    CONTROL_READY = "control_ready"
+    STREAM_CONFIGURED = "stream_configured"
+    FUSION_READY = "fusion_ready"
+    STREAMING = "streaming"
+    DISCONNECTED = "disconnected"
     RECONNECTING = "reconnecting"
+    FAILED = "failed"
     STOPPING = "stopping"
     STOPPED = "stopped"
-    ERROR = "error"
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,7 +115,7 @@ class GrabResult:
 class AcquisitionStats:
     """Snapshotted performance counters for one acquisition worker."""
 
-    state: AcquisitionState = AcquisitionState.CREATED
+    state: AcquisitionState = AcquisitionState.DISCOVERED
     total_acquired: int = 0
     published: int = 0
     dropped: int = 0
@@ -135,3 +151,46 @@ class PublishResult:
 
     overwritten_sequence: int | None = None
     """If a frame was overwritten, the sequence number of the lost frame."""
+
+
+@dataclass(frozen=True, slots=True)
+class RegisterValidation:
+    """Result of a single register validation check."""
+
+    name: str
+    """Human-readable name of the check (e.g. 'SCDA', 'SCP', 'FUSION')."""
+
+    expected: object
+    """Expected value."""
+
+    actual: object
+    """Actual value read from the camera."""
+
+    passed: bool
+    """True if the check passed."""
+
+
+@dataclass(frozen=True, slots=True)
+class CameraValidationResult:
+    """Aggregate result of all register validations before declaring STREAMING.
+
+    The acquisition worker collects these during CONTROL_READY →
+    STREAM_CONFIGURED → FUSION_READY transitions and only proceeds to
+    STREAMING when all checks pass.
+    """
+
+    scda_ok: bool = False
+    """SCDA register matches expected host IP (192.168.42.100)."""
+
+    scp_ok: bool = False
+    """SCP (stream channel port) is non-zero."""
+
+    fusion_ok: bool = False
+    """Fusion register 0x10A110 == 3 (Combined IR+VL)."""
+
+    checks: tuple[RegisterValidation, ...] = ()
+    """Individual check results for diagnostics."""
+
+    @property
+    def all_passed(self) -> bool:
+        return self.scda_ok and self.scp_ok and self.fusion_ok

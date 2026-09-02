@@ -6,7 +6,14 @@ import pytest
 import numpy as np
 
 from thermal_monitor.camera.driver import CameraGrabTimeout
-from thermal_monitor.camera.model import CameraConfig, CameraIdentity, GrabResult, PublishResult
+from thermal_monitor.camera.model import (
+    CameraConfig,
+    CameraIdentity,
+    CameraValidationResult,
+    GrabResult,
+    PublishResult,
+    RegisterValidation,
+)
 from thermal_monitor.core.frame import Frame
 
 
@@ -94,6 +101,22 @@ class FakeFrameSource:
         self.reopen_calls += 1
         if self._reopen_error is not None:
             raise self._reopen_error
+
+    def validate_registers(
+        self,
+        expected_scda_ip: str = "",
+        expected_fusion_value: int = 3,
+    ) -> CameraValidationResult:
+        return CameraValidationResult(
+            scda_ok=True,
+            scp_ok=True,
+            fusion_ok=True,
+            checks=(
+                RegisterValidation(name="SCDA", expected=expected_scda_ip, actual=expected_scda_ip, passed=True),
+                RegisterValidation(name="SCP", expected="non-zero", actual=12345, passed=True),
+                RegisterValidation(name="FUSION", expected=expected_fusion_value, actual=expected_fusion_value, passed=True),
+            ),
+        )
 
 
 class FakePublisher:

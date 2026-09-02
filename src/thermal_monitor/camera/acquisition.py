@@ -38,7 +38,13 @@ from thermal_monitor.camera.driver import (
     CameraGrabTimeout,
     FrameSource,
 )
-from thermal_monitor.camera.model import AcquisitionState, AcquisitionStats, CameraConfig, PublishResult
+from thermal_monitor.camera.model import (
+    AcquisitionState,
+    AcquisitionStats,
+    CameraConfig,
+    CameraValidationResult,
+    PublishResult,
+)
 from thermal_monitor.core.frame import Frame, FrameDescriptor, FramePayload, StreamMetadata, SyncInfo, SyncStatus
 
 logger = logging.getLogger(__name__)
@@ -153,9 +159,14 @@ class AcquisitionWorker:
     :class:`FramePublisher`, so one camera failing (or being reconfigured
     or stopped) never affects another camera's worker.
 
-    Lifecycle: CREATED -> CONNECTING -> CONNECTED -> ACQUIRING (-> DEGRADED
-    -> RECONNECTING -> ACQUIRING ...) -> STOPPING -> STOPPED, or ERROR at
-    any failure point.
+    Lifecycle:
+        DISCOVERED -> CONNECTING -> CONTROL_READY -> STREAM_CONFIGURED
+        -> FUSION_READY -> STREAMING
+
+        STREAMING -> DISCONNECTED -> RECONNECTING -> CONTROL_READY -> ...
+
+        Any state -> FAILED (max retries exhausted)
+        Any state -> STOPPING -> STOPPED
     """
 
     def __init__(
@@ -170,7 +181,7 @@ class AcquisitionWorker:
         self._publisher = publisher
         self._config = config
 
-        self._state = AcquisitionState.CREATED
+        self._state = AcquisitionState.DISCOVERED
         self._state_lock = threading.Lock()
 
         self._stop_event = threading.Event()
@@ -202,7 +213,11 @@ class AcquisitionWorker:
 
     def start(self) -> None:
         with self._state_lock:
-            if self._state not in (AcquisitionState.CREATED, AcquisitionState.STOPPED, AcquisitionState.ERROR):
+            if self._state not in (
+                AcquisitionState.DISCOVERED,
+                AcquisitionState.STOPPED,
+                AcquisitionState.FAILED,
+            ):
                 raise RuntimeError(f"Worker is in state {self._state.value}; cannot start")
             if self._thread is not None and self._thread.is_alive():
                 raise RuntimeError("Worker thread already running")
@@ -277,12 +292,13 @@ class AcquisitionWorker:
         try:
             if not self._connect_with_retries():
                 return
-            self._set_state(AcquisitionState.CONNECTED)
-            self._set_state(AcquisitionState.ACQUIRING)
+            if not self._validate_camera():
+                return
+            self._set_state(AcquisitionState.STREAMING)
             self._acquisition_loop()
         except Exception:
             logger.exception("Camera %s: unexpected acquisition failure", self._camera_id)
-            self._set_state(AcquisitionState.ERROR)
+            self._set_state(AcquisitionState.FAILED)
         finally:
             self._shutdown()
         logger.info("Camera %s: acquisition worker stopped", self._camera_id)
@@ -292,6 +308,7 @@ class AcquisitionWorker:
         while not self._stop_event.is_set():
             try:
                 self._source.connect()
+                self._set_state(AcquisitionState.CONTROL_READY)
                 return True
             except CameraConnectionError as exc:
                 self._record_error(exc)
@@ -301,9 +318,62 @@ class AcquisitionWorker:
                     return False
             except Exception as exc:
                 self._record_error(exc)
-                self._set_state(AcquisitionState.ERROR)
+                self._set_state(AcquisitionState.FAILED)
                 return False
         return False
+
+    def _validate_camera(self) -> bool:
+        """Validate camera registers before declaring STREAMING.
+
+        Checks SCDA == expected IP, SCP != 0, and Fusion register == 3.
+        Transitions through CONTROL_READY → STREAM_CONFIGURED → FUSION_READY.
+        Returns False if any check fails (camera goes to FAILED).
+        """
+        expected_scda = self._config.ip_address
+        expected_fusion = 3
+
+        # CONTROL_READY: verify SCDA and SCP
+        result = self._source.validate_registers(
+            expected_scda_ip=expected_scda,
+            expected_fusion_value=expected_fusion,
+        )
+
+        for check in result.checks:
+            if not check.passed:
+                logger.warning(
+                    "Camera %s: register validation failed — %s: expected=%s actual=%s",
+                    self._camera_id,
+                    check.name,
+                    check.expected,
+                    check.actual,
+                )
+
+        if result.scda_ok and result.scp_ok:
+            self._set_state(AcquisitionState.STREAM_CONFIGURED)
+        else:
+            self._record_error(
+                f"Register validation failed: SCDA={result.scda_ok} SCP={result.scp_ok}"
+            )
+            self._set_state(AcquisitionState.FAILED)
+            return False
+
+        if result.fusion_ok:
+            self._set_state(AcquisitionState.FUSION_READY)
+        else:
+            self._record_error(
+                f"Register validation failed: FUSION={result.fusion_ok}"
+            )
+            self._set_state(AcquisitionState.FAILED)
+            return False
+
+        logger.info(
+            "Camera %s: register validation passed (SCDA=%s SCP=%s FUSION=%s)",
+            self._camera_id,
+            result.scda_ok,
+            result.scp_ok,
+            result.fusion_ok,
+        )
+        return True
 
     def _acquisition_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -322,10 +392,12 @@ class AcquisitionWorker:
                 continue
             except CameraConnectionError as exc:
                 self._record_error(exc)
+                self._set_state(AcquisitionState.DISCONNECTED)
                 self._set_state(AcquisitionState.RECONNECTING)
                 continue
             except Exception as exc:
                 self._record_error(exc)
+                self._set_state(AcquisitionState.DISCONNECTED)
                 self._set_state(AcquisitionState.RECONNECTING)
                 continue
 
@@ -348,9 +420,8 @@ class AcquisitionWorker:
                 self._camera_id,
                 failed,
             )
+            self._set_state(AcquisitionState.DISCONNECTED)
             self._set_state(AcquisitionState.RECONNECTING)
-        else:
-            self._set_state(AcquisitionState.DEGRADED)
 
     def _try_reconnect(self) -> bool:
         attempt = 1
@@ -364,15 +435,19 @@ class AcquisitionWorker:
                 self._record_error(exc)
                 attempt += 1
                 if attempt > self._config.max_reconnect_attempts:
-                    self._set_state(AcquisitionState.ERROR)
+                    self._set_state(AcquisitionState.FAILED)
                     return False
                 continue
             with self._stats_lock:
                 self._consecutive_failures = 0
                 self._reconnect_count += 1
-                # Reset packet stats baseline after reconnect
                 self._prev_packet_stats = None
-            self._set_state(AcquisitionState.ACQUIRING)
+            self._set_state(AcquisitionState.CONTROL_READY)
+            if not self._validate_camera():
+                self._set_state(AcquisitionState.RECONNECTING)
+                attempt += 1
+                continue
+            self._set_state(AcquisitionState.STREAMING)
             return True
         return False
 
@@ -531,8 +606,10 @@ class AcquisitionWorker:
         except Exception:
             logger.exception("Camera %s: error closing publisher", self._camera_id)
         with self._state_lock:
-            if self._state is not AcquisitionState.ERROR:
+            if self._state not in (AcquisitionState.FAILED, AcquisitionState.STOPPING):
+                self._state = AcquisitionState.STOPPED
+            elif self._state is AcquisitionState.STOPPING:
                 self._state = AcquisitionState.STOPPED
             else:
-                self._state = AcquisitionState.ERROR
+                self._state = AcquisitionState.FAILED
         logger.info("Camera %s: acquisition shutdown complete (state=%s)", self._camera_id, self._state.value)
