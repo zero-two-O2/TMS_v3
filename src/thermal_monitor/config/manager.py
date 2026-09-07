@@ -230,7 +230,7 @@ class ConfigurationManager:
                 },
                 "acquisition": {
                     "target_fps": 9,
-                    "grab_timeout_ms": 2000,
+                    "grab_timeout_ms": 500,
                     "socket_buffer_size": 1048576,
                     "num_buffers": 8,
                     "stream_source_thermal": "IR_Data",

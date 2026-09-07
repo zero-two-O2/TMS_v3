@@ -36,6 +36,8 @@ class AcquisitionState(str, Enum):
     STREAM_CONFIGURED = "stream_configured"
     FUSION_READY = "fusion_ready"
     STREAMING = "streaming"
+    ACQUIRING = "streaming"
+    DEGRADED = "degraded"
     DISCONNECTED = "disconnected"
     RECONNECTING = "reconnecting"
     FAILED = "failed"
@@ -72,7 +74,7 @@ class CameraConfig:
 
     # HALCON / GigE tuning (V2-validated values)
     frame_rate: int = 9
-    grab_timeout_ms: int = 2000
+    grab_timeout_ms: int = 500
     socket_buffer_size: int = 1048576
     num_buffers: int = 8
 

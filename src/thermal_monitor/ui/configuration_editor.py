@@ -891,7 +891,7 @@ class ConfigurationEditor(QWidget):
     def _create_acquisition_editor(self) -> ConfigSectionEditor:
         editor = ConfigSectionEditor("Acquisition", self._edit_config.cameras.acquisition, self._theme)
         editor.add_field(ConfigEditorField("target_fps", "Target FPS", int, 9, min_val=1, max_val=60))
-        editor.add_field(ConfigEditorField("grab_timeout_ms", "Grab Timeout (ms)", int, 2000, min_val=1, max_val=5000))
+        editor.add_field(ConfigEditorField("grab_timeout_ms", "Grab Timeout (ms)", int, 500, min_val=1, max_val=5000))
         editor.add_field(ConfigEditorField("socket_buffer_size", "Socket Buffer Size", int, 1048576, min_val=1))
         editor.add_field(ConfigEditorField("num_buffers", "Number of Buffers", int, 8, min_val=1, max_val=32))
         editor.add_field(ConfigEditorField("stream_source_thermal", "Thermal Stream Source", str, "IR_Data"))

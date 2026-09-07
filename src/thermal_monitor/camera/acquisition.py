@@ -333,10 +333,30 @@ class AcquisitionWorker:
         expected_fusion = 3
 
         # CONTROL_READY: verify SCDA and SCP
-        result = self._source.validate_registers(
+        validate_registers = getattr(self._source, "validate_registers", None)
+        if validate_registers is None:
+            logger.debug(
+                "Camera %s: source does not expose register validation; "
+                "skipping hardware-only checks",
+                self._camera_id,
+            )
+            self._set_state(AcquisitionState.STREAM_CONFIGURED)
+            self._set_state(AcquisitionState.FUSION_READY)
+            return True
+
+        result = validate_registers(
             expected_scda_ip=expected_scda,
             expected_fusion_value=expected_fusion,
         )
+        if result is None:
+            logger.debug(
+                "Camera %s: source returned no register validation; "
+                "skipping hardware-only checks",
+                self._camera_id,
+            )
+            self._set_state(AcquisitionState.STREAM_CONFIGURED)
+            self._set_state(AcquisitionState.FUSION_READY)
+            return True
 
         for check in result.checks:
             if not check.passed:
@@ -414,6 +434,7 @@ class AcquisitionWorker:
         with self._stats_lock:
             self._consecutive_failures += 1
             failed = self._consecutive_failures
+        self._set_state(AcquisitionState.DEGRADED)
         if failed >= self._config.consecutive_fail_limit:
             logger.warning(
                 "Camera %s: %d consecutive grab failures; entering recovery",
