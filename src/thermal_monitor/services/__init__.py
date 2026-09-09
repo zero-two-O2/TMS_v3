@@ -9,8 +9,6 @@ from importlib import import_module
 
 
 _EXPORTS = {
-    "AnalysisService": ("thermal_monitor.services.analysis", "AnalysisService"),
-    "AlarmService": ("thermal_monitor.services.alarm", "AlarmService"),
     "ConfigurationService": ("thermal_monitor.services.configuration", "ConfigurationService"),
     "CameraDiscoveryError": ("thermal_monitor.services.discovery", "CameraDiscoveryError"),
     "CameraDiscoveryService": ("thermal_monitor.services.discovery", "CameraDiscoveryService"),
@@ -41,8 +39,6 @@ def __getattr__(name: str):
     return value
 
 __all__ = [
-    "AlarmService",
-    "AnalysisService",
     "CameraRuntime",
     "CameraRuntimeError",
     "CameraRuntimeService",

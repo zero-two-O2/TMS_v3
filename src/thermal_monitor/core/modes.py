@@ -1,7 +1,7 @@
 """
 core.modes -- Application modes and mode management.
 
-Defines the three application modes (CONFIGURATION, OBSERVER, OFFLINE) and a
+Defines the four application modes (LAUNCHER, LIVE, CONFIGURATION, OFFLINE) and a
 ModeManager that enforces valid transitions between them.  This module is
 pure domain logic with no PyQt, HALCON, or hardware dependencies.
 """
@@ -124,15 +124,15 @@ class ModeManager:
 
     The mode manager enforces the valid transition graph:
 
-        CONFIGURATION <-> OBSERVER
+        LAUNCHER -> LIVE | CONFIGURATION | OFFLINE
+        LIVE <-> CONFIGURATION
+        LIVE -> OFFLINE
         CONFIGURATION -> OFFLINE
-        OBSERVER -> OFFLINE
-        OFFLINE -> CONFIGURATION
-        OFFLINE -> OBSERVER
+        OFFLINE -> LIVE | CONFIGURATION
 
-    Direct transitions between CONFIGURATION and OBSERVER are allowed
+    Direct transitions between LIVE and CONFIGURATION are allowed
     in both directions.  OFFLINE can be entered from either mode, and
-    exiting OFFLINE returns to either CONFIGURATION or OBSERVER.
+    exiting OFFLINE returns to either LIVE or CONFIGURATION.
 
     The manager emits ModeChanged events via a simple callback mechanism.
     """
@@ -237,10 +237,6 @@ class ModeManager:
     def transition_to_configuration(self, reason: str = "") -> ModeState:
         """Convenience method to transition to CONFIGURATION mode."""
         return self.transition(ApplicationMode.CONFIGURATION, reason)
-
-    def transition_to_observer(self, reason: str = "") -> ModeState:
-        """Convenience method to transition to OBSERVER mode."""
-        return self.transition(ApplicationMode.OBSERVER, reason)
 
     def transition_to_offline(self, reason: str = "") -> ModeState:
         """Convenience method to transition to OFFLINE mode."""
