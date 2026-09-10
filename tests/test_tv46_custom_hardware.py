@@ -1,15 +1,15 @@
-"""Hardware validation gates for the custom TV46L driver (Stage 8B.5/8B.6).
+"""Hardware validation gates for the custom TV46L driver (Stage 8G final).
 
 Requires ONE physical TV46L reachable over GigE. Skipped by default; run:
 
     set TV46L_CUSTOM_IP=192.168.42.11 && python -m pytest tests/test_tv46_custom_hardware.py -v
 
 Optional: TV46L_CUSTOM_NUC=1 to also run the custom one-step NUC gate
-(8B.7 records stream silence/recovery; it does NOT choose the final NUC).
+(measures stream silence/recovery on the production custom path).
 
 These tests NEVER synthesise frames: every assertion is over data actually
-received from the camera. HALCON tests are untouched and remain the parity
-reference (see tests/test_real_ir_acquisition.py).
+received from the camera. The custom GVCP/GVSP path is the production
+acquisition path (HALCON acquisition removed).
 """
 
 from __future__ import annotations

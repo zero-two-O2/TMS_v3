@@ -1,8 +1,8 @@
 """
 camera.model -- data models for the camera acquisition domain.
 
-Contains only data definitions.  No hardware, threading or HALCON calls
-belong here.
+Contains only data definitions. No hardware, threading or acquisition
+calls belong here.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ class CameraConfig:
     device_identifier: str = ""
     ip_address: str = ""
 
-    # HALCON / GigE tuning (V2-validated values)
+    # GigE / stream tuning (proven values)
     frame_rate: int = 9
     grab_timeout_ms: int = 500
     socket_buffer_size: int = 1048576

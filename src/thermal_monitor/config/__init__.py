@@ -42,7 +42,6 @@ from thermal_monitor.config.models import (
     UILiveConfig,
     UIDisplayConfig,
     NetworkConfig,
-    HALCONConfig,
 )
 
 __all__ = [
@@ -82,5 +81,4 @@ __all__ = [
     "UILiveConfig",
     "UIDisplayConfig",
     "NetworkConfig",
-    "HALCONConfig",
 ]

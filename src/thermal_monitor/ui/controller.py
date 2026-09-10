@@ -22,7 +22,11 @@ from thermal_monitor.ui.windows.launcher_window import LauncherWindow
 from thermal_monitor.ui.windows.live_window import LiveWindow
 from thermal_monitor.ui.windows.configuration_window import ConfigurationWindow
 from thermal_monitor.ui.windows.offline_window import OfflineWindow
-from thermal_monitor.services.discovery import CameraDiscoveryService
+from thermal_monitor.services.discovery import (
+    CameraDiscoveryService,
+    GvcpDiscoveryService,
+    build_discovery_service,
+)
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.config import ConfigurationManager, CamerasConfig, SystemConfig, RecordingConfig, StorageConfig, CalibrationConfig
 from thermal_monitor.ui.theme import ThemeManager
@@ -47,7 +51,7 @@ class AppController(QObject):
         runtime_service: CameraRuntimeService,
         database: Database | None = None,
         *,
-        discovery_service: CameraDiscoveryService | None = None,
+        discovery_service: "CameraDiscoveryService | GvcpDiscoveryService | None" = None,
         observer_service: ObserverService | None = None,
         config_manager: ConfigurationManager | None = None,
         theme_manager: ThemeManager | None = None,
@@ -93,12 +97,8 @@ class AppController(QObject):
         """Configure all services with configuration from ConfigurationManager."""
         config = self._config_manager.get_config()
 
-        # Configure CameraDiscoveryService
-        self._discovery_service = CameraDiscoveryService(
-            halcon_interface=config.cameras.discovery.halcon_interface,
-            attempts=config.cameras.discovery.attempts,
-            retry_delay_s=config.cameras.discovery.retry_delay_s,
-        )
+        # Configure discovery backend (Stage 8E: GVCP default, HALCON fallback).
+        self._discovery_service = build_discovery_service(config.cameras.discovery)
 
         # Configure CameraRuntimeService
         self._runtime_service = CameraRuntimeService(

@@ -23,6 +23,8 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QStatusBar,
+    QComboBox,
+    QStackedWidget,
 )
 
 import numpy as np
@@ -34,6 +36,7 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
+from thermal_monitor.ui.modes.vl_image import VlImageWidget
 from thermal_monitor.ui.theme import ThemeManager
 
 
@@ -133,10 +136,17 @@ class LiveCameraTile(QWidget):
         header.addWidget(self._state_label)
         layout.addLayout(header)
 
-        # Main image
+        # Main image: thermal / VL stacked (Stage 8E dual-feed wall mode).
+        # Only the visible feed decodes; the wall layout is unchanged.
         self._image_widget = LiveThermalWidget()
         self._image_widget.setMinimumSize(280, 210)
-        layout.addWidget(self._image_widget, 1)
+        self._vl_widget = VlImageWidget()
+        self._vl_widget.setMinimumSize(280, 210)
+        self._image_stack = QStackedWidget()
+        self._image_stack.addWidget(self._image_widget)
+        self._image_stack.addWidget(self._vl_widget)
+        self._feed_mode = "ir"
+        layout.addWidget(self._image_stack, 1)
 
         # Footer: compact stats
         footer = QHBoxLayout()
@@ -181,6 +191,18 @@ class LiveCameraTile(QWidget):
 
         frame = result.frame
         self._image_widget.set_frame(temperature_image, frame)
+
+        # VL feed (Stage 8E): same result -> same hardware frame. Decoded
+        # only while the wall shows VL; otherwise the last VL image stays
+        # hidden and no conversion work is spent.
+        if self._feed_mode == "vl":
+            visible = frame.payload.visible if frame is not None else None
+            vl_sequence = (
+                frame.descriptor.visible.sequence
+                if frame is not None and frame.descriptor.visible.sequence is not None
+                else frame.descriptor.sequence
+            )
+            self._vl_widget.set_frame(visible, frame.descriptor.sequence, vl_sequence)
 
         self._latest_sequence = frame.descriptor.sequence
         self._update_display(result)
@@ -248,9 +270,21 @@ class LiveCameraTile(QWidget):
         self._latest_sequence = -1
         self._error_message = None
         self._image_widget.clear()
+        self._vl_widget.clear()
         self._fps_label.setText("FPS: —")
         self._sequence_label.setText("Seq: —")
         self._temp_label.setText("Temp: —")
+
+    def set_feed_mode(self, mode: str) -> None:
+        """Switch the tile between the IR wall feed and the VL wall feed."""
+        if mode not in ("ir", "vl"):
+            raise ValueError(f"feed mode must be 'ir' or 'vl'; got {mode!r}")
+        self._feed_mode = mode
+        self._image_stack.setCurrentIndex(0 if mode == "ir" else 1)
+
+    @property
+    def feed_mode(self) -> str:
+        return self._feed_mode
 
     def set_camera(self, camera_id: str, name: str, serial: str) -> None:
         """Assign a camera to this slot."""
@@ -345,6 +379,13 @@ class LiveModeWidget(QWidget):
         title.setStyleSheet(title_style)
         header.addWidget(title)
         header.addStretch()
+        # Wall feed selector (Stage 8E): one IR wall or one VL wall across
+        # all 8 tiles; the 2x4 layout itself never changes.
+        self._feed_selector = QComboBox()
+        self._feed_selector.addItems(["IR", "VL"])
+        self._feed_selector.currentTextChanged.connect(self._on_feed_mode_changed)
+        header.addWidget(QLabel("Feed:"))
+        header.addWidget(self._feed_selector)
         self._summary_label = QLabel("Initializing...")
         summary_style = "font-weight: bold;"
         if self._theme:
@@ -377,6 +418,17 @@ class LiveModeWidget(QWidget):
             row = slot // GRID_COLUMNS
             col = slot % GRID_COLUMNS
             self._grid_layout.addWidget(tile, row, col)
+
+    def _on_feed_mode_changed(self, text: str) -> None:
+        """Apply the wall feed mode to every tile (IR default)."""
+        mode = "vl" if text.strip().upper() == "VL" else "ir"
+        for tile in self._tiles:
+            tile.set_feed_mode(mode)
+
+    @property
+    def feed_mode(self) -> str:
+        text = self._feed_selector.currentText() if hasattr(self, "_feed_selector") else "IR"
+        return "vl" if text.strip().upper() == "VL" else "ir"
 
     def on_mode_activated(self) -> None:
         """Start live monitoring when Live mode becomes active."""

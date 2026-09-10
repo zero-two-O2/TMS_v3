@@ -137,7 +137,7 @@ def test_read_memory_chunks_large_reads():
 
 def _discovery_bytes() -> bytes:
     """Synthetic DISCOVERY_ACK using the HARDWARE-MEASURED TV46L layout
-    (Stage 8D: verified on .11/.13 against HALCON serials/MACs)."""
+    (Stage 8D: verified on .11/.13 against camera serials/MACs)."""
     header = struct.pack(">HHHH", 0, GVCPCommand.DISCOVERY_ACK, 248, 9)
     payload = bytearray(248)
     payload[10:16] = bytes([0x34, 0x08, 0xE1, 0xD8, 0xDB, 0xBE])
@@ -152,7 +152,7 @@ def _discovery_bytes() -> bytes:
 def test_parse_discovery_ack_fields():
     info = parse_discovery_ack(_discovery_bytes(), "192.168.42.13")
     assert info.ip_address == "192.168.42.13"
-    # 6-octet device MAC (matches the HALCON device-string prefix).
+    # 6-octet device MAC.
     assert info.mac_address == "34:08:e1:d8:db:be"
     assert info.serial_number == "HB25080011"
     assert info.model_name == "TV46L-1-26010003@9Hz"

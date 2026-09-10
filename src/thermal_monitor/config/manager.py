@@ -28,7 +28,6 @@ from thermal_monitor.config.models import (
     CameraStartupConfig,
     CalibrationConfig,
     AlarmsConfig,
-    HALCONConfig,
     LoggingConfig,
     NetworkConfig,
     OfflineConfig,
@@ -227,6 +226,8 @@ class ConfigurationManager:
                     "attempts": 3,
                     "retry_delay_s": 3.0,
                     "interval_seconds": 30.0,
+                    "backend": "gvcp",
+                    "static_ips": [],
                 },
                 "acquisition": {
                     "target_fps": 9,
@@ -409,10 +410,6 @@ class ConfigurationManager:
                 "bind_address": "0.0.0.0",
                 "http_port": 8080,
             },
-            "halcon": {
-                "grab_timeout_error_code": 5322,
-                "first_frame_timeout_ms": 5000,
-            },
         }
 
     def _apply_env_overrides(self, config: dict[str, Any]) -> dict[str, Any]:
@@ -473,6 +470,9 @@ class ConfigurationManager:
         cam_raw = raw.get("cameras", {})
 
         disc_raw = cam_raw.get("discovery", {})
+        static_ips = disc_raw.get("static_ips", [])
+        if not isinstance(static_ips, list):
+            raise ConfigurationError("cameras.discovery.static_ips must be a list of IP strings")
         discovery = CameraDiscoveryConfig(
             enabled=disc_raw.get("enabled", True),
             startup_scan=disc_raw.get("startup_scan", True),
@@ -480,6 +480,8 @@ class ConfigurationManager:
             attempts=_parse_int(disc_raw.get("attempts"), 3),
             retry_delay_s=_parse_float(disc_raw.get("retry_delay_s"), 3.0),
             interval_seconds=_parse_float(disc_raw.get("interval_seconds"), 30.0),
+            backend=str(disc_raw.get("backend", "gvcp")),
+            static_ips=[str(ip) for ip in static_ips],
         )
 
         acq_raw = cam_raw.get("acquisition", {})
@@ -742,13 +744,6 @@ class ConfigurationManager:
             http_port=_parse_int(net_raw.get("http_port"), 8080),
         )
 
-        # HALCON
-        halcon_raw = raw.get("halcon", {})
-        halcon = HALCONConfig(
-            grab_timeout_error_code=_parse_int(halcon_raw.get("grab_timeout_error_code"), 5322),
-            first_frame_timeout_ms=_parse_int(halcon_raw.get("first_frame_timeout_ms"), 5000),
-        )
-
         return AppConfig(
             application=application,
             database=database,
@@ -765,7 +760,6 @@ class ConfigurationManager:
             logging=logging,
             ui=ui,
             network=network,
-            halcon=halcon,
         )
 
     def _validate_config(self, config: AppConfig) -> None:

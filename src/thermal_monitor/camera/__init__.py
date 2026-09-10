@@ -5,12 +5,11 @@ from thermal_monitor.camera.acquisition import (
     FramePublisher,
     InProcessLatestPublisher,
 )
-from thermal_monitor.camera.driver import (
+from thermal_monitor.camera.source import (
     CameraConnectionError,
     CameraGrabError,
     CameraGrabTimeout,
     FrameSource,
-    TV46LDriver,
 )
 from thermal_monitor.camera.tv46_custom import CustomTV46LDriver
 from thermal_monitor.camera.tv46_gvcp import (
@@ -68,7 +67,6 @@ __all__ = [
     "IR_WIDTH",
     "InProcessLatestPublisher",
     "TV46DeviceInfo",
-    "TV46LDriver",
     "VL_HEIGHT",
     "VL_PACKING",
     "VL_PIXEL_FORMAT",

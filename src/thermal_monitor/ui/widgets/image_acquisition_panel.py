@@ -48,6 +48,7 @@ class ImageAcquisitionPanel(QWidget):
     history_changed = pyqtSignal(int)
     focus_set_requested = pyqtSignal(int)
     focus_refresh_requested = pyqtSignal()
+    nuc_requested = pyqtSignal()
 
     def __init__(self, theme_manager: Optional[ThemeManager] = None) -> None:
         super().__init__()
@@ -237,6 +238,26 @@ class ImageAcquisitionPanel(QWidget):
         self._focus_group = focus_group
         self._focus_group.setEnabled(False)
         layout.addWidget(focus_group)
+
+        # --- NUC GROUP (Stage 8G: custom-path production NUC, async via window) ---
+        nuc_group = QGroupBox("NUC")
+        nuc_layout = QVBoxLayout(nuc_group)
+        nuc_layout.setSpacing(6)
+        nuc_layout.setContentsMargins(8, 12, 8, 8)
+
+        self._nuc_button = QPushButton("Execute NUC")
+        self._nuc_button.clicked.connect(self.nuc_requested.emit)
+        self._apply_button_style(self._nuc_button, "primary")
+        nuc_layout.addWidget(self._nuc_button)
+
+        self._nuc_status_label = QLabel("NUC unavailable")
+        self._nuc_status_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        self._nuc_status_label.setWordWrap(True)
+        nuc_layout.addWidget(self._nuc_status_label)
+
+        self._nuc_group = nuc_group
+        self._nuc_group.setEnabled(False)
+        layout.addWidget(nuc_group)
 
         # --- IMAGE INFO GROUP ---
         info_group = QGroupBox("IMAGE INFO")
@@ -578,6 +599,32 @@ class ImageAcquisitionPanel(QWidget):
         self._focus_apply_btn.setEnabled(True)
         self._focus_refresh_btn.setEnabled(True)
         self._focus_status_label.setText(f"Error: {message}")
+
+    # -- NUC (Stage 8G; dumb view, window drives runtime asynchronously) --
+
+    def set_nuc_enabled(self, enabled: bool, reason: str = "") -> None:
+        """Enable/disable the NUC group (e.g. camera not running)."""
+        self._nuc_group.setEnabled(enabled)
+        self._nuc_button.setEnabled(enabled)
+        if not enabled:
+            self._nuc_status_label.setText(reason or "NUC unavailable")
+        elif self._nuc_status_label.text() in ("NUC unavailable", "Camera not running", ""):
+            self._nuc_status_label.setText("Ready")
+
+    def set_nuc_busy(self, text: str = "NUC running…") -> None:
+        """Indicate an in-flight NUC operation; block re-entry."""
+        self._nuc_button.setEnabled(False)
+        self._nuc_status_label.setText(text)
+
+    def set_nuc_result(self, duration_s: float) -> None:
+        """Report NUC completion with the measured command duration."""
+        self._nuc_button.setEnabled(True)
+        self._nuc_status_label.setText(f"OK: NUC complete in {duration_s:.2f}s")
+
+    def set_nuc_error(self, message: str) -> None:
+        """Report NUC failure clearly and re-enable the control."""
+        self._nuc_button.setEnabled(True)
+        self._nuc_status_label.setText(f"Error: {message}")
 
 
 __all__ = ["ImageAcquisitionPanel"]

@@ -325,10 +325,15 @@ class TestConfigurationEditor:
         config_manager = create_config_manager()
         editor = ConfigurationEditor(config_manager)
 
-        with patch('thermal_monitor.services.discovery.CameraDiscoveryService.discover_cameras',
-                    return_value=[]) as mock_discover:
+        # Stage 8E: search goes through the backend-selected discovery
+        # service (GVCP default), not a hardcoded HALCON service.
+        service = MagicMock()
+        service.discover_cameras.return_value = []
+        with patch('thermal_monitor.services.discovery.build_discovery_service',
+                   return_value=service) as mock_build:
             editor._on_search_cameras()
-            mock_discover.assert_called_once()
+            mock_build.assert_called_once()
+            service.discover_cameras.assert_called_once()
 
     def test_unsaved_change_warning(self, qapp: QApplication) -> None:
         """Unsaved change warning is shown on close."""
@@ -438,7 +443,7 @@ class TestConfigurationEditorIntegration:
             "Connection", "Startup", "Camera Mapping", "Storage Paths",
             "Recording", "Calibration", "Processing", "Alarms", "ROI Defaults",
             "PTZ", "Offline Playback", "Database", "Network", "Logging",
-            "Theme", "Colors", "Windows", "Live Display", "Display", "HALCON"
+            "Theme", "Colors", "Windows", "Live Display", "Display"
         ]
 
         for section in expected_sections:

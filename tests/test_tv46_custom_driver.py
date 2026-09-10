@@ -1,4 +1,4 @@
-"""Tests for camera.tv46_custom.CustomTV46LDriver (Stage 8B, IR-only).
+"""Tests for camera.tv46_custom.CustomTV46LDriver (Stage 8G final, dual-feed).
 
 No hardware required. GVCP and GVSP are faked in-memory; the driver is
 exercised through the real FrameSource/AcquisitionWorker contract surface.
@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from thermal_monitor.camera.acquisition import AcquisitionWorker, InProcessLatestPublisher
-from thermal_monitor.camera.driver import (
+from thermal_monitor.camera.source import (
     CameraConnectionError,
     CameraGrabError,
     CameraGrabTimeout,

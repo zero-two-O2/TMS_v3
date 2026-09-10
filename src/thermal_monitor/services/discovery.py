@@ -1,7 +1,9 @@
-"""HALCON GigE Vision camera discovery.
+"""Camera discovery: native GVCP broadcast (primary) + HALCON fallback.
 
-Discovery is deliberately separate from acquisition.  It opens a temporary
-framegrabber only long enough to read device metadata and always closes it.
+Discovery is deliberately separate from acquisition. Each backend opens a
+temporary handle only long enough to read device metadata and always
+closes it. GVCP discovery is the normal application path; the HALCON
+GigE Vision backend exists only as an explicit fallback.
 """
 
 from __future__ import annotations
@@ -75,7 +77,7 @@ class GvcpScanReport:
 
 
 class CameraDiscoveryError(RuntimeError):
-    """HALCON was unavailable or discovery failed."""
+    """Discovery was unavailable or failed (either backend)."""
 
 
 def _scalar(value: Any) -> Any:
@@ -97,7 +99,7 @@ def _ip_text(value: Any) -> str:
 
 
 def _parse_devices(result: Any) -> list[str]:
-    """Parse V2's ``info_framegrabber(..., 'device')`` response."""
+    """Parse a HALCON ``info_framegrabber(..., 'device')`` response."""
     if not isinstance(result, tuple) or len(result) < 2:
         return []
     entries = result[1]
@@ -122,7 +124,7 @@ def _parse_devices(result: Any) -> list[str]:
 
 
 class CameraDiscoveryService:
-    """Short-lived HALCON discovery service with injectable HALCON module."""
+    """Short-lived HALCON discovery service (explicit fallback backend)."""
 
     def __init__(
         self,
@@ -246,6 +248,8 @@ class GvcpDiscoveryService:
     hardware serial wherever the camera provides one.
     """
 
+    interface_label = "GVCP"
+
     def __init__(
         self,
         *,
@@ -308,6 +312,18 @@ class GvcpDiscoveryService:
         self._cameras = found
         self._duplicates = duplicates
         return self.cameras
+
+    def discover_cameras(self) -> list[DiscoveredCamera]:
+        """Broadcast discovery (same duck-type as CameraDiscoveryService).
+
+        The selection dialog drives either backend through this method.
+        Use :meth:`scan` with static IPs when classification of missing
+        cameras is required.
+        """
+        return self.discover_broadcast()
+
+    def refresh(self) -> list[DiscoveredCamera]:
+        return self.discover_cameras()
 
     def verify_static(self, ips: "list[str]") -> list[GvcpCameraState]:
         """Classify known IPs: static-verified / gvcp-nonresponsive / unreachable."""
@@ -373,4 +389,30 @@ __all__ = [
     "GvcpCameraState",
     "GvcpDiscoveryService",
     "GvcpScanReport",
+    "build_discovery_service",
 ]
+
+
+def build_discovery_service(
+    discovery_config: Any,
+) -> "CameraDiscoveryService | GvcpDiscoveryService":
+    """Build the configured discovery backend (Stage 8E cutover).
+
+    ``discovery_config.backend`` selects ``"gvcp"`` (default, native
+    broadcast) or ``"halcon"`` (explicit fallback). Exactly one backend is
+    constructed -- never silent switching. Callers that need the HALCON
+    fallback after a GVCP failure rebuild with a halcon-configured config.
+    """
+    backend = getattr(discovery_config, "backend", "gvcp")
+    if backend == "halcon":
+        return CameraDiscoveryService(
+            halcon_interface=getattr(discovery_config, "halcon_interface", "GigEVision2"),
+            attempts=getattr(discovery_config, "attempts", 3),
+            retry_delay_s=getattr(discovery_config, "retry_delay_s", 3.0),
+        )
+    if backend != "gvcp":
+        raise CameraDiscoveryError(f"Unknown discovery backend: {backend!r}")
+    return GvcpDiscoveryService(
+        timeout=getattr(discovery_config, "retry_delay_s", 3.0),
+        attempts=getattr(discovery_config, "attempts", 3),
+    )

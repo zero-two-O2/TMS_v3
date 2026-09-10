@@ -32,13 +32,15 @@ cameras:
   discovery:
     enabled: true
     startup_scan: true
-    halcon_interface: "GigEVision2"
+    backend: "gvcp"   # "gvcp" = native GVCP discovery (default); "halcon" = explicit fallback
+    static_ips: []     # optional known IPs for GVCP unicast verification
+    halcon_interface: "GigEVision2"   # HALCON discovery fallback only
     attempts: 3
     retry_delay_s: 3.0
     interval_seconds: 30.0
 
   acquisition:
-    backend: "custom"   # "custom" = GVCP/GVSP CustomTV46LDriver (default); "halcon" = legacy fallback
+    backend: "custom"   # sole production backend: GVCP/GVSP CustomTV46LDriver
     target_fps: 9
     grab_timeout_ms: 500
     socket_buffer_size: 1048576
@@ -55,7 +57,7 @@ cameras:
     max_reconnect_attempts: 10
 
   connection:
-    device_identifier: "default"   # "default" = auto-discover via HALCON
+    device_identifier: "default"   # reserved; camera identity uses serial/GVCP discovery
     ip_mode: "auto"                # "auto" | "static"
 
   startup:
@@ -216,7 +218,3 @@ ui:
 network:
   bind_address: "0.0.0.0"
   http_port: 8080
-
-halcon:
-  grab_timeout_error_code: 5322
-  first_frame_timeout_ms: 5000

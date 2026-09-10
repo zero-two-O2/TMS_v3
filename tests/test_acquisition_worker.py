@@ -10,7 +10,7 @@ import time
 import pytest
 
 from thermal_monitor.camera.acquisition import AcquisitionWorker, InProcessLatestPublisher
-from thermal_monitor.camera.driver import CameraGrabTimeout
+from thermal_monitor.camera.source import CameraGrabTimeout
 from thermal_monitor.camera.model import AcquisitionState
 from tests.conftest import (
     FakeFrameSource,
@@ -256,7 +256,7 @@ def test_stop_returns_promptly_even_while_running():
 
 
 def test_worker_lifecycle_stop_disconnect_reconnect_acquire():
-    """Regression test for HALCON access violation fix.
+    """Regression test for concurrent grab/close on one source handle.
 
     Verifies the strict lifecycle:
     1. acquisition running
@@ -266,7 +266,7 @@ def test_worker_lifecycle_stop_disconnect_reconnect_acquire():
     5. reconnect (new worker start)
     6. acquisition resumes
 
-    This ensures no concurrent grab/close on the same framegrabber handle.
+    This ensures no concurrent grab/close on the same source handle.
     """
     source = FakeFrameSource()
     publisher = FakePublisher()

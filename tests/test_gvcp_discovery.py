@@ -1,4 +1,4 @@
-"""Stage 8D Phase 5 tests: native GVCP discovery (HALCON untouched).
+"""Stage 8G tests: native GVCP discovery (HALCON discovery fallback retained).
 
 No hardware required. Broadcast answers and per-camera clients are faked;
 the service logic (dedupe, serial identity, local-interface reporting,
@@ -182,3 +182,108 @@ class TestScanMerge:
         assert cam.camera_id == "cam_HB25080011"
         assert cam.stable_identity == "HB25080011"
         assert isinstance(cam.local_ip, str) and cam.local_ip
+
+
+class FakeGvcpService:
+    """Duck-typed stand-in for the selection dialog (same method contract)."""
+
+    interface_label = "GVCP"
+
+    def __init__(self, cameras):
+        self._cameras = cameras
+
+    def discover_cameras(self):
+        return list(self._cameras)
+
+
+class TestDiscoveryCutover:
+    def test_builder_selects_gvcp_by_default(self):
+        from thermal_monitor.config import CameraDiscoveryConfig
+        from thermal_monitor.services.discovery import (
+            GvcpDiscoveryService,
+            build_discovery_service,
+        )
+
+        assert CameraDiscoveryConfig().backend == "gvcp"
+        service = build_discovery_service(CameraDiscoveryConfig())
+        assert isinstance(service, GvcpDiscoveryService)
+
+    def test_builder_selects_halcon_fallback(self):
+        from thermal_monitor.config import CameraDiscoveryConfig
+        from thermal_monitor.services.discovery import (
+            CameraDiscoveryService,
+            build_discovery_service,
+        )
+
+        service = build_discovery_service(CameraDiscoveryConfig(backend="halcon"))
+        assert isinstance(service, CameraDiscoveryService)
+
+    def test_builder_rejects_unknown_backend(self):
+        import pytest as _pytest
+        from types import SimpleNamespace
+
+        from thermal_monitor.config import CameraDiscoveryConfig
+        from thermal_monitor.services.discovery import build_discovery_service
+
+        with _pytest.raises(ValueError):
+            CameraDiscoveryConfig(backend="sdk")
+        with _pytest.raises(Exception):
+            build_discovery_service(SimpleNamespace(backend="sdk"))
+
+    def test_manager_parses_discovery_backend_and_static_ips(self, tmp_path):
+        import yaml
+
+        from thermal_monitor.config import ConfigurationManager
+
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {"cameras": {"discovery": {"backend": "halcon", "static_ips": ["192.168.42.13"]}}}
+            ),
+            encoding="utf-8",
+        )
+        config = ConfigurationManager(config_path=path).get_config()
+        assert config.cameras.discovery.backend == "halcon"
+        assert config.cameras.discovery.static_ips == ["192.168.42.13"]
+
+    def test_selection_dialog_lists_gvcp_cameras(self):
+        import os
+
+        os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+        from PyQt6.QtWidgets import QApplication
+
+        from thermal_monitor.services.discovery import DiscoveredCamera
+        from thermal_monitor.ui.widgets.camera_selection_dialog import (
+            CameraSelectionDialog,
+            _interface_label,
+        )
+
+        app = QApplication.instance() or QApplication([])
+        cams = [
+            DiscoveredCamera(
+                device_identifier="gvcp:HB25080011",
+                serial_number="HB25080011",
+                ip_address="192.168.42.13",
+                model="TV46L",
+                source="gvcp",
+                local_ip="192.168.42.100",
+            )
+        ]
+        service = FakeGvcpService(cams)
+        assert _interface_label(service) == "GVCP"
+        dialog = CameraSelectionDialog(service)
+        try:
+            deadline = __import__("time").monotonic() + 5.0
+            while (
+                dialog._camera_tree.topLevelItemCount() == 0
+                and __import__("time").monotonic() < deadline
+            ):
+                app.processEvents()
+                __import__("time").sleep(0.02)
+            assert dialog._camera_tree.topLevelItemCount() == 1
+            item = dialog._camera_tree.topLevelItem(0)
+            assert item.text(0) == "GVCP"
+            assert item.text(2) == "HB25080011"
+            assert "GVCP" in dialog._selection_info.text()
+        finally:
+            dialog.close()

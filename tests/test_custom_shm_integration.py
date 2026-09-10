@@ -1,12 +1,13 @@
-"""Stage 8C integration tests: custom acquisition through the V3 SHM path.
+"""Stage 8G integration tests: custom acquisition through the V3 SHM path.
 
 Proves, with fake GVCP/GVSP transport (no hardware):
 
     CustomTV46LDriver -> AcquisitionWorker -> SharedMemoryPublisher
         -> SharedMemoryRingBuffer -> Consumer
 
-plus runtime backend selection (``acquisition.backend``) and the
-NUC/focus/status pass-throughs. HALCON tests are untouched.
+plus runtime custom-backend construction and the NUC/focus/status
+pass-throughs. HALCON acquisition is removed; only the custom path is
+tested here (HALCON discovery fallback is covered by discovery tests).
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import numpy as np
 import pytest
 
 from thermal_monitor.camera.acquisition import AcquisitionWorker
-from thermal_monitor.camera.driver import TV46LDriver
 from thermal_monitor.camera.model import CameraConfig, CameraIdentity
 from thermal_monitor.camera.shm import create_ring_buffer_and_publisher
 from thermal_monitor.camera.tv46_custom import CustomTV46LDriver
@@ -333,9 +333,12 @@ class TestBackendSelection:
     def test_default_backend_is_custom(self):
         assert CamerasConfig().acquisition.backend == "custom"
 
-    def test_backend_rejects_unknown_values(self):
+    def test_backend_rejects_non_custom_values(self):
         with pytest.raises(ValueError):
             CameraAcquisitionConfig(backend="sdk")
+        with pytest.raises(ValueError):
+            # HALCON acquisition removed in Stage 8G.
+            CameraAcquisitionConfig(backend="halcon")
 
     def test_default_factory_builds_custom_driver(self):
         service = _service("custom")
@@ -343,11 +346,29 @@ class TestBackendSelection:
         source = service._default_source_factory(cfg)
         assert isinstance(source, CustomTV46LDriver)
 
-    def test_halcon_fallback_builds_halcon_driver(self):
-        service = _service("halcon")
-        source = service._default_source_factory(make_driver_config())
-        assert isinstance(source, TV46LDriver)
-        assert not isinstance(source, CustomTV46LDriver)
+    def test_default_factory_rejects_legacy_halcon_backend(self):
+        cameras = CamerasConfig.__new__(CamerasConfig)
+        # Bypass validation to simulate a stale config object carrying the
+        # removed backend value; the factory must fail loudly.
+        object.__setattr__(cameras, "discovery", CamerasConfig().discovery)
+        object.__setattr__(
+            cameras,
+            "acquisition",
+            CameraAcquisitionConfig.__new__(CameraAcquisitionConfig),
+        )
+        object.__setattr__(cameras.acquisition, "backend", "halcon")
+        object.__setattr__(cameras, "recovery", CamerasConfig().recovery)
+        object.__setattr__(cameras, "connection", CamerasConfig().connection)
+        object.__setattr__(cameras, "startup", CamerasConfig().startup)
+        object.__setattr__(cameras, "mapping", [])
+        service = CameraRuntimeService(
+            cameras_config=cameras,
+            system_config=SystemConfig(),
+            recording_config=RecordingConfig(),
+            storage_config=StorageConfig(),
+        )
+        with pytest.raises(CameraRuntimeError):
+            service._default_source_factory(make_driver_config())
 
 
 # ─── Runtime NUC / focus / status pass-throughs ──────────────────────────────
@@ -408,7 +429,11 @@ class TestRuntimeCustomControls:
         service, _ = _custom_service([(1, _ir_payload())])
         try:
             service.start_camera(_app_camera(camera_id))
-            service.perform_nuc(camera_id)
+            result = service.perform_nuc(camera_id)
+            assert result["camera_id"] == camera_id
+            assert result["nuc_duration_s"] >= 0.0
+            assert result["stream_config"]["packet_delay"] == 10000
+            assert result["stream_config"]["fusion_selector"] == 3
             assert service.get_focus_limits(camera_id) == (150, 1000000)
             assert service.get_focus_mm(camera_id) == 1000
             assert service.set_focus_mm(camera_id, 2500) == 2500
@@ -417,6 +442,20 @@ class TestRuntimeCustomControls:
             assert status["streaming"] is True
             with pytest.raises(CameraRuntimeError):
                 service.set_focus_mm(camera_id, 99999999)
+        finally:
+            service.shutdown()
+
+    def test_nuc_verifies_stream_config(self):
+        """NUC restores a disturbed packet delay (production behavior)."""
+        camera_id = f"cam8c_{uuid.uuid4().hex[:8]}"
+        service, _ = _custom_service([(1, _ir_payload())])
+        try:
+            service.start_camera(_app_camera(camera_id))
+            runtime = service._runtimes[camera_id]
+            runtime.source._gvcp.registers[0x0D08] = 0  # disturbed
+            result = service.perform_nuc(camera_id)
+            assert runtime.source._gvcp.registers[0x0D08] == 10000
+            assert result["stream_config"]["packet_delay"] == 10000
         finally:
             service.shutdown()
 
@@ -430,11 +469,17 @@ class TestRuntimeCustomControls:
         finally:
             service.shutdown()
 
-    def test_controls_reject_halcon_source(self):
+    def test_controls_reject_non_custom_source(self):
+        from tests.conftest import FakeFrameSource
+
+        service = _service("custom", source_factory=lambda cfg: FakeFrameSource())
         camera_id = f"cam8c_{uuid.uuid4().hex[:8]}"
-        service = _service("halcon", source_factory=lambda cfg: TV46LDriver(cfg))
-        # Start would need real HALCON hardware; instead verify the guard
-        # directly via a fabricated non-running-free runtime entry is not
-        # possible, so assert the type gate on the helper contract:
-        assert not isinstance(TV46LDriver(make_driver_config()), CustomTV46LDriver)
+        try:
+            service.start_camera(_app_camera(camera_id))
+            with pytest.raises(CameraRuntimeError):
+                service.perform_nuc(camera_id)
+            with pytest.raises(CameraRuntimeError):
+                service.get_focus_mm(camera_id)
+        finally:
+            service.shutdown()
         service.shutdown()

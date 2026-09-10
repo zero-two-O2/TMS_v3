@@ -82,9 +82,8 @@ REG_FRAME_RATE = 0x20A154
 FRAME_RATE_FPS = 9
 
 #: Manual NUC / fine-offset command (write-only). Value 11 executes the
-#: fine-offset correction immediately. NOTE (Stage 8B.7): this one-step
-#: command is NOT yet proven equivalent to the V3 HALCON two-step
-#: (RequestFineOffset -> ExecuteFineOffset) sequence. Hardware A/B pending.
+#: fine-offset correction immediately. This is the production NUC command
+#: for the custom GVCP/GVSP path (Stage 8G final).
 REG_NUC_COMMAND = 0x20A134
 NUC_EXECUTE_FINE_OFFSETS = 11
 
@@ -157,9 +156,9 @@ def parse_discovery_ack(data: bytes, sender_ip: str = "") -> TV46DeviceInfo:
     """Parse a DISCOVERY_ACK datagram into :class:`TV46DeviceInfo`.
 
     Field offsets are HARDWARE-MEASURED on the TV46L fleet (Stage 8D,
-    verified against HALCON serials/MACs on .11 and .13 -- e.g. serial
-    ``HB25080011`` at payload[216:248], MAC matching the HALCON device
-    string). They supersede the ported standalone guesses.
+    verified against serials/MACs on .11 and .13 -- e.g. serial
+    ``HB25080011`` at payload[216:248]). They supersede the ported
+    standalone guesses.
 
     Raises:
         ValueError: if the datagram is shorter than the GigE discovery

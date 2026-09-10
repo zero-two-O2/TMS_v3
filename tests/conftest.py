@@ -9,7 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 import numpy as np
 
-from thermal_monitor.camera.driver import CameraGrabTimeout
+from thermal_monitor.camera.source import CameraGrabTimeout
 from thermal_monitor.camera.model import (
     CameraConfig,
     CameraIdentity,

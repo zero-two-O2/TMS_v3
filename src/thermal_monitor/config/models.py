@@ -56,8 +56,15 @@ class CameraDiscoveryConfig:
     attempts: int = 3
     retry_delay_s: float = 3.0
     interval_seconds: float = 30.0
+    # Discovery backend: "gvcp" (default, native GVCP broadcast) or
+    # "halcon" (explicit HALCON GigE Vision discovery fallback).
+    backend: str = "gvcp"
+    # Known camera IPs for GVCP static verification fallback (unicast).
+    static_ips: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        if self.backend not in ("gvcp", "halcon"):
+            raise ValueError(f"cameras.discovery.backend must be 'gvcp' or 'halcon'; got {self.backend!r}")
         if self.attempts < 1:
             raise ValueError(f"cameras.discovery.attempts must be >= 1; got {self.attempts}")
         if self.retry_delay_s < 0:
@@ -76,14 +83,18 @@ class CameraAcquisitionConfig:
     thermal_bits_per_channel: int = 16
     stream_source_visible: Optional[str] = None
     visible_bits_per_channel: int = -1
-    # Stage 8C: acquisition backend selector. "custom" (default) uses the
-    # pure-Python GVCP/GVSP CustomTV46LDriver; "halcon" keeps the legacy
-    # HALCON GigEVision2 TV46LDriver as an explicit fallback.
+    # Stage 8G final: the sole production acquisition path is the
+    # pure-Python GVCP/GVSP CustomTV46LDriver ("custom"). HALCON
+    # acquisition is removed; any other value is rejected so a stale
+    # config.yaml fails loudly instead of silently picking a dead backend.
     backend: str = "custom"
 
     def __post_init__(self) -> None:
-        if self.backend not in ("custom", "halcon"):
-            raise ValueError(f"cameras.acquisition.backend must be 'custom' or 'halcon'; got {self.backend!r}")
+        if self.backend != "custom":
+            raise ValueError(
+                f"cameras.acquisition.backend must be 'custom' (HALCON acquisition "
+                f"removed in Stage 8G); got {self.backend!r}"
+            )
         if self.target_fps <= 0:
             raise ValueError(f"cameras.acquisition.target_fps must be > 0; got {self.target_fps}")
         if self.grab_timeout_ms <= 0:
@@ -440,12 +451,6 @@ class NetworkConfig:
 
 
 @dataclass(frozen=True, slots=True)
-class HALCONConfig:
-    grab_timeout_error_code: int = 5322
-    first_frame_timeout_ms: int = 5000
-
-
-@dataclass(frozen=True, slots=True)
 class AppConfig:
     application: ApplicationConfig = field(default_factory=ApplicationConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
@@ -462,4 +467,3 @@ class AppConfig:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     network: NetworkConfig = field(default_factory=NetworkConfig)
-    halcon: HALCONConfig = field(default_factory=HALCONConfig)

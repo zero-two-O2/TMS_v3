@@ -1,19 +1,17 @@
 """
-camera.tv46_custom -- custom Python TV46L acquisition driver (Stage 8B).
+camera.tv46_custom -- custom Python TV46L acquisition driver (Stage 8G final).
 
-``CustomTV46LDriver`` implements the existing
-:class:`~thermal_monitor.camera.driver.FrameSource` protocol using the
-pure-Python GVCP/GVSP stack (:mod:`tv46_gvcp` / :mod:`tv46_gvsp`) instead of
-HALCON.  It is designed as a drop-in ``source_factory`` for
-:class:`~thermal_monitor.camera.acquisition.AcquisitionWorker` and
-:class:`~thermal_monitor.services.runtime.CameraRuntimeService`:
+``CustomTV46LDriver`` implements the
+:class:`~thermal_monitor.camera.source.FrameSource` protocol using the
+pure-Python GVCP/GVSP stack (:mod:`tv46_gvcp` / :mod:`tv46_gvsp`). It is the
+sole production acquisition driver for the TV46L:
 
     TV46L --GVSP--> CustomTV46LDriver --GrabResult--> AcquisitionWorker
-        --Frame--> SharedMemoryPublisher/Ring (IR-only, unchanged)
+        --Frame--> SharedMemoryPublisher/Ring (dual-feed IR+VL)
 
-Stage 8D dual-feed: :meth:`grab` publishes the RAW 640x480 Mono16 IR plane
-AND the RAW 640x480 YUYV VL plane ((480, 1280) uint8, no conversion).
-Both planes come from one GVSP block under one frame ID.
+:meth:`grab` publishes the RAW 640x480 Mono16 IR plane AND the RAW
+640x480 YUYV VL plane ((480, 1280) uint8, no conversion). Both planes come
+from one GVSP block under one frame ID.
 
 Proven direct-path sequence preserved verbatim (see Stage 8A audit):
 
@@ -22,7 +20,8 @@ Proven direct-path sequence preserved verbatim (see Stage 8A audit):
     -> keep SCPS0 (1500) -> fusion 0x10A110=3 (<=3 tries)
     -> AcquisitionStart 0x10A104=1 -> stream baseline readback
 
-HALCON (`TV46LDriver`) is untouched and remains the production fallback.
+Stage 8G: HALCON acquisition is removed. This driver owns the production
+acquisition stream, including the NUC and focus production pathways.
 """
 
 from __future__ import annotations
@@ -36,7 +35,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from thermal_monitor.camera.driver import (
+from thermal_monitor.camera.source import (
     FIRST_FRAME_TIMEOUT_MS,
     CameraConnectionError,
     CameraGrabError,
@@ -364,12 +363,12 @@ class CustomTV46LDriver:
     def grab(self, timeout_ms: int) -> GrabResult:
         """Acquire one RAW combined frame (IR + VL). Never synthesises --
         raises :class:`CameraGrabError` on timeout so the worker's reconnect
-        policy applies (identical to the HALCON path semantics).
+        policy applies.
 
-        Stage 8D dual-feed: both planes come from the SAME GVSP block, so IR
-        and VL are intrinsically correlated (same ``frame_id``). No RGB or
-        display conversion is performed here -- VL stays raw YUYV."""
-        from thermal_monitor.camera.driver import CameraGrabTimeout
+        Both planes come from the SAME GVSP block, so IR and VL are
+        intrinsically correlated (same ``frame_id``). No RGB or display
+        conversion is performed here -- VL stays raw YUYV."""
+        from thermal_monitor.camera.source import CameraGrabTimeout
 
         if not self._streaming or self._gvsp is None:
             raise CameraConnectionError("Stream is not running (call connect first)")
@@ -414,14 +413,26 @@ class CustomTV46LDriver:
         )
 
     # ------------------------------------------------------------------
-    # NUC (custom one-step command -- hardware A/B vs HALCON pending, §8B.7)
+    # NUC (custom one-step production command -- Stage 8G final)
     # ------------------------------------------------------------------
 
     def perform_nuc(self) -> None:
         """Execute the manual fine-offset/NUC command (0x20A134 = 11).
 
-        Command only -- no flush, no freeze policy here (worker/runtime
-        policy to be decided after hardware A/B against the HALCON two-step).
+        Production behavior (Stage 8G, custom-path only):
+
+        * Command only -- a single GVCP register write while the custom
+          GVSP stream keeps running. No backend switch, no reconnect, no
+          synthetic or duplicated frames, no arbitrary sleeps.
+        * The SHM ring naturally freezes on the last pre-NUC frame during
+          the short hardware silence (latest-frame consumers keep showing
+          it); malformed transitional blocks are rejected by
+          :func:`parse_combined_payload` (raised as ``CameraGrabError`` and
+          never published), so the first accepted post-NUC frame is a fully
+          valid IR+VL pair with synchronized frame IDs.
+        * Stream configuration (packet delay / fusion) is verified by the
+          caller (:meth:`verify_stream_config` / runtime ``perform_nuc``);
+          this method only issues the command and reports rejection.
         """
         if self._gvcp is None or not self._streaming:
             raise CameraConnectionError("Cannot trigger NUC before streaming starts")
@@ -518,7 +529,11 @@ class CustomTV46LDriver:
 
     def verify_stream_config(self, expected_packet_delay: int) -> dict:
         """Verify NUC did not disturb stream config. Restores ONLY the
-        proven packet-delay value on mismatch; everything else is reported."""
+        proven packet-delay value on mismatch; everything else is reported.
+
+        Returns the post-verification readback (after any restore), so
+        callers see the effective stream configuration.
+        """
         actual = self.read_stream_config()
         if actual["packet_delay"] != expected_packet_delay and self._gvcp is not None:
             logger.warning(
@@ -530,6 +545,12 @@ class CustomTV46LDriver:
             if not self._gvcp.write_register(REG_PACKET_DELAY, expected_packet_delay):
                 raise CameraGrabError(
                     f"{self._camera_ip}: failed to restore packet delay"
+                )
+            actual["packet_delay"] = self._gvcp.read_register(REG_PACKET_DELAY)
+            if actual["packet_delay"] != expected_packet_delay:
+                raise CameraGrabError(
+                    f"{self._camera_ip}: packet delay readback "
+                    f"{actual['packet_delay']} != {expected_packet_delay} after restore"
                 )
         if actual["fusion_selector"] != FUSION_COMBINED_VALUE:
             logger.warning(

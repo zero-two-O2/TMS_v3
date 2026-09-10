@@ -25,15 +25,27 @@ from PyQt6.QtWidgets import (
     QMessageBox,
 )
 
-from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera
+from thermal_monitor.services.discovery import (
+    CameraDiscoveryService,
+    DiscoveredCamera,
+    GvcpDiscoveryService,
+)
 from thermal_monitor.ui.theme import ThemeManager
+
+
+def _interface_label(service: object) -> str:
+    """Human interface label for either discovery backend."""
+    halcon = getattr(service, "_halcon_interface", None)
+    if halcon:
+        return str(halcon)
+    return str(getattr(service, "interface_label", "GVCP"))
 
 
 class _DiscoveryWorker(QThread):
     completed = pyqtSignal(object)
     failed = pyqtSignal(str)
 
-    def __init__(self, service: CameraDiscoveryService) -> None:
+    def __init__(self, service: "CameraDiscoveryService | GvcpDiscoveryService") -> None:
         super().__init__()
         self._service = service
 
@@ -53,7 +65,7 @@ class CameraSelectionDialog(QDialog):
 
     def __init__(
         self,
-        discovery_service: CameraDiscoveryService,
+        discovery_service: "CameraDiscoveryService | GvcpDiscoveryService",
         theme_manager: Optional[ThemeManager] = None,
         parent=None,
     ) -> None:
@@ -241,11 +253,11 @@ class CameraSelectionDialog(QDialog):
 
     def _on_discovery_completed(self, cameras) -> None:
         for cam in cameras:
-            interface = getattr(self._discovery_service, "_halcon_interface", "GigEVision2")
+            interface = _interface_label(self._discovery_service)
             item = QTreeWidgetItem([interface, cam.camera_id, cam.serial_number or "—", cam.ip_address or "—", cam.model or "—"])
             item.setData(0, Qt.ItemDataRole.UserRole, cam)
             self._camera_tree.addTopLevelItem(item)
-        self._selection_info.setText(f"{len(cameras)} camera(s) discovered")
+        self._selection_info.setText(f"{len(cameras)} camera(s) discovered ({_interface_label(self._discovery_service)})")
         self.discovery_finished.emit()
 
     def _on_discovery_failed(self, message: str) -> None:

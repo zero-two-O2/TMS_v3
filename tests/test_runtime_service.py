@@ -3,7 +3,7 @@
 Covers the CameraRuntimeService controller that owns the Observer-mode
 producer path:
 
-    TV46LDriver -> AcquisitionWorker -> SHM Ring -> (RecordingConsumer,
+    CustomTV46LDriver -> AcquisitionWorker -> SHM Ring -> (RecordingConsumer,
     ProcessingConsumer -> ObserverService -> GUI)
 
 All tests use synthetic frame sources and the real AcquisitionWorker, real
@@ -30,7 +30,8 @@ from tests.conftest import FakeFrameSource
 
 import thermal_monitor.camera  # noqa: E402,F401  (import order: core.shm <-> camera)
 
-from thermal_monitor.camera.driver import CameraConnectionError
+from thermal_monitor.camera.source import CameraConnectionError
+from thermal_monitor.camera.model import AcquisitionState
 from thermal_monitor.core.models import AnalysisConfig
 from thermal_monitor.core.models import CameraConfig as AppCameraConfig
 from thermal_monitor.core.models import CameraIdentity as AppCameraIdentity
@@ -147,14 +148,19 @@ def qapp():
 
 class TestStartCamera:
     def test_start_reaches_acquiring_and_publishes(self, qapp):
-        """start_camera creates the producer path and reaches ACQUIRING."""
+        """start_camera creates the producer path and reaches STREAMING."""
         service = runtime_service()
         camera_id = unique_camera("cam_start")
         try:
             service.start_camera(make_app_camera_config(camera_id))
             assert service.is_camera_running(camera_id)
             stats = service.camera_stats(camera_id)
-            assert stats is not None and stats.state.value == "acquiring"
+            # ACQUIRING is a legacy alias of STREAMING (same "streaming"
+            # value); accept the canonical enum member either way.
+            assert stats is not None and stats.state in (
+                AcquisitionState.STREAMING,
+                AcquisitionState.ACQUIRING,
+            )
 
             assert wait_until(lambda: service.camera_stats(camera_id).published >= 1)
         finally:
@@ -288,7 +294,10 @@ class TestObserverLifecycle:
             service.stop_observer(camera_id)
             assert not service.is_observer_running(camera_id)
             assert service.is_camera_running(camera_id)
-            assert service.camera_stats(camera_id).state.value == "acquiring"
+            assert service.camera_stats(camera_id).state in (
+                AcquisitionState.STREAMING,
+                AcquisitionState.ACQUIRING,
+            )
         finally:
             service.shutdown()
 

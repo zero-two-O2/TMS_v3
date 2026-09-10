@@ -56,12 +56,13 @@ from thermal_monitor.processing import ProcessingResult
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.runtime import CameraRuntimeService
-from thermal_monitor.services.discovery import CameraDiscoveryService
+from thermal_monitor.services.discovery import CameraDiscoveryService, GvcpDiscoveryService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.config import ConfigurationManager
 from thermal_monitor.ui.configuration_editor import ConfigurationEditor
 from thermal_monitor.ui.frame_rate import UniqueFrameRate
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverlay
+from thermal_monitor.ui.modes.vl_image import VlImageWidget
 from thermal_monitor.ui.widgets import (
     ConfigCameraHeader,
     ThermalScalePanel,
@@ -116,6 +117,33 @@ class FocusWorker(QObject):
             self.failed.emit(self._camera_id, str(exc)[:200])
 
 
+class NucWorker(QObject):
+    """Off-GUI-thread NUC operation (Stage 8G).
+
+    The GVCP NUC write + stream-config verification can block for a
+    moment; this worker owns that latency so the live display never
+    freezes. One operation per worker instance; results return via queued
+    signals. The custom GVSP stream keeps running throughout.
+    """
+
+    finished = pyqtSignal(str, float)  # camera_id, nuc_duration_s
+    failed = pyqtSignal(str, str)  # camera_id, message
+
+    def __init__(self, runtime_service, camera_id: str) -> None:
+        super().__init__()
+        self._runtime_service = runtime_service
+        self._camera_id = camera_id
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            result = self._runtime_service.perform_nuc(self._camera_id)
+            duration = float(result.get("nuc_duration_s", 0.0))
+            self.finished.emit(self._camera_id, duration)
+        except Exception as exc:
+            self.failed.emit(self._camera_id, str(exc)[:300])
+
+
 class ConfigurationModeWidget(QWidget):
     """Main widget for Configuration mode - ThermoView-style workstation."""
 
@@ -127,7 +155,7 @@ class ConfigurationModeWidget(QWidget):
         config_service: ConfigurationService,
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
-        discovery_service: CameraDiscoveryService | None = None,
+        discovery_service: "CameraDiscoveryService | GvcpDiscoveryService | None" = None,
         theme_manager: Optional[ThemeManager] = None,
         config_manager: Optional[ConfigurationManager] = None,
     ) -> None:
@@ -149,6 +177,9 @@ class ConfigurationModeWidget(QWidget):
         # by camera-id token when the selection changes mid-operation).
         self._focus_thread: QThread | None = None
         self._focus_camera_id: str | None = None
+        # NUC worker thread (at most one in flight; same stale-result rule).
+        self._nuc_thread: QThread | None = None
+        self._nuc_camera_id: str | None = None
 
         # Dirty state tracking for camera-specific configurations
         self._dirty_camera_configs: set[str] = set()
@@ -189,6 +220,7 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.history_changed.connect(self._on_history_changed)
         self._acq_panel.focus_set_requested.connect(self._on_focus_set_requested)
         self._acq_panel.focus_refresh_requested.connect(self._on_focus_refresh_requested)
+        self._acq_panel.nuc_requested.connect(self._on_nuc_requested)
         main_splitter.addWidget(self._acq_panel)
 
         # CENTER PANE: Large thermal image (primary workspace)
@@ -201,7 +233,17 @@ class ConfigurationModeWidget(QWidget):
         self._image_widget.cursor_temperature_changed.connect(self._on_cursor_temperature)
         self._image_widget.rendered_frame.connect(self._on_rendered_frame)
         self._image_widget.render_error.connect(self._on_render_error)
-        center_layout.addWidget(self._image_widget, 1)
+        self._vl_widget = VlImageWidget()
+        self._vl_widget.render_error.connect(self._on_render_error)
+        # IR (dominant) + VL side-by-side for the selected camera (Stage 8D/8E
+        # dual-feed); the splitter preserves the thermal workspace priority.
+        ir_vl_splitter = QSplitter(Qt.Orientation.Horizontal)
+        ir_vl_splitter.addWidget(self._image_widget)
+        ir_vl_splitter.addWidget(self._vl_widget)
+        ir_vl_splitter.setSizes([700, 420])
+        ir_vl_splitter.setStretchFactor(0, 3)
+        ir_vl_splitter.setStretchFactor(1, 2)
+        center_layout.addWidget(ir_vl_splitter, 1)
 
         main_splitter.addWidget(center_widget)
 
@@ -459,11 +501,12 @@ class ConfigurationModeWidget(QWidget):
             running = self._runtime_service.is_camera_running(camera_id)
             self._acq_panel.set_acquisition_running(running)
 
-        # Refresh focus state for the selected camera (async; no-op when the
-        # camera is not running on the custom backend).
+        # Refresh focus + NUC state for the selected camera (async; no-op
+        # when the camera is not running).
         self._refresh_focus_panel()
+        self._refresh_nuc_panel()
 
-    # -- Focus (Stage 8D; UI -> runtime/service -> driver, never GVCP) --
+    # -- Focus (UI -> runtime/service -> driver, never GVCP directly) --
 
     def _stop_focus_worker(self) -> None:
         thread, self._focus_thread = self._focus_thread, None
@@ -534,10 +577,62 @@ class ConfigurationModeWidget(QWidget):
     def _on_focus_failed(self, camera_id: str, message: str) -> None:
         if camera_id != self._selected_camera_id:
             return
-        if "does not use the custom acquisition backend" in message:
-            self._acq_panel.set_focus_enabled(False, "HALCON backend: no focus API")
-        else:
-            self._acq_panel.set_focus_error(message)
+        self._acq_panel.set_focus_error(message)
+
+    # -- NUC (Stage 8G; UI -> runtime/service -> driver, never GVCP directly) --
+
+    def _stop_nuc_worker(self) -> None:
+        thread, self._nuc_thread = self._nuc_thread, None
+        if thread is not None:
+            thread.quit()
+            thread.wait(5000)
+
+    def _refresh_nuc_panel(self) -> None:
+        """Enable NUC when the selected camera runs; else disable."""
+        camera_id = self._selected_camera_id
+        if (
+            camera_id is None
+            or self._runtime_service is None
+            or not self._runtime_service.is_camera_running(camera_id)
+        ):
+            self._stop_nuc_worker()
+            self._nuc_camera_id = None
+            self._acq_panel.set_nuc_enabled(False, "Camera not running")
+            return
+        self._acq_panel.set_nuc_enabled(True)
+
+    def _on_nuc_requested(self) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._runtime_service is None:
+            return
+        if not self._runtime_service.is_camera_running(camera_id):
+            self._acq_panel.set_nuc_error("Camera not running")
+            return
+        self._stop_nuc_worker()
+        self._nuc_camera_id = camera_id
+        self._acq_panel.set_nuc_enabled(True)
+        self._acq_panel.set_nuc_busy("NUC running…")
+        self._nuc_thread = QThread(self)
+        worker = NucWorker(self._runtime_service, camera_id)
+        worker.moveToThread(self._nuc_thread)
+        self._nuc_thread.started.connect(worker.run)
+        worker.finished.connect(self._on_nuc_finished)
+        worker.failed.connect(self._on_nuc_failed)
+        worker.finished.connect(self._nuc_thread.quit)
+        worker.failed.connect(self._nuc_thread.quit)
+        self._nuc_thread.start()
+
+    def _on_nuc_finished(self, camera_id: str, duration_s: float) -> None:
+        if camera_id != self._selected_camera_id:
+            return
+        self._acq_panel.set_nuc_enabled(True)
+        self._acq_panel.set_nuc_result(duration_s)
+
+    def _on_nuc_failed(self, camera_id: str, message: str) -> None:
+        if camera_id != self._selected_camera_id:
+            return
+        self._acq_panel.set_nuc_enabled(True)
+        self._acq_panel.set_nuc_error(message)
 
     def _get_camera_connection_status(self, camera_id: str) -> CameraConnectionState:
         """Get the connection status of a camera."""
@@ -558,6 +653,7 @@ class ConfigurationModeWidget(QWidget):
     def _clear_all_panels(self) -> None:
         """Clear all panels when no camera selected."""
         self._image_widget.clear()
+        self._vl_widget.clear()
         self._image_widget.set_roi_overlays([])
         self._scale_panel.update_cursor_temperature(None)
         self._roi_panel.set_camera("")
@@ -586,6 +682,17 @@ class ConfigurationModeWidget(QWidget):
             minimum = result.analysis_result.overall_min
             maximum = result.analysis_result.overall_max
         self._image_widget.set_frame(temperature_image, frame, minimum, maximum)
+
+        # VL display (Stage 8E): same result -> same hardware frame, so the
+        # VL image shown always corresponds to the IR image shown.
+        if frame is not None and frame.payload.visible is not None:
+            self._vl_widget.set_frame(
+                frame.payload.visible,
+                frame.descriptor.sequence,
+                frame.descriptor.visible.sequence,
+            )
+        else:
+            self._vl_widget.set_frame(None, sequence if sequence is not None else -1)
 
         # Update image info
         if frame:
@@ -740,11 +847,15 @@ class ConfigurationModeWidget(QWidget):
             self._acq_panel.set_connection_state(CameraConnectionState.CONNECTED)
             self._status_conn.setText("Connection: Connected")
             self._status_label.setText("Camera connected - press Start to begin acquisition")
+            self._refresh_focus_panel()
+            self._refresh_nuc_panel()
 
         except Exception as exc:
             self._toolbar.set_connection_state(CameraConnectionState.ERROR)
             self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
             self._status_conn.setText(f"Connection: Error")
+            self._acq_panel.set_focus_enabled(False, "Camera not running")
+            self._acq_panel.set_nuc_enabled(False, "Camera not running")
             QMessageBox.warning(self, "Connect Failed", f"Failed to connect to camera: {exc}")
 
     def _on_disconnect(self) -> None:
@@ -763,10 +874,13 @@ class ConfigurationModeWidget(QWidget):
 
             self._acq_panel.set_acquisition_running(False)
 
-            # Focus no longer available once the camera stops.
+            # Focus + NUC no longer available once the camera stops.
             self._stop_focus_worker()
             self._focus_camera_id = None
             self._acq_panel.set_focus_enabled(False, "Camera not running")
+            self._stop_nuc_worker()
+            self._nuc_camera_id = None
+            self._acq_panel.set_nuc_enabled(False, "Camera not running")
 
             # Update to DISCONNECTED state
             self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
@@ -774,6 +888,7 @@ class ConfigurationModeWidget(QWidget):
             self._status_conn.setText("Connection: Disconnected")
             self._status_label.setText("Camera disconnected")
             self._image_widget.clear()
+            self._vl_widget.clear()
 
         except Exception as exc:
             QMessageBox.warning(self, "Disconnect Failed", f"Failed to disconnect: {exc}")
@@ -1063,6 +1178,7 @@ class ConfigurationModeWidget(QWidget):
 
     def closeEvent(self, event) -> None:
         self._stop_focus_worker()
+        self._stop_nuc_worker()
         self.on_mode_deactivated()
         self._config_service.remove_camera_change_callback(self._on_camera_config_changed)
         self._config_service.remove_analysis_change_callback(self._on_analysis_config_changed)
@@ -1077,7 +1193,7 @@ class ConfigurationWindow(QMainWindow):
         config_service: ConfigurationService,
         mode_service: ModeService,
         runtime_service: CameraRuntimeService | None = None,
-        discovery_service: CameraDiscoveryService | None = None,
+        discovery_service: "CameraDiscoveryService | GvcpDiscoveryService | None" = None,
         theme_manager: Optional[ThemeManager] = None,
         config_manager: Optional[ConfigurationManager] = None,
     ) -> None:

@@ -1,7 +1,7 @@
 """Integration tests for shared-memory ring producer/consumer flow (Stage 7B).
 
 Tests the complete path:
-TV46LDriver -> AcquisitionWorker -> SharedMemoryRingBuffer -> Consumer
+CustomTV46LDriver -> AcquisitionWorker -> SharedMemoryRingBuffer -> Consumer
 """
 
 from __future__ import annotations
@@ -12,12 +12,11 @@ import numpy as np
 import pytest
 
 from thermal_monitor.camera.acquisition import AcquisitionWorker, AcquisitionState
-from thermal_monitor.camera.driver import (
+from thermal_monitor.camera.source import (
     CameraGrabTimeout,
     FrameSource,
-    GrabResult,
 )
-from thermal_monitor.camera.model import CameraConfig, CameraIdentity, PublishResult
+from thermal_monitor.camera.model import CameraConfig, CameraIdentity, GrabResult, PublishResult
 from thermal_monitor.camera.shm import create_ring_buffer_and_publisher
 from thermal_monitor.core.frame import Frame, FrameDescriptor, FramePayload, StreamMetadata, SyncInfo, SyncStatus
 from thermal_monitor.core.shm import SlotState

@@ -3,8 +3,8 @@ camera.acquisition -- acquisition orchestration for one camera.
 
 This module owns the continuous acquisition loop, sequence numbers,
 timestamps, FPS measurement, dropped-frame detection, recovery scheduling
-and graceful shutdown.  It does not touch HALCON directly; it drives a
-:class:`~thermal_monitor.camera.driver.FrameSource` and publishes immutable
+and graceful shutdown.  It does not touch hardware directly; it drives a
+:class:`~thermal_monitor.camera.source.FrameSource` and publishes immutable
 :class:`~thermal_monitor.core.frame.Frame` objects to a
 :class:`FramePublisher`.
 
@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Protocol
 
-from thermal_monitor.camera.driver import (
+from thermal_monitor.camera.source import (
     CameraConnectionError,
     CameraGrabError,
     CameraGrabTimeout,
@@ -201,7 +201,7 @@ class AcquisitionWorker:
         self._start_time = time.perf_counter()
         self._last_error: str | None = None
 
-        # Acquisition statistics (packet-level from HALCON)
+        # Acquisition statistics (packet-level from the GVSP receiver)
         self._frames_received = 0
         self._packets_lost = 0
         self._blocks_incomplete = 0
@@ -511,11 +511,10 @@ class AcquisitionWorker:
         if result.frame_id is not None:
             thermal_sequence = result.frame_id
 
-        # Visible correlation (Stage 8D): a non-None visible plane arrives in
+        # Visible correlation: a non-None visible plane arrives in
         # the SAME GrabResult as thermal, i.e. split from one combined GVSP
         # block under one hardware frame ID. It therefore carries the same
         # sequence/timestamps -- IR and VL can never mismatch within a frame.
-        # (HALCON never provides visible, so this changes nothing there.)
         visible_sequence = thermal_sequence if visible is not None else None
 
         thermal_meta = StreamMetadata(
@@ -546,9 +545,7 @@ class AcquisitionWorker:
         # Synchronization status: both payloads non-None happens only for
         # same-block combined sources (custom GVCP/GVSP backend), where IR
         # and VL are split from ONE GVSP block under ONE block/frame ID --
-        # hence intrinsically correlated. The HALCON backend never produces
-        # both (single-stream time-sliced selector), so this branch does not
-        # change HALCON behavior.
+        # hence intrinsically correlated.
         if thermal is not None and visible is not None:
             sync = SyncInfo(status=SyncStatus.SYNCHRONIZED, time_delta=0.0)
         elif thermal is not None:
@@ -590,7 +587,7 @@ class AcquisitionWorker:
             self._frames_received += 1
             self._last_grab_duration = frame.descriptor.metadata.get("grab_duration_s", 0.0)
 
-            # Calculate packet counter deltas from HALCON
+            # Calculate packet counter deltas from the GVSP receiver
             packet_stats = frame.descriptor.metadata.get("packet_stats")
             if packet_stats and isinstance(packet_stats, dict):
                 if self._prev_packet_stats is not None:

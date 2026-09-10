@@ -25,8 +25,8 @@ import numpy as np
 import pytest
 
 from thermal_monitor.camera.acquisition import AcquisitionWorker
-from thermal_monitor.camera.driver import FrameSource, GrabResult
-from thermal_monitor.camera.model import CameraConfig, CameraIdentity, PublishResult
+from thermal_monitor.camera.source import FrameSource
+from thermal_monitor.camera.model import CameraConfig, CameraIdentity, GrabResult, PublishResult
 from thermal_monitor.core.frame import (
     Frame,
     FrameDescriptor,

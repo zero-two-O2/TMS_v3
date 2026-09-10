@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 from thermal_monitor.core.modes import ApplicationMode
 from thermal_monitor.services.mode import ModeService
-from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError
+from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError, GvcpDiscoveryService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.ui.theme import ThemeManager
 
@@ -43,7 +43,7 @@ class LauncherWindow(QMainWindow):
         self,
         mode_service: ModeService,
         config_service: ConfigurationService,
-        discovery_service: Optional[CameraDiscoveryService] = None,
+        discovery_service: "Optional[CameraDiscoveryService | GvcpDiscoveryService]" = None,
         theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
@@ -194,7 +194,7 @@ class LauncherWindow(QMainWindow):
             self._update_status()
             self._status_bar_label.setText(f"Discovery complete: {len(self._discovered)} camera(s) found")
         except CameraDiscoveryError as exc:
-            QMessageBox.warning(self, "Camera Discovery", f"HALCON discovery failed: {exc}")
+            QMessageBox.warning(self, "Camera Discovery", f"Camera discovery failed: {exc}")
             self._status_bar_label.setText(f"Discovery failed: {exc}")
         finally:
             self._search_btn.setEnabled(True)

@@ -24,7 +24,7 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
 from thermal_monitor.services.runtime import CameraRuntimeService
-from thermal_monitor.services.discovery import CameraDiscoveryService
+from thermal_monitor.services.discovery import build_discovery_service
 from thermal_monitor.storage.database import Database
 from thermal_monitor.config import ConfigurationManager, create_config_manager
 from thermal_monitor.ui.theme import ThemeManager
@@ -66,7 +66,7 @@ class ThermalMonitorApp:
         self._mode_service = ModeService()
         self._config_service = ConfigurationService()
         self._offline_service = OfflineService()
-        self._discovery_service = CameraDiscoveryService()
+        self._discovery_service = build_discovery_service(config.cameras.discovery)
         self._runtime_service = CameraRuntimeService(
             cameras_config=config.cameras,
             system_config=config.system,

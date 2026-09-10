@@ -1,8 +1,7 @@
-"""Stage 8D Phase 4 tests: focus Configuration UI (panel + async worker).
+"""Stage 8G tests: focus + NUC Configuration UI (panel + async workers).
 
-No hardware required. The panel is a dumb view (signals only); FocusWorker
-drives a fake runtime off the GUI thread. Window wiring (signal connections,
-stale-result tokens, cleanup) mirrors the tested panel/worker contracts.
+No hardware required. Panels are dumb views (signals only); FocusWorker /
+NucWorker drive a fake runtime off the GUI thread.
 """
 
 from __future__ import annotations
@@ -15,7 +14,7 @@ from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication
 
 from thermal_monitor.ui.widgets.image_acquisition_panel import ImageAcquisitionPanel
-from thermal_monitor.ui.windows.configuration_window import FocusWorker
+from thermal_monitor.ui.windows.configuration_window import FocusWorker, NucWorker
 
 
 @pytest.fixture
@@ -168,6 +167,110 @@ class TestFocusWorker:
         done: list = []
         worker.read_finished.connect(lambda *a: done.append(a))
         worker.read_finished.connect(thread.quit)
+        thread.started.connect(worker.run)
+        thread.start()
+        deadline = time.time() + 5.0
+        while not done and time.time() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        thread.wait(2000)
+        assert done, "worker never delivered"
+        assert seen["thread"] is not gui_thread
+
+
+class TestNucPanel:
+    def test_initially_disabled(self, qapp):
+        panel = ImageAcquisitionPanel()
+        assert not panel._nuc_group.isEnabled()
+
+    def test_enable_shows_ready(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_nuc_enabled(True)
+        assert panel._nuc_button.isEnabled()
+        assert "Ready" in panel._nuc_status_label.text()
+
+    def test_button_emits_request(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_nuc_enabled(True)
+        seen: list = []
+        panel.nuc_requested.connect(lambda: seen.append(True))
+        panel._nuc_button.click()
+        assert seen == [True]
+
+    def test_busy_disables_result_reenables(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_nuc_enabled(True)
+        panel.set_nuc_busy("NUC running…")
+        assert not panel._nuc_button.isEnabled()
+        panel.set_nuc_result(0.42)
+        assert panel._nuc_button.isEnabled()
+        assert "0.42" in panel._nuc_status_label.text()
+
+    def test_error_reported_and_reenabled(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_nuc_enabled(True)
+        panel.set_nuc_busy()
+        panel.set_nuc_error("boom")
+        assert panel._nuc_button.isEnabled()
+        assert "boom" in panel._nuc_status_label.text()
+
+    def test_disable_with_reason(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_nuc_enabled(False, "Camera not running")
+        assert "not running" in panel._nuc_status_label.text()
+
+
+class FakeNucRuntime:
+    def __init__(self, duration=0.25, fail=None):
+        self._duration = duration
+        self._fail = fail
+        self.calls: list = []
+
+    def perform_nuc(self, camera_id):
+        self.calls.append(camera_id)
+        if self._fail:
+            raise self._fail
+        return {"camera_id": camera_id, "nuc_duration_s": self._duration}
+
+
+class TestNucWorker:
+    def test_success_path(self, qapp):
+        runtime = FakeNucRuntime(duration=0.25)
+        worker = NucWorker(runtime, "cam1")
+        got: list = []
+        worker.finished.connect(lambda *a: got.append(a))
+        worker.run()
+        assert got == [("cam1", 0.25)]
+        assert runtime.calls == ["cam1"]
+
+    def test_failure_path(self, qapp):
+        runtime = FakeNucRuntime(fail=RuntimeError("camera rejected NUC"))
+        worker = NucWorker(runtime, "cam1")
+        got: list = []
+        worker.failed.connect(lambda *a: got.append(a))
+        worker.run()
+        assert len(got) == 1 and got[0][0] == "cam1" and "rejected" in got[0][1]
+
+    def test_runs_off_gui_thread(self, qapp):
+        from PyQt6.QtCore import QThread
+
+        runtime = FakeNucRuntime()
+        gui_thread = qapp.thread()
+        seen: dict = {}
+        orig = runtime.perform_nuc
+
+        def slow(camera_id):
+            time.sleep(0.2)
+            seen["thread"] = QThread.currentThread()
+            return orig(camera_id)
+
+        runtime.perform_nuc = slow
+        worker = NucWorker(runtime, "cam1")
+        thread = QThread()
+        worker.moveToThread(thread)
+        done: list = []
+        worker.finished.connect(lambda *a: done.append(a))
+        worker.finished.connect(thread.quit)
         thread.started.connect(worker.run)
         thread.start()
         deadline = time.time() + 5.0

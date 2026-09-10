@@ -71,7 +71,6 @@ from thermal_monitor.config.models import (
     UILiveConfig,
     UIDisplayConfig,
     NetworkConfig,
-    HALCONConfig,
 )
 from thermal_monitor.ui.theme import ThemeManager
 
@@ -389,7 +388,6 @@ class ConfigurationEditor(QWidget):
             logging=self._clone_dataclass(config.logging),
             ui=self._clone_ui_config(config.ui),
             network=self._clone_dataclass(config.network),
-            halcon=self._clone_dataclass(config.halcon),
         )
 
     def _clone_dataclass(self, obj: Any) -> Any:
@@ -560,9 +558,6 @@ class ConfigurationEditor(QWidget):
                 ("Live Display", self._create_live_display_editor),
                 ("Display", self._create_display_editor),
             ]),
-            ("HALCON", [
-                ("HALCON", self._create_halcon_editor),
-            ]),
         ]
 
         # Build navigation tree and editors
@@ -698,12 +693,8 @@ class ConfigurationEditor(QWidget):
         QApplication.processEvents()
         try:
             # Use the discovery service from the app
-            from thermal_monitor.services.discovery import CameraDiscoveryService
-            discovery = CameraDiscoveryService(
-                halcon_interface=self._edit_config.cameras.discovery.halcon_interface,
-                attempts=self._edit_config.cameras.discovery.attempts,
-                retry_delay_s=self._edit_config.cameras.discovery.retry_delay_s,
-            )
+            from thermal_monitor.services.discovery import build_discovery_service
+            discovery = build_discovery_service(self._edit_config.cameras.discovery)
             cameras = discovery.discover_cameras()
             self._status_label.setText(f"Found {len(cameras)} camera(s)")
             # Update the mapping editor with discovered cameras
@@ -816,7 +807,6 @@ class ConfigurationEditor(QWidget):
             logging=self._get_section_config("Logging"),
             ui=self._get_section_config("Theme"),  # UIConfig
             network=self._get_section_config("Network"),
-            halcon=self._get_section_config("HALCON"),
         )
 
     def _get_section_config(self, section_name: str) -> Any:
@@ -856,7 +846,6 @@ class ConfigurationEditor(QWidget):
             "Windows": self._edit_config.ui.windows,
             "Live Display": self._edit_config.ui.live,
             "Display": self._edit_config.ui.display,
-            "HALCON": self._edit_config.halcon,
         }
         return mapping.get(section_name)
 
@@ -882,7 +871,7 @@ class ConfigurationEditor(QWidget):
         editor = ConfigSectionEditor("Discovery", self._edit_config.cameras.discovery, self._theme)
         editor.add_field(ConfigEditorField("enabled", "Discovery Enabled", bool, True))
         editor.add_field(ConfigEditorField("startup_scan", "Startup Scan", bool, True))
-        editor.add_field(ConfigEditorField("halcon_interface", "HALCON Interface", str, "GigEVision2"))
+        editor.add_field(ConfigEditorField("halcon_interface", "HALCON Discovery Fallback Interface", str, "GigEVision2"))
         editor.add_field(ConfigEditorField("attempts", "Discovery Attempts", int, 3, min_val=1, max_val=10))
         editor.add_field(ConfigEditorField("retry_delay_s", "Retry Delay (s)", float, 3.0, min_val=0.0, max_val=60.0))
         editor.add_field(ConfigEditorField("interval_seconds", "Interval (s)", float, 30.0, min_val=0.0, max_val=3600.0))
@@ -978,12 +967,8 @@ class ConfigurationEditor(QWidget):
         self._discovered_table.clear()
         if cameras is None:
             # Try to discover
-            from thermal_monitor.services.discovery import CameraDiscoveryService
-            discovery = CameraDiscoveryService(
-                halcon_interface=self._edit_config.cameras.discovery.halcon_interface,
-                attempts=self._edit_config.cameras.discovery.attempts,
-                retry_delay_s=self._edit_config.cameras.discovery.retry_delay_s,
-            )
+            from thermal_monitor.services.discovery import build_discovery_service
+            discovery = build_discovery_service(self._edit_config.cameras.discovery)
             try:
                 cameras = discovery.discover_cameras()
             except Exception:
@@ -1252,12 +1237,6 @@ class ConfigurationEditor(QWidget):
         editor.add_field(ConfigEditorField("auto_range", "Auto Range", bool, True))
         editor.add_field(ConfigEditorField("min_temperature", "Min Temperature", float, -20.0))
         editor.add_field(ConfigEditorField("max_temperature", "Max Temperature", float, 1200.0))
-        return editor
-
-    def _create_halcon_editor(self) -> ConfigSectionEditor:
-        editor = ConfigSectionEditor("HALCON", self._edit_config.halcon, self._theme)
-        editor.add_field(ConfigEditorField("grab_timeout_error_code", "Grab Timeout Error Code", int, 5322))
-        editor.add_field(ConfigEditorField("first_frame_timeout_ms", "First Frame Timeout (ms)", int, 5000))
         return editor
 
     # --- Public API ---

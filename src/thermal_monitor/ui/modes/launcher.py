@@ -25,7 +25,7 @@ from PyQt6.QtWidgets import (
 
 from thermal_monitor.core.modes import ApplicationMode
 from thermal_monitor.services.mode import ModeService
-from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError
+from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError, GvcpDiscoveryService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.ui.theme import ThemeManager
 
@@ -40,7 +40,7 @@ class LauncherWidget(QWidget):
         self,
         mode_service: ModeService,
         config_service: ConfigurationService,
-        discovery_service: Optional[CameraDiscoveryService] = None,
+        discovery_service: "Optional[CameraDiscoveryService | GvcpDiscoveryService]" = None,
         theme_manager: Optional[ThemeManager] = None,
     ) -> None:
         super().__init__()
