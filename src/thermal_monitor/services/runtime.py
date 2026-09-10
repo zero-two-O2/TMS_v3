@@ -24,6 +24,7 @@ Deterministic ordering is guaranteed:
 
 from __future__ import annotations
 
+import itertools
 import logging
 import threading
 import time
@@ -61,6 +62,19 @@ logger = logging.getLogger(__name__)
 
 class CameraRuntimeError(RuntimeError):
     """Raised when a camera runtime lifecycle operation fails."""
+
+
+_FOCUS_OP_COUNTER = itertools.count(1)
+
+
+def new_focus_op_id(kind: str = "FOCUS-READ") -> str:
+    """Mint a unique focus-operation ID for end-to-end tracing.
+
+    The ID travels UI -> worker -> runtime -> driver -> logs so the first
+    missing boundary in a stuck operation is immediately visible. ``kind``
+    is ``"FOCUS-READ"``, ``"FOCUS-WRITE"`` or ``"FOCUS-DIAG"``.
+    """
+    return f"{kind}-{next(_FOCUS_OP_COUNTER):03d}"
 
 
 # TV46L is a fixed 640x480 Mono16 camera.
@@ -414,26 +428,101 @@ class CameraRuntimeService:
                 "status": dict(status),
             }
 
-    def get_focus_limits(self, camera_id: str) -> tuple[int, int]:
+    def get_focus_limits(
+        self, camera_id: str, op_id: str | None = None
+    ) -> tuple[int, int]:
         """Hardware-reported focus range in mm for a running camera."""
-        with self._lock:
-            return self._require_custom_source(camera_id).get_focus_limits()
-
-    def get_focus_mm(self, camera_id: str) -> int:
-        """Current focus distance readback in mm for a running camera."""
-        with self._lock:
-            return self._require_custom_source(camera_id).get_focus_mm()
-
-    def set_focus_mm(self, camera_id: str, value_mm: int) -> int:
-        """Set focus distance (mm, never clamped) and return the readback."""
+        op_id = op_id or new_focus_op_id("FOCUS-READ")
         with self._lock:
             source = self._require_custom_source(camera_id)
+            logger.debug(
+                "%s runtime call cam=%s ip=%s get_focus_limits",
+                op_id,
+                camera_id,
+                source.camera_ip,
+            )
+            limits = source.get_focus_limits(op_id=op_id)
+            logger.debug("%s runtime returned cam=%s limits=%r", op_id, camera_id, limits)
+            return limits
+
+    def get_focus_mm(self, camera_id: str, op_id: str | None = None) -> int:
+        """Current focus distance readback in mm for a running camera."""
+        op_id = op_id or new_focus_op_id("FOCUS-READ")
+        with self._lock:
+            source = self._require_custom_source(camera_id)
+            logger.debug(
+                "%s runtime call cam=%s ip=%s get_focus_mm", op_id, camera_id, source.camera_ip
+            )
+            current = source.get_focus_mm(op_id=op_id)
+            logger.debug("%s runtime returned cam=%s current=%r", op_id, camera_id, current)
+            return current
+
+    def set_focus_mm(
+        self, camera_id: str, value_mm: int, op_id: str | None = None
+    ) -> int:
+        """Set focus distance (mm, never clamped) and return the readback."""
+        op_id = op_id or new_focus_op_id("FOCUS-WRITE")
+        with self._lock:
+            source = self._require_custom_source(camera_id)
+            logger.debug(
+                "%s runtime call cam=%s ip=%s set_focus_mm value=%r",
+                op_id,
+                camera_id,
+                source.camera_ip,
+                value_mm,
+            )
             try:
-                return source.set_focus_mm(value_mm)
+                readback = source.set_focus_mm(value_mm, op_id=op_id)
             except (ValueError, RuntimeError) as exc:
                 raise CameraRuntimeError(
                     f"Focus failed for camera {camera_id}: {exc}"
                 ) from exc
+            logger.debug(
+                "%s runtime returned cam=%s requested=%r readback=%r",
+                op_id,
+                camera_id,
+                value_mm,
+                readback,
+            )
+            return readback
+
+    def diagnose_focus(self, camera_id: str) -> dict:
+        """Runtime-direct focus probe (same app, same driver, no UI involved).
+
+        Calls ``get_focus_limits`` + ``get_focus_mm`` through the running
+        camera's own ``CustomTV46LDriver`` while it streams and returns the
+        raw values with identity evidence. Raises :class:`CameraRuntimeError`
+        with the actual reason on any failure -- never silent.
+        """
+        op_id = new_focus_op_id("FOCUS-DIAG")
+        t_start = time.perf_counter()
+        logger.info("%s diagnose start cam=%s", op_id, camera_id)
+        with self._lock:
+            source = self._require_custom_source(camera_id)
+            camera_ip = source.camera_ip
+            limits = source.get_focus_limits(op_id=op_id)
+            current = source.get_focus_mm(op_id=op_id)
+        elapsed_s = time.perf_counter() - t_start
+        result = {
+            "op_id": op_id,
+            "camera_id": camera_id,
+            "camera_ip": camera_ip,
+            "min": limits[0],
+            "max": limits[1],
+            "current": current,
+            "elapsed_s": elapsed_s,
+        }
+        logger.info(
+            "%s diagnose done cam=%s ip=%s min=%r max=%r current=%r elapsed=%.3fs",
+            op_id,
+            camera_id,
+            camera_ip,
+            limits[0],
+            limits[1],
+            current,
+            elapsed_s,
+        )
+        return result
 
     def get_driver_status(self, camera_id: str) -> dict:
         """Receiver counters + stream state for a running custom camera."""

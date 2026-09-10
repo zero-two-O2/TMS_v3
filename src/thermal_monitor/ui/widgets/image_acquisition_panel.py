@@ -12,6 +12,7 @@ ThermoView-style instrument panel:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -32,6 +33,9 @@ from PyQt6.QtWidgets import (
 
 from thermal_monitor.core.models import CameraConnectionState, CameraIdentity
 from thermal_monitor.ui.theme import ThemeManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class ImageAcquisitionPanel(QWidget):
@@ -568,13 +572,31 @@ class ImageAcquisitionPanel(QWidget):
             self._focus_status_label.setText(reason or "Focus unavailable")
 
     def set_focus_state(self, current_mm: int, min_mm: int, max_mm: int) -> None:
-        """Show hardware-reported focus state; clamp spinbox to [min, max]."""
+        """Show hardware-reported focus state; clamp spinbox to [min, max].
+
+        Values are clamped to the 32-bit QSpinBox domain so an insane
+        camera readback can never raise inside this slot (which would leave
+        the panel stuck at "Reading..." with no error state).
+        """
+        logger.debug(
+            "Panel set_focus_state entry current=%r min=%r max=%r",
+            current_mm,
+            min_mm,
+            max_mm,
+        )
+        _INT_MAX = 2**31 - 1
+        current_mm = max(0, min(int(current_mm), _INT_MAX))
+        min_mm = max(0, min(int(min_mm), _INT_MAX))
+        max_mm = max(0, min(int(max_mm), _INT_MAX))
         self._focus_current_label.setText(f"{current_mm} mm")
+        logger.debug("Panel focus current label updated")
         self._focus_range_label.setText(f"{min_mm} … {max_mm} mm")
+        logger.debug("Panel focus range label updated")
         self._focus_spin.setRange(max(1, min_mm), max(max_mm, min_mm + 1))
         if not self._focus_spin.hasFocus():
             self._focus_spin.setValue(min(max(current_mm, min_mm), max_mm))
         self._focus_status_label.setText("Ready")
+        logger.debug("Panel set_focus_state done status=Ready")
 
     def set_focus_busy(self, text: str = "Writing…") -> None:
         """Indicate an in-flight focus operation; block re-entry."""

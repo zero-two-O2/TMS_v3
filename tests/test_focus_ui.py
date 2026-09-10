@@ -98,19 +98,19 @@ class FakeRuntime:
         self._fail = fail
         self.calls: list = []
 
-    def get_focus_limits(self, camera_id):
+    def get_focus_limits(self, camera_id, op_id=None):
         self.calls.append("limits")
         if self._fail:
             raise self._fail
         return self._limits
 
-    def get_focus_mm(self, camera_id):
+    def get_focus_mm(self, camera_id, op_id=None):
         self.calls.append("read")
         if self._fail:
             raise self._fail
         return self._current
 
-    def set_focus_mm(self, camera_id, value):
+    def set_focus_mm(self, camera_id, value, op_id=None):
         self.calls.append(("write", value))
         if self._fail:
             raise self._fail
@@ -156,10 +156,10 @@ class TestFocusWorker:
         worker = FocusWorker(runtime, "cam1", None)
         orig = runtime.get_focus_mm
 
-        def slow(camera_id):
+        def slow(camera_id, op_id=None):
             time.sleep(0.2)
             seen["thread"] = QThread.currentThread()
-            return orig(camera_id)
+            return orig(camera_id, op_id)
 
         runtime.get_focus_mm = slow
         thread = QThread()

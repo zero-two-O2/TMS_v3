@@ -232,3 +232,69 @@ def test_local_interface_ips_returns_list():
     ips = local_interface_ips()
     assert isinstance(ips, list)
     assert all(not ip.startswith("127.") for ip in ips)
+
+
+def _client_with_options(recv_queue, **kwargs) -> tuple[GVCPClient, FakeSocket]:
+    holder: dict = {}
+
+    def factory():
+        sock = FakeSocket(recv_queue)
+        holder["sock"] = sock
+        return sock
+
+    client = GVCPClient(
+        "192.168.42.11", local_ip="192.168.42.100", socket_factory=factory, **kwargs
+    )
+    client.connect()
+    return client, holder["sock"]
+
+
+def test_pending_storm_fails_loudly_bounded():
+    """A camera that PENDINGs forever must fail loudly, never hang.
+
+    Regression: _send_recv previously looped unboundedly on repeated
+    PENDING_ACK, wedging focus/NUC/heartbeat (GVSP kept streaming).
+    """
+    import time
+
+    pendings = [
+        (struct.pack(">HHHHH", 0, GVCPCommand.PENDING_ACK, 2, 1, 100), ("192.168.42.11", 3956))
+        for _ in range(200)
+    ]
+    client, _ = _client_with_options(pendings, timeout=0.05, max_pending_wait_s=0.3)
+    started = time.monotonic()
+    with pytest.raises(GVCPError, match="PENDING"):
+        client.read_register(0x20A13C)
+    assert time.monotonic() - started < 5.0
+
+
+def test_stale_req_id_datagram_discarded():
+    """A late ack from an earlier transaction must not be accepted."""
+    stale = _ack(999, GVCPCommand.READ_REG_ACK, struct.pack(">I", 0xDEAD))
+    fresh = _ack(1, GVCPCommand.READ_REG_ACK, struct.pack(">I", 1000))
+    client, _ = _client_with(
+        [(stale, ("192.168.42.11", 3956)), (fresh, ("192.168.42.11", 3956))]
+    )
+    assert client.read_register(0x20A13C) == 1000
+
+
+def test_short_datagram_discarded():
+    """Garbage datagrams must not kill (or fake) a transaction."""
+    fresh = _ack(1, GVCPCommand.READ_REG_ACK, struct.pack(">I", 2000))
+    client, _ = _client_with(
+        [(b"\x00\x01", ("192.168.42.11", 3956)), (fresh, ("192.168.42.11", 3956))]
+    )
+    assert client.read_register(0x20A140) == 2000
+
+
+def test_timeout_error_carries_request_context():
+    """Timeouts must identify camera + request instead of failing silently."""
+    client, _ = _client_with_options([], timeout=0.05)
+    with pytest.raises(GVCPError, match="192.168.42.11"):
+        client.read_register(0x20A13C)
+    try:
+        client.read_register(0x20A13C)
+    except GVCPError as exc:
+        assert "req=2" in str(exc)  # req_id keeps incrementing
+    else:
+        raise AssertionError("expected GVCPError")

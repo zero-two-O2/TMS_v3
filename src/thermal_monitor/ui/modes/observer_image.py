@@ -41,6 +41,8 @@ class LiveThermalWidget(QWidget):
     cursor_temperature_changed = pyqtSignal(float)
     # Signal emitted when temperature range changes (auto or manual)
     range_changed = pyqtSignal(float, float)  # min, max
+    # Signal emitted when the zoom mode changes (e.g. via mouse wheel)
+    zoom_changed = pyqtSignal(str)  # zoom mode text
     rendered_frame = pyqtSignal(object, object)  # QImage, thumbnail QImage
     render_error = pyqtSignal(str)
 
@@ -229,8 +231,8 @@ class LiveThermalWidget(QWidget):
                     Qt.AspectRatioMode.KeepAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-                x = (self.width() - scaled.width()) // 2 + self._pan_offset.x()
-                y = (self.height() - scaled.height()) // 2 + self._pan_offset.y()
+                x = int((self.width() - scaled.width()) // 2 + self._pan_offset.x())
+                y = int((self.height() - scaled.height()) // 2 + self._pan_offset.y())
 
             # Store image rect for coordinate mapping
             self._image_rect = QRect(x, y, scaled.width(), scaled.height())

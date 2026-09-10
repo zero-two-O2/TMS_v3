@@ -41,6 +41,13 @@ logger = logging.getLogger(__name__)
 #: UDP port the TV46L listens on for GVCP control traffic.
 GVCP_PORT = 3956
 
+#: Upper bound for PENDING_ACK waits inside one GVCP transaction (s).
+#: A camera that keeps a request PENDING longer than this is treated as a
+#: failed transaction so a control operation (focus/NUC/heartbeat) can never
+#: hang its calling thread -- and the UI -- forever. Normal single-PENDING
+#: + final-ack behavior is unchanged.
+MAX_PENDING_WAIT_S = 10.0
+
 #: GVCP magic bytes at the start of every request header.
 GVCP_MAGIC = (0x42, 0x01)
 
@@ -217,12 +224,14 @@ class GVCPClient:
         port: int = GVCP_PORT,
         timeout: float = 2.0,
         socket_factory: Optional[Callable[[], socket.socket]] = None,
+        max_pending_wait_s: float = MAX_PENDING_WAIT_S,
     ) -> None:
         self.camera_ip = camera_ip
         self.port = port
         self.timeout = timeout
         self._local_ip = local_ip
         self._socket_factory = socket_factory
+        self._max_pending_wait_s = max(0.0, max_pending_wait_s)
         self._socket: Optional[socket.socket] = None
         self._req_id = 0
         self._lock = threading.RLock()
@@ -262,22 +271,102 @@ class GVCPClient:
         """Send one request and wait for its acknowledgement.
 
         Handles PENDING_ACK per GigE Vision: the device may reply PENDING
-        with a wait hint before the final ack arrives.
+        with a wait hint before the final ack arrives. PENDING waits are
+        bounded by ``MAX_PENDING_WAIT_S`` past the normal deadline so a
+        camera that never sends the final ack fails loudly instead of
+        hanging the calling thread forever.
+
+        Only the datagram whose request ID matches this request is
+        accepted; stale datagrams left over from an earlier timed-out
+        transaction are discarded (transactions on one client are
+        serialised by ``self._lock``, so a mismatch can only be stale
+        data, never a concurrent transaction).
         """
         if self._socket is None:
             raise GVCPError("Not connected")
         req_id = struct.unpack(">H", data[6:8])[0] if len(data) >= 8 else None
+        try:
+            local_port = self._socket.getsockname()[1]
+        except Exception:
+            local_port = -1
+        try:
+            cmd = struct.unpack(">H", data[2:4])[0] if len(data) >= 8 else -1
+        except struct.error:
+            cmd = -1
+        t_send = time.time()
+        logger.debug(
+            "GVCP send cam=%s:%d cmd=%#06x req=%s bytes=%d local=%s:%s",
+            self.camera_ip,
+            self.port,
+            cmd,
+            req_id,
+            len(data),
+            self._local_ip,
+            local_port,
+        )
         with self._lock:
-            self._socket.sendto(data, (self.camera_ip, self.port))
-            deadline = time.time() + self.timeout + 2.0
+            try:
+                self._socket.sendto(data, (self.camera_ip, self.port))
+            except OSError as exc:
+                raise GVCPError(
+                    f"GVCP send failed cam={self.camera_ip} req={req_id}: {exc}"
+                ) from exc
+            deadline = t_send + self.timeout + 2.0
+            pending_deadline = deadline + self._max_pending_wait_s
+            pending_waits = 0
+            discarded = 0
             while True:
-                remaining = max(0.5, deadline - time.time())
+                now = time.time()
+                if now >= pending_deadline:
+                    raise GVCPError(
+                        f"GVCP timeout waiting for ack cam={self.camera_ip} "
+                        f"req={req_id} expected={expected_ack} "
+                        f"elapsed={now - t_send:.2f}s local_port={local_port} "
+                        f"(PENDING x{pending_waits}, stale-discarded x{discarded})"
+                    )
+                remaining = max(0.5, deadline - now)
                 self._socket.settimeout(remaining)
                 try:
                     resp, _ = self._socket.recvfrom(8192)
                 except socket.timeout as exc:
-                    raise GVCPError("GVCP timeout waiting for ack") from exc
-                status, ack_cmd, ack_id = parse_ack_header(resp)
+                    raise GVCPError(
+                        f"GVCP timeout waiting for ack cam={self.camera_ip} "
+                        f"req={req_id} expected={expected_ack} "
+                        f"elapsed={time.time() - t_send:.2f}s "
+                        f"local_port={local_port} "
+                        f"(PENDING x{pending_waits}, stale-discarded x{discarded})"
+                    ) from exc
+                except OSError as exc:
+                    raise GVCPError(
+                        f"GVCP receive failed cam={self.camera_ip} req={req_id}: {exc}"
+                    ) from exc
+                t_recv = time.time()
+                try:
+                    status, ack_cmd, ack_id = parse_ack_header(resp)
+                except ValueError:
+                    # Short/garbage datagram: never treat as a response.
+                    discarded += 1
+                    logger.debug(
+                        "GVCP stale cam=%s req=%s discarded %d-byte datagram",
+                        self.camera_ip,
+                        req_id,
+                        len(resp),
+                    )
+                    continue
+                if req_id is not None and ack_id != req_id:
+                    # Stale datagram from an earlier timed-out transaction.
+                    discarded += 1
+                    logger.debug(
+                        "GVCP stale cam=%s req=%s discarded ack=%#06x ack_req=%s "
+                        "bytes=%d elapsed=%.2fs",
+                        self.camera_ip,
+                        req_id,
+                        ack_cmd,
+                        ack_id,
+                        len(resp),
+                        t_recv - t_send,
+                    )
+                    continue
                 if ack_cmd == GVCPCommand.PENDING_ACK:
                     pending_ms = 500
                     if len(resp) >= 10:
@@ -285,42 +374,115 @@ class GVCPClient:
                             pending_ms = struct.unpack(">H", resp[8:10])[0] or 500
                         except struct.error:
                             pass
-                    time.sleep(min(max(pending_ms, 100), 5000) / 1000.0)
+                    pending_ms = min(max(pending_ms, 100), 5000)
+                    pending_waits += 1
+                    logger.warning(
+                        "GVCP pending cam=%s req=%s wait=%dms (%d so far, "
+                        "elapsed=%.2fs)",
+                        self.camera_ip,
+                        req_id,
+                        pending_ms,
+                        pending_waits,
+                        t_recv - t_send,
+                    )
+                    time.sleep(pending_ms / 1000.0)
                     continue
                 if expected_ack is not None and ack_cmd != expected_ack:
                     raise GVCPError(
-                        f"Expected ack {expected_ack:#06x}, got {ack_cmd:#06x}"
+                        f"Expected ack {expected_ack:#06x}, got {ack_cmd:#06x} "
+                        f"cam={self.camera_ip} req={req_id}"
                     )
                 if status != 0:
                     raise GVCPError(
                         f"GVCP command failed: status={status:#06x} "
-                        f"ack={ack_cmd:#06x} req={req_id}"
+                        f"ack={ack_cmd:#06x} req={req_id} cam={self.camera_ip}"
                     )
-                if req_id is not None and ack_id != req_id:
-                    logger.debug("GVCP ack id mismatch req=%s ack=%s", req_id, ack_id)
+                logger.debug(
+                    "GVCP recv cam=%s req=%s ack=%#06x status=0 bytes=%d "
+                    "elapsed=%.3fs local_port=%s (PENDING x%d, discarded x%d)",
+                    self.camera_ip,
+                    req_id,
+                    ack_cmd,
+                    len(resp),
+                    t_recv - t_send,
+                    local_port,
+                    pending_waits,
+                    discarded,
+                )
                 return resp
 
     # -- register access --------------------------------------------------
 
     def read_register(self, address: int) -> int:
         """Read one 32-bit control register (big-endian on the wire)."""
+        req_id = self._next_req_id()
         payload = struct.pack(">I", address)
-        cmd = build_request(GVCPCommand.READ_REG, payload, self._next_req_id())
-        resp = self._send_recv(cmd, GVCPCommand.READ_REG_ACK)
+        cmd = build_request(GVCPCommand.READ_REG, payload, req_id)
+        t_start = time.time()
+        try:
+            resp = self._send_recv(cmd, GVCPCommand.READ_REG_ACK)
+        except GVCPError as exc:
+            logger.warning(
+                "GVCP read failed cam=%s reg=%#010x req=%s elapsed=%.2fs: %s",
+                self.camera_ip,
+                address,
+                req_id,
+                time.time() - t_start,
+                exc,
+            )
+            raise
         if len(resp) < 12:
-            raise GVCPError(f"READ_REG ack too short: {len(resp)}")
-        return struct.unpack(">I", resp[8:12])[0]
+            raise GVCPError(
+                f"READ_REG ack too short: {len(resp)} cam={self.camera_ip} req={req_id}"
+            )
+        value = struct.unpack(">I", resp[8:12])[0]
+        logger.debug(
+            "GVCP read cam=%s reg=%#010x req=%s value=%d (%#010x) elapsed=%.3fs",
+            self.camera_ip,
+            address,
+            req_id,
+            value,
+            value,
+            time.time() - t_start,
+        )
+        return value
 
     def write_register(self, address: int, value: int) -> bool:
         """Write one 32-bit control register. Returns False (no raise) on
-        transport failure so callers can implement retry/fallback policy."""
+        transport failure so callers can implement retry/fallback policy.
+
+        The underlying reason is always logged with camera/register/req_id
+        context so a ``False`` is never silent.
+        """
+        req_id = self._next_req_id()
         payload = struct.pack(">II", address, value & 0xFFFFFFFF)
-        cmd = build_request(GVCPCommand.WRITE_REG, payload, self._next_req_id())
+        cmd = build_request(GVCPCommand.WRITE_REG, payload, req_id)
+        t_start = time.time()
         try:
             resp = self._send_recv(cmd, GVCPCommand.WRITE_REG_ACK)
-            return struct.unpack(">H", resp[0:2])[0] == 0
-        except GVCPError:
+            ok = struct.unpack(">H", resp[0:2])[0] == 0
+        except GVCPError as exc:
+            logger.warning(
+                "GVCP write failed cam=%s reg=%#010x value=%d req=%s "
+                "elapsed=%.2fs: %s",
+                self.camera_ip,
+                address,
+                value & 0xFFFFFFFF,
+                req_id,
+                time.time() - t_start,
+                exc,
+            )
             return False
+        logger.debug(
+            "GVCP write cam=%s reg=%#010x value=%d req=%s ok=%s elapsed=%.3fs",
+            self.camera_ip,
+            address,
+            value & 0xFFFFFFFF,
+            req_id,
+            ok,
+            time.time() - t_start,
+        )
+        return ok
 
     def read_memory(self, address: int, length: int) -> bytes:
         """Read ``length`` bytes from device memory, chunked to 512 B per
@@ -482,6 +644,7 @@ __all__ = [
     "GVCP_PORT",
     "GVCPClient",
     "HEARTBEAT_TIMEOUT_MS",
+    "MAX_PENDING_WAIT_S",
     "NUC_EXECUTE_FINE_OFFSETS",
     "PACKET_DELAY_TICKS",
     "REG_ACQUISITION_START",

@@ -23,6 +23,7 @@ Layout:
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal, pyqtSlot
@@ -76,6 +77,9 @@ from thermal_monitor.ui.widgets import (
 from thermal_monitor.ui.theme import ThemeManager
 
 
+logger = logging.getLogger(__name__)
+
+
 _UNIT_SYMBOLS = {
     "celsius": "°C",
     "fahrenheit": "°F",
@@ -95,25 +99,84 @@ class FocusWorker(QObject):
     write_finished = pyqtSignal(str, int, int)  # camera_id, requested, readback
     failed = pyqtSignal(str, str)  # camera_id, message
 
-    def __init__(self, runtime_service, camera_id: str, value_mm: "int | None") -> None:
+    def __init__(
+        self,
+        runtime_service,
+        camera_id: str,
+        value_mm: "int | None",
+        op_id: str | None = None,
+    ) -> None:
         super().__init__()
         self._runtime_service = runtime_service
         self._camera_id = camera_id
         self._value_mm = value_mm  # None = read-only refresh
+        if op_id is None:
+            from thermal_monitor.services.runtime import new_focus_op_id
+
+            op_id = new_focus_op_id(
+                "FOCUS-WRITE" if value_mm is not None else "FOCUS-READ"
+            )
+        self._op_id = op_id
 
     @pyqtSlot()
     def run(self) -> None:
+        import threading
+
+        from PyQt6.QtCore import QThread
+
+        logger.debug(
+            "%s worker entered cam=%s py_thread=%s qt_thread=%s",
+            self._op_id,
+            self._camera_id,
+            threading.get_ident(),
+            int(QThread.currentThreadId()),
+        )
         try:
             if self._value_mm is None:
-                vmin, vmax = self._runtime_service.get_focus_limits(self._camera_id)
-                current = self._runtime_service.get_focus_mm(self._camera_id)
+                logger.debug("%s worker read start cam=%s", self._op_id, self._camera_id)
+                vmin, vmax = self._runtime_service.get_focus_limits(
+                    self._camera_id, self._op_id
+                )
+                current = self._runtime_service.get_focus_mm(self._camera_id, self._op_id)
+                logger.debug(
+                    "%s worker read done cam=%s min=%r max=%r current=%r",
+                    self._op_id,
+                    self._camera_id,
+                    vmin,
+                    vmax,
+                    current,
+                )
+                logger.debug(
+                    "%s worker emitting read_finished cam=%s", self._op_id, self._camera_id
+                )
                 self.read_finished.emit(self._camera_id, vmin, vmax, current)
             else:
+                logger.debug(
+                    "%s worker write start cam=%s value=%r",
+                    self._op_id,
+                    self._camera_id,
+                    self._value_mm,
+                )
                 readback = self._runtime_service.set_focus_mm(
-                    self._camera_id, self._value_mm
+                    self._camera_id, self._value_mm, self._op_id
+                )
+                logger.debug(
+                    "%s worker write done cam=%s requested=%r readback=%r",
+                    self._op_id,
+                    self._camera_id,
+                    self._value_mm,
+                    readback,
+                )
+                logger.debug(
+                    "%s worker emitting write_finished cam=%s",
+                    self._op_id,
+                    self._camera_id,
                 )
                 self.write_finished.emit(self._camera_id, self._value_mm, readback)
         except Exception as exc:
+            logger.warning(
+                "%s worker failed cam=%s: %s", self._op_id, self._camera_id, exc
+            )
             self.failed.emit(self._camera_id, str(exc)[:200])
 
 
@@ -175,10 +238,14 @@ class ConfigurationModeWidget(QWidget):
         self._camera_selection_dialog: CameraSelectionDialog | None = None
         # Focus worker thread (at most one in flight; stale results dropped
         # by camera-id token when the selection changes mid-operation).
+        # The worker object is retained (never a bare local) so the Python
+        # wrapper cannot be garbage-collected while its thread runs.
         self._focus_thread: QThread | None = None
+        self._focus_worker: FocusWorker | None = None
         self._focus_camera_id: str | None = None
         # NUC worker thread (at most one in flight; same stale-result rule).
         self._nuc_thread: QThread | None = None
+        self._nuc_worker: NucWorker | None = None
         self._nuc_camera_id: str | None = None
 
         # Dirty state tracking for camera-specific configurations
@@ -508,21 +575,51 @@ class ConfigurationModeWidget(QWidget):
 
     # -- Focus (UI -> runtime/service -> driver, never GVCP directly) --
 
-    def _stop_focus_worker(self) -> None:
+    def _stop_focus_worker(self, timeout_ms: int = 3000) -> None:
+        """Request the focus thread to stop and wait for it (bounded).
+
+        A timeout expiry is logged loudly and never silent: the thread is
+        left to quit itself via its finished/failed -> quit chain once the
+        in-flight GVCP operation returns (all GVCP transactions are
+        bounded), so it is never destroyed while running.
+        """
         thread, self._focus_thread = self._focus_thread, None
+        self._focus_worker = None
         if thread is not None:
             thread.quit()
-            thread.wait(2000)
+            if not thread.wait(timeout_ms):
+                logger.warning(
+                    "Focus worker thread still running after %d ms; "
+                    "leaving it to quit itself on operation completion",
+                    timeout_ms,
+                )
 
     def _start_focus_operation(self, camera_id: str, value_mm: "int | None") -> None:
         """Run one focus read (None) or write in a worker thread."""
+        from thermal_monitor.services.runtime import new_focus_op_id
+
+        op_id = new_focus_op_id("FOCUS-WRITE" if value_mm is not None else "FOCUS-READ")
+        logger.debug(
+            "%s UI request cam=%s selected=%s running=%s mode=%s",
+            op_id,
+            camera_id,
+            self._selected_camera_id,
+            (
+                self._runtime_service.is_camera_running(camera_id)
+                if self._runtime_service is not None
+                else False
+            ),
+            "read" if value_mm is None else f"write {value_mm}mm",
+        )
         if self._runtime_service is None:
             self._acq_panel.set_focus_enabled(False, "Runtime unavailable")
             return
         self._stop_focus_worker()
         self._focus_camera_id = camera_id
         self._focus_thread = QThread(self)
-        worker = FocusWorker(self._runtime_service, camera_id, value_mm)
+        self._focus_thread.setObjectName(f"FocusWorker-{camera_id}")
+        worker = FocusWorker(self._runtime_service, camera_id, value_mm, op_id=op_id)
+        self._focus_worker = worker
         worker.moveToThread(self._focus_thread)
         self._focus_thread.started.connect(worker.run)
         worker.read_finished.connect(self._on_focus_read_finished)
@@ -531,6 +628,12 @@ class ConfigurationModeWidget(QWidget):
         worker.read_finished.connect(self._focus_thread.quit)
         worker.write_finished.connect(self._focus_thread.quit)
         worker.failed.connect(self._focus_thread.quit)
+        logger.debug(
+            "%s thread starting name=%s worker=%r",
+            op_id,
+            self._focus_thread.objectName(),
+            worker,
+        )
         self._focus_thread.start()
 
     def _refresh_focus_panel(self) -> None:
@@ -565,27 +668,63 @@ class ConfigurationModeWidget(QWidget):
 
     def _on_focus_read_finished(self, camera_id: str, vmin: int, vmax: int, current: int) -> None:
         if camera_id != self._selected_camera_id:
+            logger.debug(
+                "Focus read dropped (stale) cam=%s selected=%s",
+                camera_id,
+                self._selected_camera_id,
+            )
             return  # stale result after camera switch
+        logger.debug(
+            "Focus read finished cam=%s current=%d range=[%d,%d]",
+            camera_id,
+            current,
+            vmin,
+            vmax,
+        )
         self._acq_panel.set_focus_enabled(True)
         self._acq_panel.set_focus_state(current, vmin, vmax)
 
     def _on_focus_write_finished(self, camera_id: str, requested: int, readback: int) -> None:
         if camera_id != self._selected_camera_id:
+            logger.debug(
+                "Focus write dropped (stale) cam=%s selected=%s",
+                camera_id,
+                self._selected_camera_id,
+            )
             return
         self._acq_panel.set_focus_result(requested, readback)
 
     def _on_focus_failed(self, camera_id: str, message: str) -> None:
         if camera_id != self._selected_camera_id:
+            logger.debug(
+                "Focus failure dropped (stale) cam=%s selected=%s: %s",
+                camera_id,
+                self._selected_camera_id,
+                message,
+            )
             return
+        logger.warning("Focus operation failed cam=%s: %s", camera_id, message)
         self._acq_panel.set_focus_error(message)
 
     # -- NUC (Stage 8G; UI -> runtime/service -> driver, never GVCP directly) --
 
-    def _stop_nuc_worker(self) -> None:
+    def _stop_nuc_worker(self, timeout_ms: int = 8000) -> None:
+        """Request the NUC thread to stop and wait for it (bounded).
+
+        Same contract as :meth:`_stop_focus_worker`: a timeout is logged,
+        never silent, and the thread is left to quit itself rather than
+        destroyed while running.
+        """
         thread, self._nuc_thread = self._nuc_thread, None
+        self._nuc_worker = None
         if thread is not None:
             thread.quit()
-            thread.wait(5000)
+            if not thread.wait(timeout_ms):
+                logger.warning(
+                    "NUC worker thread still running after %d ms; "
+                    "leaving it to quit itself on operation completion",
+                    timeout_ms,
+                )
 
     def _refresh_nuc_panel(self) -> None:
         """Enable NUC when the selected camera runs; else disable."""
@@ -613,24 +752,40 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.set_nuc_enabled(True)
         self._acq_panel.set_nuc_busy("NUC running…")
         self._nuc_thread = QThread(self)
+        self._nuc_thread.setObjectName(f"NucWorker-{camera_id}")
         worker = NucWorker(self._runtime_service, camera_id)
+        self._nuc_worker = worker
         worker.moveToThread(self._nuc_thread)
         self._nuc_thread.started.connect(worker.run)
         worker.finished.connect(self._on_nuc_finished)
         worker.failed.connect(self._on_nuc_failed)
         worker.finished.connect(self._nuc_thread.quit)
         worker.failed.connect(self._nuc_thread.quit)
+        logger.debug("NUC operation start cam=%s", camera_id)
         self._nuc_thread.start()
 
     def _on_nuc_finished(self, camera_id: str, duration_s: float) -> None:
         if camera_id != self._selected_camera_id:
+            logger.debug(
+                "NUC result dropped (stale) cam=%s selected=%s",
+                camera_id,
+                self._selected_camera_id,
+            )
             return
+        logger.info("NUC finished cam=%s duration=%.3fs", camera_id, duration_s)
         self._acq_panel.set_nuc_enabled(True)
         self._acq_panel.set_nuc_result(duration_s)
 
     def _on_nuc_failed(self, camera_id: str, message: str) -> None:
         if camera_id != self._selected_camera_id:
+            logger.debug(
+                "NUC failure dropped (stale) cam=%s selected=%s: %s",
+                camera_id,
+                self._selected_camera_id,
+                message,
+            )
             return
+        logger.warning("NUC operation failed cam=%s: %s", camera_id, message)
         self._acq_panel.set_nuc_enabled(True)
         self._acq_panel.set_nuc_error(message)
 
@@ -1177,8 +1332,11 @@ class ConfigurationModeWidget(QWidget):
         self._stats_timer.stop()
 
     def closeEvent(self, event) -> None:
-        self._stop_focus_worker()
-        self._stop_nuc_worker()
+        # Bounded waits: worker threads quit themselves on operation
+        # completion, so these return immediately in the normal case and
+        # only delay teardown while a control operation is mid-flight.
+        self._stop_focus_worker(timeout_ms=10000)
+        self._stop_nuc_worker(timeout_ms=15000)
         self.on_mode_deactivated()
         self._config_service.remove_camera_change_callback(self._on_camera_config_changed)
         self._config_service.remove_analysis_change_callback(self._on_analysis_config_changed)

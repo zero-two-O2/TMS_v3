@@ -141,6 +141,11 @@ class CustomTV46LDriver:
         # Destination IP programmed into SCDA0 at connect (host interface).
         self._programmed_dest_ip: Optional[str] = None
 
+    @property
+    def camera_ip(self) -> str:
+        """Camera endpoint this driver controls (diagnostics/UI-safe)."""
+        return self._camera_ip
+
     # ------------------------------------------------------------------
     # FrameSource protocol (AcquisitionWorker contract)
     # ------------------------------------------------------------------
@@ -436,27 +441,60 @@ class CustomTV46LDriver:
         """
         if self._gvcp is None or not self._streaming:
             raise CameraConnectionError("Cannot trigger NUC before streaming starts")
+        logger.info(
+            "NUC start cam=%s reg=%#010x value=%d",
+            self._camera_ip,
+            REG_NUC_COMMAND,
+            NUC_EXECUTE_FINE_OFFSETS,
+        )
+        t_start = time.perf_counter()
         if not self._gvcp.write_register(REG_NUC_COMMAND, NUC_EXECUTE_FINE_OFFSETS):
-            raise CameraGrabError("Camera rejected manual NUC command")
+            raise CameraGrabError(
+                f"Camera {self._camera_ip} rejected manual NUC command "
+                f"(reg={REG_NUC_COMMAND:#010x} value={NUC_EXECUTE_FINE_OFFSETS}; "
+                f"see GVCP warning above for the transport reason)"
+            )
+        logger.info(
+            "NUC command acked cam=%s elapsed=%.3fs (stream keeps running; "
+            "transitional GVSP blocks are rejected, first valid IR+VL frame resumes)",
+            self._camera_ip,
+            time.perf_counter() - t_start,
+        )
 
     # ------------------------------------------------------------------
     # Focus (no V3 incumbent -- new API, §8B.8)
     # ------------------------------------------------------------------
 
-    def get_focus_limits(self) -> tuple[int, int]:
+    def get_focus_limits(self, op_id: str | None = None) -> tuple[int, int]:
         """Hardware-reported focus range in mm (min, max)."""
         if self._gvcp is None:
             raise CameraConnectionError("Cannot read focus without GVCP control")
-        return (self._gvcp.read_register(REG_FOCUS_MIN), self._gvcp.read_register(REG_FOCUS_MAX))
+        op = f"{op_id} " if op_id else ""
+        limits = (
+            self._gvcp.read_register(REG_FOCUS_MIN),
+            self._gvcp.read_register(REG_FOCUS_MAX),
+        )
+        logger.debug(
+            "%sdriver get_focus_limits cam=%s min=%r max=%r",
+            op,
+            self._camera_ip,
+            limits[0],
+            limits[1],
+        )
+        return limits
 
-    def get_focus_mm(self) -> int:
+    def get_focus_mm(self, op_id: str | None = None) -> int:
         """Current focus distance readback in mm."""
         if self._gvcp is None:
             raise CameraConnectionError("Cannot read focus without GVCP control")
-        return self._gvcp.read_register(REG_FOCUS_CURRENT)
+        op = f"{op_id} " if op_id else ""
+        current = self._gvcp.read_register(REG_FOCUS_CURRENT)
+        logger.debug("%sdriver get_focus_mm cam=%s current=%r", op, self._camera_ip, current)
+        return current
 
     def set_focus_mm(
-        self, value_mm: int, settle_timeout: float = FOCUS_SETTLE_TIMEOUT_S
+        self, value_mm: int, settle_timeout: float = FOCUS_SETTLE_TIMEOUT_S,
+        op_id: str | None = None,
     ) -> int:
         """Write the focus distance (mm) and verify via readback.
 
@@ -467,26 +505,39 @@ class CustomTV46LDriver:
         """
         if self._gvcp is None:
             raise CameraConnectionError("Cannot set focus without GVCP control")
+        op = f"{op_id} " if op_id else ""
         if isinstance(value_mm, bool) or not isinstance(value_mm, int):
             raise ValueError(f"Focus value must be an integer number of mm, got {value_mm!r}")
         if value_mm <= 0:
             raise ValueError(f"Focus value must be > 0 mm, got {value_mm}")
-        focus_min, focus_max = self.get_focus_limits()
+        focus_min, focus_max = self.get_focus_limits(op_id=op_id)
         if not focus_min <= value_mm <= focus_max:
             raise ValueError(
                 f"Focus value {value_mm} mm outside camera range "
                 f"[{focus_min}, {focus_max}] mm (never clamped)"
             )
         if not self._gvcp.write_register(REG_FOCUS_SET, value_mm):
-            raise CameraGrabError(f"Camera rejected focus value {value_mm} mm")
+            raise CameraGrabError(
+                f"Camera {self._camera_ip} rejected focus value {value_mm} mm "
+                f"(see GVCP warning above for the transport reason)"
+            )
         deadline = time.monotonic() + max(0.0, settle_timeout)
-        readback = self.get_focus_mm()
+        readback = self.get_focus_mm(op_id=op_id)
         while readback != value_mm and time.monotonic() < deadline:
             time.sleep(0.2)
-            readback = self.get_focus_mm()
+            readback = self.get_focus_mm(op_id=op_id)
         if readback != value_mm:
             logger.warning(
-                "%s: focus settle mismatch requested=%d readback=%d (continuing)",
+                "%sdriver focus settle mismatch cam=%s requested=%r readback=%r (continuing)",
+                op,
+                self._camera_ip,
+                value_mm,
+                readback,
+            )
+        else:
+            logger.info(
+                "%sdriver focus set cam=%s requested=%r readback=%r",
+                op,
                 self._camera_ip,
                 value_mm,
                 readback,
