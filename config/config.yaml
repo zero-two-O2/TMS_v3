@@ -38,6 +38,7 @@ cameras:
     interval_seconds: 30.0
 
   acquisition:
+    backend: "custom"   # "custom" = GVCP/GVSP CustomTV46LDriver (default); "halcon" = legacy fallback
     target_fps: 9
     grab_timeout_ms: 500
     socket_buffer_size: 1048576

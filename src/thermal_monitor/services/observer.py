@@ -84,12 +84,16 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
         thermal_width: int = 640,
         thermal_height: int = 480,
         thermal_dtype: np.dtype = np.dtype(np.uint16),
+        visible_width: int | None = None,
+        visible_height: int | None = None,
+        visible_dtype: np.dtype | None = None,
     ) -> None:
         """Start observing one camera.
 
         Attaches to the shared-memory ring that the producer
         (AcquisitionWorker) already created for ``camera_id`` and runs a
-        ProcessingConsumer over it.  Ring geometry must match the producer.
+        ProcessingConsumer over it.  Ring geometry must match the producer
+        (including the visible plane for dual-feed rings).
 
         Raises:
             ValueError: if no analysis_config is provided.
@@ -117,6 +121,9 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
                 thermal_width=thermal_width,
                 thermal_height=thermal_height,
                 thermal_dtype=thermal_dtype,
+                visible_width=visible_width,
+                visible_height=visible_height,
+                visible_dtype=visible_dtype,
             )
         except Exception as exc:
             self._camera_id = None

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -82,6 +82,40 @@ _UNIT_SYMBOLS = {
 }
 
 
+class FocusWorker(QObject):
+    """Off-GUI-thread focus operations (Stage 8D).
+
+    GVCP round-trips + motor settle can block for seconds; this worker owns
+    that latency so the live thermal display never freezes. One operation
+    per worker instance; results return via queued signals.
+    """
+
+    read_finished = pyqtSignal(str, int, int, int)  # camera_id, min, max, current
+    write_finished = pyqtSignal(str, int, int)  # camera_id, requested, readback
+    failed = pyqtSignal(str, str)  # camera_id, message
+
+    def __init__(self, runtime_service, camera_id: str, value_mm: "int | None") -> None:
+        super().__init__()
+        self._runtime_service = runtime_service
+        self._camera_id = camera_id
+        self._value_mm = value_mm  # None = read-only refresh
+
+    @pyqtSlot()
+    def run(self) -> None:
+        try:
+            if self._value_mm is None:
+                vmin, vmax = self._runtime_service.get_focus_limits(self._camera_id)
+                current = self._runtime_service.get_focus_mm(self._camera_id)
+                self.read_finished.emit(self._camera_id, vmin, vmax, current)
+            else:
+                readback = self._runtime_service.set_focus_mm(
+                    self._camera_id, self._value_mm
+                )
+                self.write_finished.emit(self._camera_id, self._value_mm, readback)
+        except Exception as exc:
+            self.failed.emit(self._camera_id, str(exc)[:200])
+
+
 class ConfigurationModeWidget(QWidget):
     """Main widget for Configuration mode - ThermoView-style workstation."""
 
@@ -111,6 +145,10 @@ class ConfigurationModeWidget(QWidget):
         self._display_rate = UniqueFrameRate()
         self._config_editor: Optional[ConfigurationEditor] = None
         self._camera_selection_dialog: CameraSelectionDialog | None = None
+        # Focus worker thread (at most one in flight; stale results dropped
+        # by camera-id token when the selection changes mid-operation).
+        self._focus_thread: QThread | None = None
+        self._focus_camera_id: str | None = None
 
         # Dirty state tracking for camera-specific configurations
         self._dirty_camera_configs: set[str] = set()
@@ -149,6 +187,8 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.fps_changed.connect(self._on_fps_changed)
         self._acq_panel.averaging_changed.connect(self._on_averaging_changed)
         self._acq_panel.history_changed.connect(self._on_history_changed)
+        self._acq_panel.focus_set_requested.connect(self._on_focus_set_requested)
+        self._acq_panel.focus_refresh_requested.connect(self._on_focus_refresh_requested)
         main_splitter.addWidget(self._acq_panel)
 
         # CENTER PANE: Large thermal image (primary workspace)
@@ -419,6 +459,86 @@ class ConfigurationModeWidget(QWidget):
             running = self._runtime_service.is_camera_running(camera_id)
             self._acq_panel.set_acquisition_running(running)
 
+        # Refresh focus state for the selected camera (async; no-op when the
+        # camera is not running on the custom backend).
+        self._refresh_focus_panel()
+
+    # -- Focus (Stage 8D; UI -> runtime/service -> driver, never GVCP) --
+
+    def _stop_focus_worker(self) -> None:
+        thread, self._focus_thread = self._focus_thread, None
+        if thread is not None:
+            thread.quit()
+            thread.wait(2000)
+
+    def _start_focus_operation(self, camera_id: str, value_mm: "int | None") -> None:
+        """Run one focus read (None) or write in a worker thread."""
+        if self._runtime_service is None:
+            self._acq_panel.set_focus_enabled(False, "Runtime unavailable")
+            return
+        self._stop_focus_worker()
+        self._focus_camera_id = camera_id
+        self._focus_thread = QThread(self)
+        worker = FocusWorker(self._runtime_service, camera_id, value_mm)
+        worker.moveToThread(self._focus_thread)
+        self._focus_thread.started.connect(worker.run)
+        worker.read_finished.connect(self._on_focus_read_finished)
+        worker.write_finished.connect(self._on_focus_write_finished)
+        worker.failed.connect(self._on_focus_failed)
+        worker.read_finished.connect(self._focus_thread.quit)
+        worker.write_finished.connect(self._focus_thread.quit)
+        worker.failed.connect(self._focus_thread.quit)
+        self._focus_thread.start()
+
+    def _refresh_focus_panel(self) -> None:
+        """Enable + read focus when the selected camera runs; else disable."""
+        camera_id = self._selected_camera_id
+        if (
+            camera_id is None
+            or self._runtime_service is None
+            or not self._runtime_service.is_camera_running(camera_id)
+        ):
+            self._stop_focus_worker()
+            self._focus_camera_id = None
+            self._acq_panel.set_focus_enabled(False, "Camera not running")
+            return
+        self._acq_panel.set_focus_enabled(True)
+        self._acq_panel.set_focus_busy("Reading…")
+        self._start_focus_operation(camera_id, None)
+
+    def _on_focus_set_requested(self, value_mm: int) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        self._acq_panel.set_focus_busy("Writing…")
+        self._start_focus_operation(camera_id, value_mm)
+
+    def _on_focus_refresh_requested(self) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        self._acq_panel.set_focus_busy("Reading…")
+        self._start_focus_operation(camera_id, None)
+
+    def _on_focus_read_finished(self, camera_id: str, vmin: int, vmax: int, current: int) -> None:
+        if camera_id != self._selected_camera_id:
+            return  # stale result after camera switch
+        self._acq_panel.set_focus_enabled(True)
+        self._acq_panel.set_focus_state(current, vmin, vmax)
+
+    def _on_focus_write_finished(self, camera_id: str, requested: int, readback: int) -> None:
+        if camera_id != self._selected_camera_id:
+            return
+        self._acq_panel.set_focus_result(requested, readback)
+
+    def _on_focus_failed(self, camera_id: str, message: str) -> None:
+        if camera_id != self._selected_camera_id:
+            return
+        if "does not use the custom acquisition backend" in message:
+            self._acq_panel.set_focus_enabled(False, "HALCON backend: no focus API")
+        else:
+            self._acq_panel.set_focus_error(message)
+
     def _get_camera_connection_status(self, camera_id: str) -> CameraConnectionState:
         """Get the connection status of a camera."""
         if self._runtime_service is not None:
@@ -642,6 +762,11 @@ class ConfigurationModeWidget(QWidget):
                 self._observer = None
 
             self._acq_panel.set_acquisition_running(False)
+
+            # Focus no longer available once the camera stops.
+            self._stop_focus_worker()
+            self._focus_camera_id = None
+            self._acq_panel.set_focus_enabled(False, "Camera not running")
 
             # Update to DISCONNECTED state
             self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
@@ -937,6 +1062,7 @@ class ConfigurationModeWidget(QWidget):
         self._stats_timer.stop()
 
     def closeEvent(self, event) -> None:
+        self._stop_focus_worker()
         self.on_mode_deactivated()
         self._config_service.remove_camera_change_callback(self._on_camera_config_changed)
         self._config_service.remove_analysis_change_callback(self._on_analysis_config_changed)

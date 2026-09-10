@@ -511,6 +511,13 @@ class AcquisitionWorker:
         if result.frame_id is not None:
             thermal_sequence = result.frame_id
 
+        # Visible correlation (Stage 8D): a non-None visible plane arrives in
+        # the SAME GrabResult as thermal, i.e. split from one combined GVSP
+        # block under one hardware frame ID. It therefore carries the same
+        # sequence/timestamps -- IR and VL can never mismatch within a frame.
+        # (HALCON never provides visible, so this changes nothing there.)
+        visible_sequence = thermal_sequence if visible is not None else None
+
         thermal_meta = StreamMetadata(
             present=thermal is not None,
             width=thermal.shape[1] if thermal is not None else None,
@@ -530,18 +537,20 @@ class AcquisitionWorker:
             pixel_format=result.visible_format,
             dtype=str(visible.dtype) if visible is not None else None,
             byte_count=visible.nbytes if visible is not None else None,
-            sequence=None,
+            sequence=visible_sequence,
             timestamp=visible_timestamp,
             monotonic_timestamp=visible_mono,
             hardware_timestamp=None,
         )
 
-        # Synchronization status: UNKNOWN unless actual timing/sequence info
-        # can establish sync. The TV46L is a single-stream camera; IR and
-        # visible are time-sliced via FLK_TI_StreamDataSourceSelector, not
-        # simultaneously acquired. Do not claim SYNCHRONIZED.
+        # Synchronization status: both payloads non-None happens only for
+        # same-block combined sources (custom GVCP/GVSP backend), where IR
+        # and VL are split from ONE GVSP block under ONE block/frame ID --
+        # hence intrinsically correlated. The HALCON backend never produces
+        # both (single-stream time-sliced selector), so this branch does not
+        # change HALCON behavior.
         if thermal is not None and visible is not None:
-            sync = SyncInfo(status=SyncStatus.UNKNOWN)
+            sync = SyncInfo(status=SyncStatus.SYNCHRONIZED, time_delta=0.0)
         elif thermal is not None:
             sync = SyncInfo(status=SyncStatus.MISSING_VISIBLE)
         elif visible is not None:

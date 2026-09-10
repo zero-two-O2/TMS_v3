@@ -338,6 +338,9 @@ def create_recording_consumer(
     thermal_width: int = 640,
     thermal_height: int = 480,
     thermal_dtype: np.dtype = np.dtype(np.uint16),
+    visible_width: int | None = None,
+    visible_height: int | None = None,
+    visible_dtype: np.dtype | None = None,
 ) -> tuple[SharedMemoryRingBuffer, RecordingConsumer]:
     """Factory to attach to existing ring buffer and create RecordingConsumer.
 
@@ -353,11 +356,22 @@ def create_recording_consumer(
         thermal_width: Thermal frame width
         thermal_height: Thermal frame height
         thermal_dtype: Thermal frame dtype
+        visible_width: Visible plane width (must match producer; None = IR-only ring)
+        visible_height: Visible plane height (must match producer)
+        visible_dtype: Visible plane dtype (must match producer)
 
     Returns:
         Tuple of (ring_buffer, recording_consumer). The ring_buffer must be
         closed by the caller when all consumers are done.
     """
+    visible_spec = None
+    if visible_width is not None and visible_height is not None and visible_dtype is not None:
+        visible_spec = PayloadSpec(
+            width=visible_width,
+            height=visible_height,
+            dtype=visible_dtype,
+            bytes_per_frame=visible_width * visible_height * visible_dtype.itemsize,
+        )
     config = RingConfig(
         camera_id=camera_id,
         thermal_spec=PayloadSpec(
@@ -366,7 +380,7 @@ def create_recording_consumer(
             dtype=thermal_dtype,
             bytes_per_frame=thermal_width * thermal_height * thermal_dtype.itemsize,
         ),
-        visible_spec=None,  # IR-only for now
+        visible_spec=visible_spec,
         depth=ring_depth,
     )
 

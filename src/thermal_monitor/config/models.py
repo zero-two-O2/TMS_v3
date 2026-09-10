@@ -76,8 +76,14 @@ class CameraAcquisitionConfig:
     thermal_bits_per_channel: int = 16
     stream_source_visible: Optional[str] = None
     visible_bits_per_channel: int = -1
+    # Stage 8C: acquisition backend selector. "custom" (default) uses the
+    # pure-Python GVCP/GVSP CustomTV46LDriver; "halcon" keeps the legacy
+    # HALCON GigEVision2 TV46LDriver as an explicit fallback.
+    backend: str = "custom"
 
     def __post_init__(self) -> None:
+        if self.backend not in ("custom", "halcon"):
+            raise ValueError(f"cameras.acquisition.backend must be 'custom' or 'halcon'; got {self.backend!r}")
         if self.target_fps <= 0:
             raise ValueError(f"cameras.acquisition.target_fps must be > 0; got {self.target_fps}")
         if self.grab_timeout_ms <= 0:

@@ -237,6 +237,7 @@ class ConfigurationManager:
                     "thermal_bits_per_channel": 16,
                     "stream_source_visible": None,
                     "visible_bits_per_channel": -1,
+                    "backend": "custom",
                 },
                 "recovery": {
                     "consecutive_fail_limit": 3,
@@ -491,6 +492,7 @@ class ConfigurationManager:
             thermal_bits_per_channel=_parse_int(acq_raw.get("thermal_bits_per_channel"), 16),
             stream_source_visible=acq_raw.get("stream_source_visible"),
             visible_bits_per_channel=_parse_int(acq_raw.get("visible_bits_per_channel"), -1),
+            backend=str(acq_raw.get("backend", "custom")),
         )
 
         rec_raw = cam_raw.get("recovery", {})

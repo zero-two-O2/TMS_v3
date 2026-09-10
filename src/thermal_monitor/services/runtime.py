@@ -31,8 +31,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
 
+import numpy as np
+
 from thermal_monitor.camera.acquisition import AcquisitionWorker, FramePublisher
 from thermal_monitor.camera.driver import FrameSource, TV46LDriver
+from thermal_monitor.camera.tv46_custom import CustomTV46LDriver
 from thermal_monitor.camera.model import (
     AcquisitionState,
     AcquisitionStats,
@@ -63,6 +66,16 @@ class CameraRuntimeError(RuntimeError):
 # TV46L is a fixed 640x480 Mono16 camera (V2-validated).
 _THERMAL_WIDTH = 640
 _THERMAL_HEIGHT = 480
+# TV46L combined stream adds a raw 640x480 YUYV visible plane, carried as a
+# (480, 1280) uint8 plane (Stage 8D dual-feed, custom backend only).
+_VISIBLE_WIDTH = 1280
+_VISIBLE_HEIGHT = 480
+_VISIBLE_DTYPE = np.dtype(np.uint8)
+
+
+def _dual_feed_layout() -> tuple[int | None, int | None, np.dtype | None]:
+    """Visible-plane geometry for dual-feed (custom backend) rings."""
+    return (_VISIBLE_WIDTH, _VISIBLE_HEIGHT, _VISIBLE_DTYPE)
 
 
 def _int_meta(metadata: dict, key: str, default: int) -> int:
@@ -149,6 +162,7 @@ class CameraRuntime:
     ring: SharedMemoryRingBuffer
     publisher: FramePublisher
     worker: AcquisitionWorker
+    source: FrameSource
     observer: ObserverService | None = None
     recording: RecordingConsumer | None = None
     recording_ring: SharedMemoryRingBuffer | None = None
@@ -162,11 +176,12 @@ class CameraRuntime:
 class CameraRuntimeService:
     """Application-level lifecycle controller for camera runtimes.
 
-    The constructor is dependency-light: the default frame source is the real
-    ``TV46LDriver`` (HALCON is only imported lazily inside its methods), and
-    the default calibration provider is :class:`CachingCalibrationProvider`.
-    Tests inject a synthetic ``source_factory`` and a fixed calibration
-    provider; the controller itself never knows the difference.
+    The constructor is dependency-light: the default frame source is
+    selected by ``cameras_config.acquisition.backend`` -- ``"custom"``
+    (default, pure-Python GVCP/GVSP ``CustomTV46LDriver``) or ``"halcon"``
+    (legacy ``TV46LDriver`` fallback; HALCON is only imported lazily inside
+    its methods).  Tests inject a synthetic ``source_factory`` and a fixed
+    calibration provider; the controller itself never knows the difference.
 
     Serialized startup: ``_lock`` is held for the entire ``start_camera``
     call, ensuring that camera connections are serialized.  This prevents
@@ -191,7 +206,7 @@ class CameraRuntimeService:
         self._recording_config = recording_config
         self._storage_config = storage_config
         self._calibration_config = calibration_config
-        self._source_factory = source_factory or (lambda cfg: TV46LDriver(cfg))
+        self._source_factory = source_factory or self._default_source_factory
         self._calibration_provider = calibration_provider
         self._ring_depth = 32
         self._acquire_timeout_s = cameras_config.startup.acquire_timeout_s
@@ -252,9 +267,14 @@ class CameraRuntimeService:
 
             driver_config = build_driver_config(camera_config, self._cameras_config)
 
+            # Dual-feed rings on the custom backend carry the raw VL plane;
+            # the HALCON fallback keeps the exact IR-only layout as before.
+            dual_feed = self._cameras_config.acquisition.backend == "custom"
             try:
                 ring, publisher = create_frame_publisher_for_camera(
-                    driver_config, ring_depth=self._ring_depth
+                    driver_config,
+                    ring_depth=self._ring_depth,
+                    dual_feed=dual_feed,
                 )
             except Exception as exc:
                 raise CameraRuntimeError(
@@ -283,6 +303,7 @@ class CameraRuntimeService:
                 ring=ring,
                 publisher=publisher,
                 worker=worker,
+                source=source,
             )
             self._runtimes[camera_id] = runtime
 
@@ -343,6 +364,49 @@ class CameraRuntimeService:
                 return None
             return runtime.worker.stats()
 
+    # ─── Custom-backend controls (NUC / focus / status) ────────────────────
+    #
+    # Thin pass-throughs to CustomTV46LDriver.  Stage 8C scope: driver-level
+    # exposure only.  The V3 NUC policy (when/how often to trigger) and any
+    # UI wiring are deliberately unchanged/deferred.
+
+    def perform_nuc(self, camera_id: str) -> None:
+        """Execute the custom one-step manual NUC on a running camera."""
+        with self._lock:
+            source = self._require_custom_source(camera_id)
+            try:
+                source.perform_nuc()
+            except Exception as exc:
+                raise CameraRuntimeError(
+                    f"NUC failed for camera {camera_id}: {exc}"
+                ) from exc
+
+    def get_focus_limits(self, camera_id: str) -> tuple[int, int]:
+        """Hardware-reported focus range in mm for a running camera."""
+        with self._lock:
+            return self._require_custom_source(camera_id).get_focus_limits()
+
+    def get_focus_mm(self, camera_id: str) -> int:
+        """Current focus distance readback in mm for a running camera."""
+        with self._lock:
+            return self._require_custom_source(camera_id).get_focus_mm()
+
+    def set_focus_mm(self, camera_id: str, value_mm: int) -> int:
+        """Set focus distance (mm, never clamped) and return the readback."""
+        with self._lock:
+            source = self._require_custom_source(camera_id)
+            try:
+                return source.set_focus_mm(value_mm)
+            except (ValueError, RuntimeError) as exc:
+                raise CameraRuntimeError(
+                    f"Focus failed for camera {camera_id}: {exc}"
+                ) from exc
+
+    def get_driver_status(self, camera_id: str) -> dict:
+        """Receiver counters + stream state for a running custom camera."""
+        with self._lock:
+            return self._require_custom_source(camera_id).get_status()
+
     # ─── Observer (consumer bridge to the GUI) ───────────────────────────────
 
     def start_observer(
@@ -367,6 +431,12 @@ class CameraRuntimeService:
                 return runtime.observer
 
             service = ObserverService()
+            # Ring layout follows the configured backend (same rule as
+            # start_camera): dual-feed rings on "custom", IR-only on "halcon".
+            # Keyed off config, not source type, so producer and every
+            # consumer always agree on geometry.
+            dual_feed = self._cameras_config.acquisition.backend == "custom"
+            vis_w, vis_h, vis_d = _dual_feed_layout() if dual_feed else (None, None, None)
             try:
                 service.start(
                     camera_id,
@@ -375,6 +445,9 @@ class CameraRuntimeService:
                     ring_depth=self._ring_depth,
                     thermal_width=_THERMAL_WIDTH,
                     thermal_height=_THERMAL_HEIGHT,
+                    visible_width=vis_w,
+                    visible_height=vis_h,
+                    visible_dtype=vis_d,
                 )
             except Exception as exc:
                 raise CameraRuntimeError(
@@ -435,14 +508,16 @@ class CameraRuntimeService:
                 output_dir = Path(output_dir)
 
             recording_id = recording_id or f"rec_{camera_id}_{int(time.time() * 1000)}"
+            dual_feed = self._cameras_config.acquisition.backend == "custom"
             metadata = RecordingWriteMetadata(
                 recording_id=recording_id,
                 cameras=[camera_id],
-                streams={camera_id: ["IR"]},
+                streams={camera_id: ["IR", "VL"] if dual_feed else ["IR"]},
                 trigger=trigger,
                 camera_snapshots=(self._runtime_snapshot(runtime),),
             )
 
+            vis_w, vis_h, vis_d = _dual_feed_layout() if dual_feed else (None, None, None)
             try:
                 ring, consumer = create_recording_consumer(
                     camera_id=camera_id,
@@ -450,6 +525,9 @@ class CameraRuntimeService:
                     recording_metadata=metadata,
                     ring_depth=self._ring_depth,
                     chunk_target_bytes=self._recording_config.chunk_target_bytes,
+                    visible_width=vis_w,
+                    visible_height=vis_h,
+                    visible_dtype=vis_d,
                 )
             except Exception as exc:
                 raise CameraRuntimeError(
@@ -496,6 +574,37 @@ class CameraRuntimeService:
             return runtime.recording.stats()
 
     # ─── Internal helpers ────────────────────────────────────────────────────
+
+    def _default_source_factory(self, driver_config: DriverCameraConfig) -> FrameSource:
+        """Build the production frame source per ``acquisition.backend``.
+
+        ``"custom"`` (default): pure-Python GVCP/GVSP ``CustomTV46LDriver``
+        using the driver config IP as the camera endpoint.
+        ``"halcon"``: legacy HALCON ``TV46LDriver`` fallback.
+        """
+        backend = self._cameras_config.acquisition.backend
+        if backend == "halcon":
+            logger.info("Camera %s: using HALCON acquisition backend (fallback)",
+                        driver_config.identity.camera_id)
+            return TV46LDriver(driver_config)
+        return CustomTV46LDriver(driver_config)
+
+    def _require_custom_source(self, camera_id: str) -> CustomTV46LDriver:
+        """Return the running camera's source if it is a CustomTV46LDriver.
+
+        Raises:
+            CameraRuntimeError: if the camera is not running or uses another
+                backend (e.g. the HALCON fallback, which has no focus/NUC
+                register API in V3).
+        """
+        runtime = self._require_running(camera_id)
+        source = runtime.source
+        if not isinstance(source, CustomTV46LDriver):
+            raise CameraRuntimeError(
+                f"Camera {camera_id} does not use the custom acquisition backend "
+                f"(source={type(source).__name__})"
+            )
+        return source
 
     def _require_running(self, camera_id: str) -> CameraRuntime:
         runtime = self._runtimes.get(camera_id)

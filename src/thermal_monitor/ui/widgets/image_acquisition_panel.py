@@ -46,6 +46,8 @@ class ImageAcquisitionPanel(QWidget):
     fps_changed = pyqtSignal(int)
     averaging_changed = pyqtSignal(str)
     history_changed = pyqtSignal(int)
+    focus_set_requested = pyqtSignal(int)
+    focus_refresh_requested = pyqtSignal()
 
     def __init__(self, theme_manager: Optional[ThemeManager] = None) -> None:
         super().__init__()
@@ -187,6 +189,54 @@ class ImageAcquisitionPanel(QWidget):
         group_layout.addWidget(self._change_btn)
 
         layout.addWidget(group)
+
+        # --- FOCUS GROUP (Stage 8D: custom-backend focus, async via window) ---
+        focus_group = QGroupBox("FOCUS")
+        focus_layout = QFormLayout(focus_group)
+        focus_layout.setSpacing(6)
+        focus_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        focus_layout.setContentsMargins(8, 12, 8, 8)
+
+        self._focus_current_label = QLabel("— mm")
+        self._focus_current_label.setStyleSheet("font-family: monospace;")
+        focus_layout.addRow("Current:", self._focus_current_label)
+
+        self._focus_range_label = QLabel("—")
+        self._focus_range_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        focus_layout.addRow("Range:", self._focus_range_label)
+
+        focus_row = QHBoxLayout()
+        focus_row.setSpacing(6)
+        self._focus_spin = QSpinBox()
+        self._focus_spin.setRange(1, 1000000)
+        self._focus_spin.setSuffix(" mm")
+        self._apply_input_style(self._focus_spin)
+        self._focus_apply_btn = QPushButton("Apply")
+        self._focus_apply_btn.clicked.connect(
+            lambda: self.focus_set_requested.emit(self._focus_spin.value())
+        )
+        self._apply_button_style(self._focus_apply_btn, "primary")
+        focus_row.addWidget(self._focus_spin, 1)
+        focus_row.addWidget(self._focus_apply_btn)
+        focus_layout.addRow("Set:", focus_row)
+
+        focus_btn_row = QHBoxLayout()
+        focus_btn_row.setSpacing(6)
+        self._focus_refresh_btn = QPushButton("Read")
+        self._focus_refresh_btn.clicked.connect(self.focus_refresh_requested.emit)
+        self._apply_button_style(self._focus_refresh_btn, "secondary")
+        focus_btn_row.addWidget(self._focus_refresh_btn)
+        focus_btn_row.addStretch()
+        focus_layout.addRow("", focus_btn_row)
+
+        self._focus_status_label = QLabel("Focus unavailable")
+        self._focus_status_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        self._focus_status_label.setWordWrap(True)
+        focus_layout.addRow("Status:", self._focus_status_label)
+
+        self._focus_group = focus_group
+        self._focus_group.setEnabled(False)
+        layout.addWidget(focus_group)
 
         # --- IMAGE INFO GROUP ---
         info_group = QGroupBox("IMAGE INFO")
@@ -487,6 +537,47 @@ class ImageAcquisitionPanel(QWidget):
             self._info_processing
         ]:
             label.setText("—")
+
+    # -- Focus (Stage 8D; dumb view, window drives runtime asynchronously) --
+
+    def set_focus_enabled(self, enabled: bool, reason: str = "") -> None:
+        """Enable/disable the focus group (e.g. camera not running)."""
+        self._focus_group.setEnabled(enabled)
+        if not enabled:
+            self._focus_status_label.setText(reason or "Focus unavailable")
+
+    def set_focus_state(self, current_mm: int, min_mm: int, max_mm: int) -> None:
+        """Show hardware-reported focus state; clamp spinbox to [min, max]."""
+        self._focus_current_label.setText(f"{current_mm} mm")
+        self._focus_range_label.setText(f"{min_mm} … {max_mm} mm")
+        self._focus_spin.setRange(max(1, min_mm), max(max_mm, min_mm + 1))
+        if not self._focus_spin.hasFocus():
+            self._focus_spin.setValue(min(max(current_mm, min_mm), max_mm))
+        self._focus_status_label.setText("Ready")
+
+    def set_focus_busy(self, text: str = "Writing…") -> None:
+        """Indicate an in-flight focus operation; block re-entry."""
+        self._focus_apply_btn.setEnabled(False)
+        self._focus_refresh_btn.setEnabled(False)
+        self._focus_status_label.setText(text)
+
+    def set_focus_result(self, requested_mm: int, readback_mm: int) -> None:
+        """Report completion with the hardware readback (may differ slightly)."""
+        self._focus_apply_btn.setEnabled(True)
+        self._focus_refresh_btn.setEnabled(True)
+        self._focus_current_label.setText(f"{readback_mm} mm")
+        if readback_mm == requested_mm:
+            self._focus_status_label.setText(f"OK: {requested_mm} mm")
+        else:
+            self._focus_status_label.setText(
+                f"OK (motor offset): requested {requested_mm} mm, at {readback_mm} mm"
+            )
+
+    def set_focus_error(self, message: str) -> None:
+        """Report failure clearly and re-enable the controls."""
+        self._focus_apply_btn.setEnabled(True)
+        self._focus_refresh_btn.setEnabled(True)
+        self._focus_status_label.setText(f"Error: {message}")
 
 
 __all__ = ["ImageAcquisitionPanel"]
