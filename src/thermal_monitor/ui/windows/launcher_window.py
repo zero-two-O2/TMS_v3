@@ -51,6 +51,7 @@ class LauncherWindow(QMainWindow):
         config_service: ConfigurationService,
         discovery_service: "Optional[CameraDiscoveryService | GvcpDiscoveryService]" = None,
         theme_manager: Optional[ThemeManager] = None,
+        config_manager=None,
     ) -> None:
         super().__init__()
 
@@ -59,12 +60,26 @@ class LauncherWindow(QMainWindow):
         self._discovery = discovery_service or CameraDiscoveryService()
         self._discovered: list[DiscoveredCamera] = []
         self._theme = theme_manager
+        self._config_manager = config_manager
+        self._settings_menu_controller = None
 
         self.setWindowTitle("Thermal Monitoring System V3 - Launcher")
         self._apply_window_config()
         self._setup_ui()
+        self._setup_settings_menu()
         self._create_status_bar()
         self._perform_initial_discovery()
+
+    def _setup_settings_menu(self) -> None:
+        """Add the top-left Settings menu with live Theme switching."""
+        from thermal_monitor.ui.theme.menu import ThemeMenuController
+
+        self._settings_menu_controller = ThemeMenuController(
+            theme_manager=self._theme,
+            config_manager=self._config_manager,
+            parent=self,
+        )
+        self._settings_menu_controller.attach_to_window(self)
 
     def _apply_window_config(self) -> None:
         """Apply window configuration from theme manager."""

@@ -768,6 +768,70 @@ class ConfigurationManager:
         # Additional cross-section validation can go here
         pass
 
+    def save_theme(self, theme_name: str) -> None:
+        """Persist only the ``ui.theme`` preference to config.yaml.
+
+        Reads the raw YAML file, updates the ``ui.theme`` key, writes it
+        back atomically (backup + temp + replace), then reloads the
+        in-memory config.  No other configuration value is modified.
+
+        This is the persistence half of live theme switching: callers
+        must apply the theme to the running QApplication separately
+        (see ``ThemeManager.set_theme`` / ``apply_and_refresh``).  A
+        failure here must never undo an already-applied live theme;
+        callers should catch, log, and keep the applied theme.
+
+        Raises:
+            ValueError: If *theme_name* is not a known UI theme.
+            ConfigurationError: If the file cannot be written/validated.
+        """
+        if theme_name not in UIConfig.VALID_THEMES:
+            raise ValueError(
+                f"ui.theme must be one of {list(UIConfig.VALID_THEMES)}; "
+                f"got {theme_name!r}"
+            )
+        import shutil
+
+        raw: dict[str, Any] = {}
+        if self._config_path.exists():
+            try:
+                with open(self._config_path, "r", encoding="utf-8") as f:
+                    loaded = yaml.safe_load(f)
+                    raw = loaded if isinstance(loaded, dict) else {}
+            except yaml.YAMLError as e:
+                raise ConfigurationError(
+                    f"Invalid YAML in {self._config_path}: {e}"
+                ) from e
+        ui_section = raw.get("ui")
+        if not isinstance(ui_section, dict):
+            ui_section = {}
+            raw["ui"] = ui_section
+        ui_section["theme"] = theme_name
+
+        try:
+            if self._config_path.exists():
+                backup_path = self._config_path.with_suffix(
+                    self._config_path.suffix + ".bak"
+                )
+                shutil.copy2(self._config_path, backup_path)
+            temp_path = self._config_path.with_suffix(
+                self._config_path.suffix + ".tmp"
+            )
+            try:
+                temp_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    yaml.dump(raw, f, default_flow_style=False, sort_keys=False)
+                temp_path.replace(self._config_path)
+            except Exception:
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise
+            self._load_config(create_default=False)
+        except (OSError, ValueError) as e:
+            raise ConfigurationError(
+                f"Failed to persist theme {theme_name!r}: {e}"
+            ) from e
+
     def get_config(self) -> AppConfig:
         """Get the complete validated configuration."""
         if self._config is None:

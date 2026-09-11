@@ -857,6 +857,7 @@ class OfflineWindow(QMainWindow):
         mode_service: ModeService,
         database: Optional[object] = None,
         theme_manager: Optional[ThemeManager] = None,
+        config_manager=None,
     ) -> None:
         super().__init__()
 
@@ -864,6 +865,8 @@ class OfflineWindow(QMainWindow):
         self._config_service = config_service
         self._mode_service = mode_service
         self._theme = theme_manager
+        self._config_manager = config_manager
+        self._settings_menu_controller = None
 
         self.setWindowTitle("Thermal Monitoring System V3 - Offline Mode")
         self._apply_window_config()
@@ -877,6 +880,7 @@ class OfflineWindow(QMainWindow):
             theme_manager=theme_manager,
         )
         self.setCentralWidget(self._offline_widget)
+        self._setup_settings_menu()
 
         # Status bar
         self._status_bar = QStatusBar()
@@ -884,6 +888,17 @@ class OfflineWindow(QMainWindow):
         self._status_label = QLabel("Offline Mode")
         set_role(self._status_label, "status")
         self._status_bar.addWidget(self._status_label)
+
+    def _setup_settings_menu(self) -> None:
+        """Add the top-left Settings menu with live Theme switching."""
+        from thermal_monitor.ui.theme.menu import ThemeMenuController
+
+        self._settings_menu_controller = ThemeMenuController(
+            theme_manager=self._theme,
+            config_manager=self._config_manager,
+            parent=self,
+        )
+        self._settings_menu_controller.attach_to_window(self)
 
     def _apply_window_config(self) -> None:
         """Apply window configuration from theme manager."""

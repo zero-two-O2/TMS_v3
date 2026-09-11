@@ -31,6 +31,14 @@ from thermal_monitor.ui.theme.themes import (
     DEFAULT_THEME_NAME,
     get_builtin_theme,
 )
+from thermal_monitor.ui.theme.menu import (
+    SETTINGS_MENU_TITLE,
+    THEME_MENU_ORDER,
+    THEME_MENU_TITLE,
+    ThemeMenuController,
+    available_menu_themes,
+    theme_display_name,
+)
 from thermal_monitor.ui.theme.tokens import (
     BUTTON_VARIANTS,
     LABEL_ROLES,
@@ -52,14 +60,19 @@ __all__ = [
     "DEFAULT_THEME_NAME",
     "LABEL_ROLES",
     "LEGACY_THEMES",
+    "SETTINGS_MENU_TITLE",
     "STATUS_VALUES",
+    "THEME_MENU_ORDER",
+    "THEME_MENU_TITLE",
     "TILE_STATES",
     "LiveTileColors",
     "ThemeColors",
     "ThemeDefinition",
     "ThemeManager",
+    "ThemeMenuController",
     "ThemeMetrics",
     "apply_theme",
+    "available_menu_themes",
     "build_stylesheet",
     "get_builtin_theme",
     "refresh_all_widgets",
@@ -69,4 +82,5 @@ __all__ = [
     "set_status",
     "set_tile_state",
     "set_variant",
+    "theme_display_name",
 ]

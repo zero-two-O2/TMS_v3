@@ -189,6 +189,7 @@ class AppController(QObject):
             config_service=self._config_service,
             discovery_service=self._discovery_service,
             theme_manager=self._theme_manager,
+            config_manager=self._config_manager,
         )
         self._launcher_window.mode_requested.connect(self._on_mode_requested)
 
@@ -201,6 +202,7 @@ class AppController(QObject):
                 observer_service=self._observer_service,
                 runtime_service=self._runtime_service,
                 theme_manager=self._theme_manager,
+                config_manager=self._config_manager,
             )
             self._live_window.destroyed.connect(self._on_live_window_destroyed)
         return self._live_window
@@ -228,6 +230,7 @@ class AppController(QObject):
                 mode_service=self._mode_service,
                 database=self._database,
                 theme_manager=self._theme_manager,
+                config_manager=self._config_manager,
             )
             self._offline_window.destroyed.connect(self._on_offline_window_destroyed)
         return self._offline_window

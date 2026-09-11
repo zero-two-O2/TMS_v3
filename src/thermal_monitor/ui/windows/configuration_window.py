@@ -1466,6 +1466,7 @@ class ConfigurationWindow(QMainWindow):
         self._discovery_service = discovery_service
         self._theme = theme_manager
         self._config_manager = config_manager
+        self._settings_menu_controller = None
 
         self.setWindowTitle("Thermal Monitoring System V3 - Configuration Mode")
         self._apply_window_config()
@@ -1575,6 +1576,16 @@ class ConfigurationWindow(QMainWindow):
         config_action = QAction("Configuration Editor", self)
         config_action.triggered.connect(lambda: self._config_widget._analysis_tabs.setCurrentWidget(self._config_widget._config_editor) if self._config_widget._config_editor else None)
         window_menu.addAction(config_action)
+
+        # Settings menu with live Theme switching (same manager everywhere).
+        from thermal_monitor.ui.theme.menu import ThemeMenuController
+
+        self._settings_menu_controller = ThemeMenuController(
+            theme_manager=self._theme,
+            config_manager=self._config_manager,
+            parent=self,
+        )
+        self._settings_menu_controller.attach_to_menu_bar(menu_bar)
 
         # Help menu
         help_menu = menu_bar.addMenu("Help")

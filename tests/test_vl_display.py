@@ -150,23 +150,27 @@ class TestVlImageWidget:
 
 
 class TestLiveWallFeedMode:
-    def test_tile_defaults_ir_and_switches(self, qapp):
+    def test_tile_shows_both_feeds_simultaneously(self, qapp):
         from thermal_monitor.ui.windows.live_window import LiveCameraTile
 
         tile = LiveCameraTile(0, theme_manager=None)
         try:
-            assert tile.feed_mode == "ir"
+            assert tile.feed_mode == "both"
+            # Both feed widgets exist and are visible side by side.
+            assert tile._image_widget.isVisibleTo(tile)
+            assert tile._vl_widget.isVisibleTo(tile)
+            # Compatibility shim accepts historic values and keeps both.
             tile.set_feed_mode("vl")
-            assert tile.feed_mode == "vl"
-            assert tile._image_stack.currentIndex() == 1
+            assert tile.feed_mode == "both"
             tile.set_feed_mode("ir")
-            assert tile._image_stack.currentIndex() == 0
+            assert tile.feed_mode == "both"
             with pytest.raises(ValueError):
                 tile.set_feed_mode("bogus")
         finally:
+            tile._image_widget.close()
             tile._vl_widget.close()
 
-    def test_wall_toggle_applies_to_all_tiles(self, qapp):
+    def test_wall_shows_both_feeds_on_all_tiles(self, qapp):
         from unittest.mock import Mock
 
         from thermal_monitor.ui.windows.live_window import LiveModeWidget
@@ -175,13 +179,14 @@ class TestLiveWallFeedMode:
             mode_service=Mock(), config_service=Mock(), theme_manager=None
         )
         try:
-            assert wall.feed_mode == "ir"
-            wall._feed_selector.setCurrentText("VL")
-            assert wall.feed_mode == "vl"
-            assert all(t.feed_mode == "vl" for t in wall._tiles)
-            wall._feed_selector.setCurrentText("IR")
-            assert all(t.feed_mode == "ir" for t in wall._tiles)
+            assert wall.feed_mode == "both"
+            assert all(t.feed_mode == "both" for t in wall._tiles)
+            assert all(t._image_widget.isVisibleTo(t) for t in wall._tiles)
+            assert all(t._vl_widget.isVisibleTo(t) for t in wall._tiles)
+            # No global IR/VL toggle on the simultaneous wall.
+            assert not hasattr(wall, "_feed_selector")
         finally:
             for tile in wall._tiles:
+                tile._image_widget.close()
                 tile._vl_widget.close()
             wall.close()
