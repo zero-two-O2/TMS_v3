@@ -1,119 +1,87 @@
-# TMS V3 — Application Configuration
-#
-# This file is deployed alongside TMS_V3.exe in the config/ directory.
-# All settings can be changed without rebuilding the executable.
-#
-# Precedence: Environment variables > config.yaml > built-in defaults
-#
-# Secrets (passwords, API keys) MUST NOT be stored in this file.
-# Use environment variables instead (e.g., TMS_DB_PASSWORD).
-
 application:
-  name: "Thermal Monitoring System V3"
-  version: "3.0.0"
-  default_mode: "CONFIGURATION"    # LAUNCHER | CONFIGURATION | LIVE | OFFLINE
+  name: Thermal Monitoring System V3
+  version: 3.0.0
+  default_mode: CONFIGURATION
   start_maximized: true
-
 database:
   enabled: false
-  type: "sqlserver"
-  driver: "ODBC Driver 17 for SQL Server"
-  host: ""
+  type: sqlserver
+  driver: ODBC Driver 17 for SQL Server
+  host: ''
   port: 1433
-  name: ""
+  name: ''
   trusted_connection: true
-  username: ""
-  password_env: "TMS_DB_PASSWORD"   # Environment variable name for password
+  username: ''
+  password_env: TMS_DB_PASSWORD
   connection_timeout: 30
   command_timeout: 30
   trust_server_certificate: true
-
 cameras:
   discovery:
     enabled: true
     startup_scan: true
-    backend: "gvcp"   # "gvcp" = native GVCP discovery (default); "halcon" = explicit fallback
-    static_ips: []     # optional known IPs for GVCP unicast verification
-    halcon_interface: "GigEVision2"   # HALCON discovery fallback only
+    halcon_interface: GigEVision2
     attempts: 3
     retry_delay_s: 3.0
     interval_seconds: 30.0
-
+    backend: gvcp
+    static_ips: []
   acquisition:
-    backend: "custom"   # sole production backend: GVCP/GVSP CustomTV46LDriver
     target_fps: 9
     grab_timeout_ms: 500
     socket_buffer_size: 1048576
     num_buffers: 8
-    stream_source_thermal: "IR_Data"
+    stream_source_thermal: IR_Data
     thermal_bits_per_channel: 16
     stream_source_visible: null
     visible_bits_per_channel: -1
-
+    backend: custom
   recovery:
     consecutive_fail_limit: 3
     reconnect_interval_s: 3.0
     reconnect_backoff_factor: 2.0
     max_reconnect_attempts: 10
-
   connection:
-    device_identifier: "default"   # reserved; camera identity uses serial/GVCP discovery
-    ip_mode: "auto"                # "auto" | "static"
-
+    device_identifier: default
+    ip_mode: auto
   startup:
     acquire_timeout_s: 10.0
-
-  # Camera mapping: discovered cameras are matched by serial_number
-  # Add entries here to configure application-specific settings per camera
   mapping: []
-    # Example:
-    # - camera_id: "cam_01"
-    #   serial_number: "HB25080011"
-    #   enabled: true
-    #   name: "Camera 1"
-    #   target_fps: 9
-
 system:
   max_cameras: 8
   auto_save_config: true
   shutdown_timeout_s: 5.0
-
 storage:
-  root: "data"                      # Relative to EXE directory, or absolute path
-  recordings: "recordings"
-  snapshots: "snapshots"
-  logs: "logs"
-  calibration: "calibration"
-  exports: "exports"
-  database_backups: "database"
-  offline: "offline"
-
+  root: data
+  recordings: recordings
+  snapshots: snapshots
+  logs: logs
+  calibration: calibration
+  exports: exports
+  database_backups: database
+  offline: offline
 recording:
   enabled: true
   default_fps: 9.0
   pre_alarm_seconds: 10.0
   post_alarm_seconds: 30.0
-  max_duration_seconds: 300.0
-  max_file_size_mb: 500
-  chunk_target_bytes: 67108864      # 64 MiB
+  max_duration_seconds: 99.99
+  max_file_size_mb: 99
+  chunk_target_bytes: 99
   compression_enabled: false
-  naming_pattern: "rec_{camera_id}_{timestamp_ms}"
-
+  naming_pattern: rec_{camera_id}_{timestamp_ms}
 calibration:
-  default_file: "calibration/calibration_blob.txt"
-
+  default_file: calibration/calibration_blob.txt
 processing:
   enabled: true
-  interval_ms: 100
+  interval_ms: 99
   default_fps: 9.0
   gpu_enabled: false
-
 alarms:
   evaluation_enabled: true
   cooldown_seconds: 5.0
-  max_history: 10000
+  max_history: 99
   default_enabled: true
-
 ptz:
   enabled: true
   limits:
@@ -131,59 +99,78 @@ ptz:
     pan: 10.0
     tilt: 10.0
     zoom: 5.0
-
 roi:
   defaults:
-    RECTANGLE1: { y1: 0.0, x1: 0.0, y2: 100.0, x2: 100.0 }
-    RECTANGLE2: { center_y: 0.0, center_x: 0.0, phi: 0.0, length1: 50.0, length2: 50.0 }
-    CIRCLE: { center_y: 0.0, center_x: 0.0, radius: 50.0 }
-    ELLIPSE: { center_y: 0.0, center_x: 0.0, phi: 0.0, radius1: 50.0, radius2: 30.0 }
-    POLYGON: { points: [[0.0, 0.0], [100.0, 0.0], [50.0, 100.0]] }
-
+    RECTANGLE1:
+      y1: 0.0
+      x1: 0.0
+      y2: 100.0
+      x2: 100.0
+    RECTANGLE2:
+      center_y: 0.0
+      center_x: 0.0
+      phi: 0.0
+      length1: 50.0
+      length2: 50.0
+    CIRCLE:
+      center_y: 0.0
+      center_x: 0.0
+      radius: 50.0
+    ELLIPSE:
+      center_y: 0.0
+      center_x: 0.0
+      phi: 0.0
+      radius1: 50.0
+      radius2: 30.0
+    POLYGON:
+    - - p
+      - o
+      - i
+      - n
+      - t
+      - s
 offline:
   playback:
     default_speed: 1.0
     speed_min: 0.1
     speed_max: 10.0
-  storage_path: ""
-
+  storage_path: ''
 logging:
-  level: "INFO"                     # DEBUG | INFO | WARNING | ERROR | CRITICAL
-  file_path: ""                     # Relative to storage.root/logs, or absolute
-  format: "[%(asctime)s] [%(levelname)s] %(message)s"
-  date_format: "%Y-%m-%d %H:%M:%S"
+  level: INFO
+  file_path: ''
+  format: '[%(asctime)s] [%(levelname)s] %(message)s'
+  date_format: '%Y-%m-%d %H:%M:%S'
   max_size_mb: 20
   backup_count: 5
-
 ui:
-  theme: "light"                    # light | dark | system
+  theme: industrial_dark
   colors:
-    primary: "#2E7D32"
-    primary_hover: "#388E3C"
-    primary_pressed: "#1B5E20"
-    primary_disabled_bg: "#A5D6A7"
-    primary_disabled_text: "#E8F5E9"
-    secondary: "#1976D2"
-    secondary_hover: "#1E88E5"
-    secondary_pressed: "#0D47A1"
-    secondary_disabled_bg: "#90CAF9"
-    secondary_disabled_text: "#E3F2FD"
-    accent: "#7B1FA2"
-    accent_hover: "#8E24AA"
-    accent_pressed: "#4A148C"
-    warning: "#FFA000"
-    danger: "#D32F2F"
-    disabled: "#757575"
-    text_primary: "#212121"
-    text_secondary: "#888888"
-    text_muted: "#666666"
-    title: "#2196F3"
-    background: "#FFFFFF"
-    panel: "#F5F5F5"
-    border: "#E0E0E0"
-    alarm: "#D32F2F"
-    success: "#2E7D32"
-    info: "#1976D2"
+    primary: '#2E7D32'
+    primary_hover: '#388E3C'
+    primary_pressed: '#1B5E20'
+    primary_disabled_bg: '#A5D6A7'
+    primary_disabled_text: '#E8F5E9'
+    secondary: '#1976D2'
+    secondary_hover: '#1E88E5'
+    secondary_pressed: '#0D47A1'
+    secondary_disabled_bg: '#90CAF9'
+    secondary_disabled_text: '#E3F2FD'
+    accent: '#7B1FA2'
+    accent_hover: '#8E24AA'
+    accent_pressed: '#4A148C'
+    warning: '#FFA000'
+    danger: '#D32F2F'
+    disabled: '#757575'
+    text_primary: '#212121'
+    text_secondary: '#888888'
+    text_muted: '#666666'
+    title: '#2196F3'
+    background: '#FFFFFF'
+    panel: '#F5F5F5'
+    border: '#E0E0E0'
+    alarm: '#D32F2F'
+    success: '#2E7D32'
+    info: '#1976D2'
   windows:
     start_maximized: true
     launcher_min_width: 1000
@@ -209,12 +196,11 @@ ui:
     show_fps: true
     show_temperature: true
   display:
-    default_palette: "temperature"  # temperature | iron | rainbow | gray | hot
-    default_zoom: "Fit to Window"   # Fit to Window | 50% | 100% | 200% | 400%
+    default_palette: temperature
+    default_zoom: Fit to Window
     auto_range: true
     min_temperature: -20.0
     max_temperature: 1200.0
-
 network:
-  bind_address: "0.0.0.0"
+  bind_address: 0.0.0.0
   http_port: 8080

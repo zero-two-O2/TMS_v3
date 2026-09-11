@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -28,6 +29,12 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError, GvcpDiscoveryService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_variant
+from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
+
+#: Fallback status colors when no theme manager is attached (the app
+#: always provides one).  Sourced centrally, never scattered literals.
+_FALLBACK = BUILTIN_THEMES["industrial_dark"]
 
 
 class LauncherWidget(QWidget):
@@ -61,12 +68,12 @@ class LauncherWidget(QWidget):
 
         # Title
         title = QLabel("Thermal Monitoring System")
-        title.setStyleSheet(self._theme_stylesheet("title"))
+        set_role(title, "title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("Available Cameras")
-        subtitle.setStyleSheet(self._theme_stylesheet("subtitle"))
+        set_role(subtitle, "subtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -89,8 +96,7 @@ class LauncherWidget(QWidget):
         search_layout.addStretch()
         self._search_btn = QPushButton("Search Cameras")
         self._search_btn.setMinimumWidth(160)
-        if self._theme:
-            self._search_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+        set_variant(self._search_btn, "secondary")
         self._search_btn.clicked.connect(self._on_search_clicked)
         search_layout.addWidget(self._search_btn)
         search_layout.addStretch()
@@ -105,17 +111,17 @@ class LauncherWidget(QWidget):
 
         self._live_btn = QPushButton("LIVE")
         self._live_btn.setMinimumSize(140, 60)
-        self._live_btn.setStyleSheet(self._theme_stylesheet("primary_button"))
+        set_variant(self._live_btn, "primary")
         self._live_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.LIVE))
 
         self._config_btn = QPushButton("CONFIGURATION")
         self._config_btn.setMinimumSize(140, 60)
-        self._config_btn.setStyleSheet(self._theme_stylesheet("secondary_button"))
+        set_variant(self._config_btn, "secondary")
         self._config_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.CONFIGURATION))
 
         self._offline_btn = QPushButton("OFFLINE")
         self._offline_btn.setMinimumSize(140, 60)
-        self._offline_btn.setStyleSheet(self._theme_stylesheet("accent_button"))
+        set_variant(self._offline_btn, "accent")
         self._offline_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.OFFLINE))
 
         mode_layout.addStretch()
@@ -129,88 +135,14 @@ class LauncherWidget(QWidget):
         # Status
         self._status_label = QLabel("Discovering cameras...")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_label.setStyleSheet(self._theme_stylesheet("status"))
+        set_role(self._status_label, "status")
         layout.addWidget(self._status_label)
 
-    def _theme_stylesheet(self, widget_type: str) -> str:
-        """Get stylesheet for widget type from theme manager."""
-        if not self._theme:
-            # Fallback to original hardcoded styles
-            if widget_type == "title":
-                return "font-size: 28px; font-weight: bold; color: #2196F3;"
-            elif widget_type == "subtitle":
-                return "font-size: 16px; color: #666;"
-            elif widget_type == "status":
-                return "color: #888; font-size: 12px;"
-            elif widget_type == "primary_button":
-                return """
-                    QPushButton {
-                        font-size: 18px;
-                        font-weight: bold;
-                        background-color: #2E7D32;
-                        color: white;
-                        border-radius: 6px;
-                    }
-                    QPushButton:hover {
-                        background-color: #388E3C;
-                    }
-                    QPushButton:pressed {
-                        background-color: #1B5E20;
-                    }
-                    QPushButton:disabled {
-                        background-color: #A5D6A7;
-                        color: #E8F5E9;
-                    }
-                """
-            elif widget_type == "secondary_button":
-                return """
-                    QPushButton {
-                        font-size: 18px;
-                        font-weight: bold;
-                        background-color: #1976D2;
-                        color: white;
-                        border-radius: 6px;
-                    }
-                    QPushButton:hover {
-                        background-color: #1E88E5;
-                    }
-                    QPushButton:pressed {
-                        background-color: #0D47A1;
-                    }
-                    QPushButton:disabled {
-                        background-color: #90CAF9;
-                        color: #E3F2FD;
-                    }
-                """
-            elif widget_type == "accent_button":
-                return """
-                    QPushButton {
-                        font-size: 18px;
-                        font-weight: bold;
-                        background-color: #7B1FA2;
-                        color: white;
-                        border-radius: 6px;
-                    }
-                    QPushButton:hover {
-                        background-color: #8E24AA;
-                    }
-                    QPushButton:pressed {
-                        background-color: #4A148C;
-                    }
-                """
-        if widget_type == "title":
-            return self._theme.title_stylesheet(28)
-        elif widget_type == "subtitle":
-            return self._theme.subtitle_stylesheet(16)
-        elif widget_type == "status":
-            return self._theme.status_stylesheet(12)
-        elif widget_type == "primary_button":
-            return self._theme.primary_button_stylesheet()
-        elif widget_type == "secondary_button":
-            return self._theme.secondary_button_stylesheet()
-        elif widget_type == "accent_button":
-            return self._theme.accent_button_stylesheet()
-        return ""
+    # --- Semantic styling -------------------------------------------------
+    # Widgets declare variant/role properties only; the central
+    # stylesheet resolves all colors.  The historic hardcoded fallback
+    # stylesheets were removed: properties are styled by the
+    # application stylesheet with or without a theme manager instance.
 
     def _perform_initial_discovery(self) -> None:
         """Perform initial camera discovery at startup."""
@@ -266,9 +198,9 @@ class LauncherWidget(QWidget):
             status = "Available"
             status_item = QTableWidgetItem(status)
             if self._theme:
-                status_item.setForeground(self._theme.success())
+                status_item.setForeground(QColor(self._theme.success()))
             else:
-                status_item.setForeground(Qt.GlobalColor.darkGreen)
+                status_item.setForeground(QColor(_FALLBACK.camera_connected))
             self._camera_table.setItem(row, 4, status_item)
 
         # Fill remaining slots as unavailable
@@ -281,9 +213,9 @@ class LauncherWidget(QWidget):
             self._camera_table.setItem(row, 3, QTableWidgetItem("—"))
             status_item = QTableWidgetItem("Not Available")
             if self._theme:
-                status_item.setForeground(self._theme.disabled_text())
+                status_item.setForeground(QColor(self._theme.disabled_text()))
             else:
-                status_item.setForeground(Qt.GlobalColor.gray)
+                status_item.setForeground(QColor(_FALLBACK.camera_disconnected))
             self._camera_table.setItem(row, 4, status_item)
 
     def _update_status(self) -> None:

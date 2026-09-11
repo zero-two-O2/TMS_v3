@@ -426,7 +426,7 @@ class TestConfigurationEditor:
 
         # Reset
         editor._reset_all()
-        assert widget.currentText() == "light"
+        assert widget.currentText() == "industrial_dark"
 
 
 class TestConfigurationEditorIntegration:

@@ -43,6 +43,11 @@ from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
 from thermal_monitor.ui.modes.vl_image import VlImageWidget
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import (
+    set_role,
+    set_status,
+    set_tile_state,
+)
 
 
 _UNIT_SYMBOLS = {
@@ -61,11 +66,13 @@ class LiveTileState(str, Enum):
     NOT_AVAILABLE = "not_available"
 
 
-_STATE_STYLES = {
-    LiveTileState.STARTING: "color: #FFA000; font-weight: bold;",
-    LiveTileState.RUNNING: "color: #2E7D32; font-weight: bold;",
-    LiveTileState.ERROR: "color: #D32F2F; font-weight: bold;",
-    LiveTileState.NOT_AVAILABLE: "color: #757575; font-weight: bold;",
+#: LiveTileState mapped onto the global status vocabulary (the central
+#: stylesheet resolves the actual colors for every theme).
+_STATE_STATUS = {
+    LiveTileState.STARTING: "starting",
+    LiveTileState.RUNNING: "running",
+    LiveTileState.ERROR: "error",
+    LiveTileState.NOT_AVAILABLE: "not_available",
 }
 
 _STATE_TEXT = {
@@ -104,6 +111,7 @@ class LiveCameraTile(QWidget):
         self._name = name or (f"CAM {slot_index + 1:02d}" if camera_id else f"CAM {slot_index + 1:02d}")
         self._serial = serial
         self._theme = theme_manager
+        set_role(self, "tile")
 
         self._latest_result: ProcessingResult | None = None
         self._frames_received = 0
@@ -122,19 +130,11 @@ class LiveCameraTile(QWidget):
         header = QHBoxLayout()
         header.setSpacing(6)
         self._label = QLabel(self._name)
-        label_style = "font-weight: bold; font-size: 13px;"
-        if self._theme:
-            label_style += f" color: {self._theme.text()};"
-        self._label.setStyleSheet(label_style)
+        set_role(self._label, "strong")
         self._serial_label = QLabel(self._serial)
-        serial_style = "font-size: 11px;"
-        if self._theme:
-            serial_style += f" color: {self._theme.text_secondary()};"
-        else:
-            serial_style += " color: #888;"
-        self._serial_label.setStyleSheet(serial_style)
+        set_role(self._serial_label, "muted")
         self._state_label = QLabel(_STATE_TEXT[self._state])
-        self._state_label.setStyleSheet(self._state_style(self._state))
+        self._apply_state_style()
         header.addWidget(self._label)
         header.addWidget(self._serial_label)
         header.addStretch()
@@ -166,10 +166,16 @@ class LiveCameraTile(QWidget):
         footer.addStretch()
         layout.addLayout(footer)
 
+    def _apply_state_style(self) -> None:
+        """Reflect the tile state through semantic properties (no QSS here)."""
+        status = _STATE_STATUS.get(self._state, "not_available")
+        set_status(self._state_label, status)
+        set_tile_state(self, status)
+
     def _state_style(self, state: LiveTileState) -> str:
-        """Get stylesheet for a tile state from theme."""
+        """Legacy accessor kept for compatibility; prefers theme colors."""
         if not self._theme:
-            return _STATE_STYLES.get(state, "")
+            return ""
         color_map = {
             LiveTileState.STARTING: self._theme.warning(),
             LiveTileState.RUNNING: self._theme.success(),
@@ -254,7 +260,7 @@ class LiveCameraTile(QWidget):
         if message is not None:
             self._error_message = message
         self._state_label.setText(_STATE_TEXT[state])
-        self._state_label.setStyleSheet(self._state_style(state))
+        self._apply_state_style()
 
         if state == LiveTileState.ERROR and message:
             self._temp_label.setText(message)
@@ -393,12 +399,8 @@ class LiveModeWidget(QWidget):
         # Header
         header = QHBoxLayout()
         title = QLabel("LIVE MODE — 8 Camera Monitoring Wall")
-        title_style = "font-size: 20px; font-weight: bold;"
-        if self._theme:
-            title_style += f" color: {self._theme.success()};"
-        else:
-            title_style += " color: #2E7D32;"
-        title.setStyleSheet(title_style)
+        set_role(title, "title")
+        set_status(title, "running")
         header.addWidget(title)
         header.addStretch()
         # Wall feed selector (Stage 8E): one IR wall or one VL wall across
@@ -409,10 +411,7 @@ class LiveModeWidget(QWidget):
         header.addWidget(QLabel("Feed:"))
         header.addWidget(self._feed_selector)
         self._summary_label = QLabel("Initializing...")
-        summary_style = "font-weight: bold;"
-        if self._theme:
-            summary_style += f" color: {self._theme.text()};"
-        self._summary_label.setStyleSheet(summary_style)
+        set_role(self._summary_label, "strong")
         header.addWidget(self._summary_label)
         layout.addLayout(header)
 
@@ -714,8 +713,7 @@ class LiveWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Live Mode")
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
+        set_role(self._status_label, "status")
         self._status_bar.addWidget(self._status_label)
 
     def _apply_window_config(self) -> None:

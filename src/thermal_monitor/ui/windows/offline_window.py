@@ -53,6 +53,11 @@ from thermal_monitor.processing import (
     create_processing_worker,
 )
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_variant
+from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
+
+#: Fallback chrome colors when no theme manager is attached.
+_FALLBACK = BUILTIN_THEMES["industrial_dark"]
 
 
 class OfflineImageWidget(QWidget):
@@ -226,9 +231,8 @@ class OfflineModeWidget(QWidget):
         self._close_btn = QPushButton("Close")
         self._close_btn.clicked.connect(self.close_recording)
         self._close_btn.setEnabled(False)
-        if self._theme:
-            self._open_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
-            self._close_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+        set_variant(self._open_btn, "secondary")
+        set_variant(self._close_btn, "secondary")
         selector_layout.addWidget(QLabel("Recording:"))
         selector_layout.addWidget(self._recording_combo, 1)
         selector_layout.addWidget(self._open_btn)
@@ -323,9 +327,8 @@ class OfflineModeWidget(QWidget):
         self._next_btn.clicked.connect(self._go_next)
         self._last_btn = QPushButton("Last ⏭")
         self._last_btn.clicked.connect(self._go_last)
-        if self._theme:
-            for btn in [self._first_btn, self._prev_btn, self._play_btn, self._pause_btn, self._next_btn, self._last_btn]:
-                btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+        for btn in [self._first_btn, self._prev_btn, self._play_btn, self._pause_btn, self._next_btn, self._last_btn]:
+            set_variant(btn, "secondary")
         nav_layout.addWidget(self._first_btn)
         nav_layout.addWidget(self._prev_btn)
         nav_layout.addWidget(self._play_btn)
@@ -388,10 +391,7 @@ class OfflineModeWidget(QWidget):
             "Recorded alarms are from the original recording. "
             "Current alarms are re-evaluated during playback."
         )
-        if self._theme:
-            alarm_legend.setStyleSheet(f"color: {self._theme.text_muted()}; font-size: 10px;")
-        else:
-            alarm_legend.setStyleSheet("color: gray; font-size: 10px;")
+        set_role(alarm_legend, "muted")
         alarm_layout.addWidget(alarm_legend)
 
         right_layout.addWidget(alarm_group, 1)
@@ -405,10 +405,8 @@ class OfflineModeWidget(QWidget):
         status_layout.setContentsMargins(4, 4, 4, 4)
         self._processing_time_label = QLabel("Processing: — ms")
         self._fps_label = QLabel("FPS: —")
-        if self._theme:
-            status_style = f"color: {self._theme.text_secondary()};"
-            self._processing_time_label.setStyleSheet(status_style)
-            self._fps_label.setStyleSheet(status_style)
+        set_role(self._processing_time_label, "status")
+        set_role(self._fps_label, "status")
         status_layout.addWidget(self._processing_time_label)
         status_layout.addWidget(self._fps_label)
         status_layout.addStretch()
@@ -815,8 +813,9 @@ class OfflineModeWidget(QWidget):
                     f"{alarm.measured_value:.1f}",
                     time.strftime("%H:%M:%S", time.localtime(alarm.timestamp)),
                 ])
-                # Mark as current analysis alarm (different color)
-                item.setForeground(1, QColor("red"))
+                # Mark as current analysis alarm (theme danger color)
+                alarm_color = self._theme.error() if self._theme else _FALLBACK.danger
+                item.setForeground(1, QColor(alarm_color))
                 self._alarm_tree.addTopLevelItem(item)
 
     def _clear_analysis(self) -> None:
@@ -883,8 +882,7 @@ class OfflineWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Offline Mode")
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
+        set_role(self._status_label, "status")
         self._status_bar.addWidget(self._status_label)
 
     def _apply_window_config(self) -> None:

@@ -343,7 +343,7 @@ class ConfigurationManager:
                 "backup_count": 5,
             },
             "ui": {
-                "theme": "light",
+                "theme": "industrial_dark",
                 "colors": {
                     "primary": "#2E7D32",
                     "primary_hover": "#388E3C",
@@ -730,7 +730,7 @@ class ConfigurationManager:
             max_temperature=_parse_float(display_raw.get("max_temperature"), 1200.0),
         )
         ui = UIConfig(
-            theme=ui_raw.get("theme", "light"),
+            theme=ui_raw.get("theme", "industrial_dark"),
             colors=colors,
             windows=windows,
             live=live,

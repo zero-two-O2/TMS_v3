@@ -31,6 +31,7 @@ from thermal_monitor.services.discovery import (
     GvcpDiscoveryService,
 )
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_variant
 
 
 def _interface_label(service: object) -> str:
@@ -90,7 +91,7 @@ class CameraSelectionDialog(QDialog):
 
         # Title
         title = QLabel("Select Camera to Connect")
-        title.setStyleSheet("font-size: 14px; font-weight: bold;")
+        set_role(title, "strong")
         layout.addWidget(title)
 
         # Camera list
@@ -125,7 +126,7 @@ class CameraSelectionDialog(QDialog):
 
         # Selection info
         self._selection_info = QLabel("No camera selected")
-        self._selection_info.setStyleSheet("color: #888; font-style: italic; padding: 4px;")
+        set_role(self._selection_info, "muted")
         layout.addWidget(self._selection_info)
 
         # Buttons
@@ -146,95 +147,18 @@ class CameraSelectionDialog(QDialog):
         layout.addLayout(button_layout)
 
     def _apply_theme(self) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        self.setStyleSheet(f"""
-            QDialog {{
-                background-color: {colors.background};
-                color: {colors.text_primary};
-            }}
-            QGroupBox {{
-                border: 1px solid {colors.border};
-                border-radius: 4px;
-                margin-top: 8px;
-                padding-top: 8px;
-                font-weight: bold;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-            }}
-            QTreeWidget {{
-                background-color: {colors.background};
-                border: 1px solid {colors.border};
-                alternate-background-color: {colors.panel};
-            }}
-            QHeaderView::section {{
-                background-color: {colors.panel};
-                color: {colors.text_primary};
-                border: 1px solid {colors.border};
-                padding: 6px;
-                font-weight: bold;
-            }}
-        """)
+        # Dialog, groups, and tree are styled centrally; nothing
+        # per-widget to do.
+        return
 
     def _apply_tree_style(self) -> None:
-        if self._theme:
-            colors = self._theme.colors()
-            self._camera_tree.setStyleSheet(f"""
-                QTreeWidget {{
-                    background-color: {colors.background};
-                    border: 1px solid {colors.border};
-                    alternate-background-color: {colors.panel};
-                }}
-                QTreeWidget::item {{
-                    padding: 4px;
-                }}
-                QTreeWidget::item:selected {{
-                    background-color: {colors.accent};
-                    color: white;
-                }}
-                QHeaderView::section {{
-                    background-color: {colors.panel};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    padding: 6px;
-                    font-weight: bold;
-                }}
-            """)
+        # Tree styling is central; only enable alternating rows here.
         self._camera_tree.setAlternatingRowColors(True)
 
     def _apply_button_style(self, btn: QPushButton, style: str) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        if style == "primary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.accent};
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 8px 24px;
-                    font-weight: bold;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.disabled}; color: {colors.primary_disabled_text}; }}
-            """)
-        elif style == "secondary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.panel};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    border-radius: 4px;
-                    padding: 8px 24px;
-                }}
-                QPushButton:hover {{ background-color: {colors.secondary_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.background}; color: {colors.secondary_disabled_text}; }}
-            """)
+        # Kept for call-site compatibility: maps historic local style
+        # names onto the global semantic button variants.
+        set_variant(btn, {"primary": "accent", "secondary": "outline"}.get(style, "outline"))
 
     def _refresh_cameras(self) -> None:
         """Discover and populate cameras."""

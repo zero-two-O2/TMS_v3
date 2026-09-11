@@ -26,6 +26,21 @@ from PyQt6.QtWidgets import (
 
 from thermal_monitor.core.models import CameraConnectionState, CameraIdentity
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_status, set_variant
+
+#: Local button-style names mapped onto global semantic variants.
+#: (Historic "primary" here was accent-filled; "secondary" neutral.)
+_BUTTON_VARIANT_MAP = {"primary": "accent", "secondary": "outline", "accent": "ghost"}
+
+_CONNECTION_STATUS_MAP = {
+    CameraConnectionState.DISCONNECTED: "disconnected",
+    CameraConnectionState.CONNECTING: "connecting",
+    CameraConnectionState.CONNECTED: "connected",
+    CameraConnectionState.ACQUIRING: "acquiring",
+    CameraConnectionState.DEGRADED: "degraded",
+    CameraConnectionState.RECONNECTING: "connecting",
+    CameraConnectionState.ERROR: "error",
+}
 
 
 class ConfigCameraHeader(QWidget):
@@ -96,9 +111,9 @@ class ConfigCameraHeader(QWidget):
         # Connection state indicator
         self._conn_indicator = QLabel("●")
         self._conn_indicator.setFixedWidth(16)
-        self._conn_indicator.setStyleSheet("font-size: 14px;")
+        set_status(self._conn_indicator, "disconnected")
         self._conn_label = QLabel("Disconnected")
-        self._conn_label.setStyleSheet("font-weight: bold; font-size: 11px;")
+        set_role(self._conn_label, "strong")
 
         toolbar_layout.addWidget(self._conn_indicator)
         toolbar_layout.addWidget(self._conn_label)
@@ -126,92 +141,21 @@ class ConfigCameraHeader(QWidget):
         layout.addWidget(separator)
 
     def _apply_theme(self) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        self.setStyleSheet(f"""
-            QWidget {{
-                background-color: {colors.panel};
-                border-bottom: 1px solid {colors.border};
-            }}
-        """)
+        # Chrome comes from the central stylesheet; only declare the role.
+        set_role(self, "toolbar")
 
     def _apply_button_style(self, btn: QPushButton, style: str) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        if style == "primary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.accent};
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-weight: bold;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.disabled}; color: {colors.primary_disabled_text}; }}
-            """)
-        elif style == "secondary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.background};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.secondary_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.background}; color: {colors.secondary_disabled_text}; }}
-            """)
-        elif style == "accent":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {colors.accent};
-                    border: 1px solid {colors.accent};
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent}; color: white; }}
-                QPushButton:disabled {{ background-color: transparent; color: {colors.disabled}; border-color: {colors.disabled}; }}
-            """)
+        # Kept for call-site compatibility: maps historic local style
+        # names onto the global semantic button variants.
+        set_variant(btn, _BUTTON_VARIANT_MAP.get(style, "outline"))
 
     def _apply_input_style(self, widget) -> None:
-        if self._theme:
-            colors = self._theme.colors()
-            widget.setStyleSheet(f"""
-                QComboBox {{
-                    background-color: {colors.background};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    border-radius: 3px;
-                    padding: 4px 8px;
-                    font-size: 11px;
-                }}
-                QComboBox:focus {{
-                    border-color: {colors.accent};
-                }}
-                QComboBox::drop-down {{
-                    border: none;
-                    width: 20px;
-                }}
-                QComboBox::down-arrow {{
-                    image: none;
-                    border-left: 4px solid transparent;
-                    border-right: 4px solid transparent;
-                    border-top: 5px solid {colors.text_primary};
-                    margin-right: 8px;
-                }}
-            """)
+        # Inputs are styled centrally; nothing per-widget to do.
+        return
 
     def _apply_border_style(self, widget) -> None:
-        if self._theme:
-            widget.setStyleSheet(f"border-color: {self._theme.colors().border};")
+        # Separators inherit the central QFrame border color.
+        return
 
     def _on_combo_changed(self, index: int) -> None:
         camera_id = self._camera_combo.itemData(index)
@@ -252,26 +196,13 @@ class ConfigCameraHeader(QWidget):
         """Update connection state indicator."""
         self._connection_state = state
 
-        if not self._theme:
-            return
-
-        colors = self._theme.colors()
-        state_colors = {
-            CameraConnectionState.DISCONNECTED: colors.disabled,
-            CameraConnectionState.CONNECTING: colors.info,
-            CameraConnectionState.CONNECTED: colors.success,
-            CameraConnectionState.ACQUIRING: colors.success,
-            CameraConnectionState.DEGRADED: colors.warning,
-            CameraConnectionState.RECONNECTING: colors.warning,
-            CameraConnectionState.ERROR: colors.danger,
-        }
-
-        color = state_colors.get(state, colors.disabled)
+        status = _CONNECTION_STATUS_MAP.get(state, "disconnected")
         status_text = state.value.replace("_", " ").title()
 
-        self._conn_indicator.setStyleSheet(f"color: {color}; font-size: 14px;")
+        set_status(self._conn_indicator, status)
         self._conn_label.setText(status_text)
-        self._conn_label.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {color};")
+        # Status color + strong emphasis: status selectors already bold.
+        set_status(self._conn_label, status)
 
     def select_camera_by_id(self, camera_id: str) -> bool:
         """Select camera by ID. Returns True if found."""

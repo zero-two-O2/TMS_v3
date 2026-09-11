@@ -13,13 +13,25 @@ from thermal_monitor.ui.theme import ThemeManager, ThemeColors, LiveTileColors
 class TestThemeManager:
     """Tests for ThemeManager."""
 
+    def test_default_theme_is_industrial_dark(self) -> None:
+        """Default theme is industrial_dark."""
+        config_manager = create_config_manager()
+        theme = ThemeManager(config_manager)
+
+        assert theme.theme_name == "industrial_dark"
+        colors = theme.colors()
+        assert isinstance(colors, ThemeColors)
+        assert colors.background == "#15181D"
+        assert colors.panel == "#1E232A"
+        assert colors.text_primary == "#E8EAED"
+
     def test_light_theme_loads(self) -> None:
-        """Light theme loads correctly."""
+        """Legacy light theme loads correctly."""
         config_manager = create_config_manager()
         theme = ThemeManager(config_manager)
 
         # Should have light theme colors
-        colors = theme.colors()
+        colors = theme.colors_for("light")
         assert isinstance(colors, ThemeColors)
         assert colors.background == "#FFFFFF"
         assert colors.panel == "#F5F5F5"
@@ -157,43 +169,44 @@ class TestThemeManager:
         assert pb_config["speed_max"] == 10.0
 
     def test_live_tile_colors_are_resolved(self) -> None:
-        """Live tile state colors are resolved from theme."""
+        """Live tile state colors are resolved from the active theme."""
         config_manager = create_config_manager()
         theme = ThemeManager(config_manager)
 
         tile_colors = theme.live_tile_colors()
         assert isinstance(tile_colors, LiveTileColors)
-        assert tile_colors.running_bg == "#2E7D32"
-        assert tile_colors.error_bg == "#D32F2F"
-        assert tile_colors.not_available_bg == "#757575"
-        assert tile_colors.starting_bg == "#FFA000"
+        # Active theme is industrial_dark: tile badges follow its tokens.
+        assert tile_colors.running_bg == "#4CAF50"
+        assert tile_colors.error_bg == "#DF5C5C"
+        assert tile_colors.not_available_bg == "#5A636E"
+        assert tile_colors.starting_bg == "#E8A33D"
 
     def test_color_accessor_methods_work(self) -> None:
         """Individual color accessor methods work."""
         config_manager = create_config_manager()
         theme = ThemeManager(config_manager)
 
-        # Test all accessor methods
-        assert theme.background() == "#FFFFFF"
-        assert theme.surface() == "#F5F5F5"
-        assert theme.text() == "#212121"
-        assert theme.text_secondary() == "#888888"
-        assert theme.text_muted() == "#666666"
-        assert theme.border() == "#E0E0E0"
-        assert theme.accent() == "#7B1FA2"
-        assert theme.success() == "#2E7D32"
-        assert theme.warning() == "#FFA000"
-        assert theme.error() == "#D32F2F"
-        assert theme.info() == "#1976D2"
-        assert theme.primary() == "#2E7D32"
-        assert theme.primary_hover() == "#388E3C"
-        assert theme.primary_pressed() == "#1B5E20"
-        assert theme.secondary() == "#1976D2"
-        assert theme.secondary_hover() == "#1E88E5"
-        assert theme.secondary_pressed() == "#0D47A1"
-        assert theme.disabled_text() == "#757575"
-        assert theme.title() == "#2196F3"
-        assert theme.alarm() == "#D32F2F"
+        # Test all accessor methods (active theme: industrial_dark)
+        assert theme.background() == "#15181D"
+        assert theme.surface() == "#1E232A"
+        assert theme.text() == "#E8EAED"
+        assert theme.text_secondary() == "#A7B0BC"
+        assert theme.text_muted() == "#7C8592"
+        assert theme.border() == "#343C47"
+        assert theme.accent() == "#D98E2B"
+        assert theme.success() == "#4CAF50"
+        assert theme.warning() == "#E8A33D"
+        assert theme.error() == "#DF5C5C"
+        assert theme.info() == "#5AA9E6"
+        assert theme.primary() == "#43A047"
+        assert theme.primary_hover() == "#4CAF50"
+        assert theme.primary_pressed() == "#2E7D32"
+        assert theme.secondary() == "#1E88E5"
+        assert theme.secondary_hover() == "#42A5F5"
+        assert theme.secondary_pressed() == "#1565C0"
+        assert theme.disabled_text() == "#5A636E"
+        assert theme.title() == "#F0F2F5"
+        assert theme.alarm() == "#E05B5B"
 
     def test_live_tile_color_accessors_work(self) -> None:
         """Live tile color accessor methods work."""
@@ -207,11 +220,11 @@ class TestThemeManager:
         assert theme.live_tile_unavailable() == theme.disabled_text()
         assert theme.live_tile_disabled() == "#9E9E9E"
 
-        # Background colors
-        assert theme.live_tile_starting_bg() == "#FFA000"
-        assert theme.live_tile_running_bg() == "#2E7D32"
-        assert theme.live_tile_error_bg() == "#D32F2F"
-        assert theme.live_tile_unavailable_bg() == "#757575"
+        # Background colors follow the active (industrial_dark) theme
+        assert theme.live_tile_starting_bg() == "#E8A33D"
+        assert theme.live_tile_running_bg() == "#4CAF50"
+        assert theme.live_tile_error_bg() == "#DF5C5C"
+        assert theme.live_tile_unavailable_bg() == "#5A636E"
         assert theme.live_tile_disabled_bg() == "#9E9E9E"
 
     def test_stylesheet_generation_works(self) -> None:
@@ -227,25 +240,26 @@ class TestThemeManager:
 
         primary_btn = theme.primary_button_stylesheet()
         assert "background-color" in primary_btn
-        assert "#2E7D32" in primary_btn
+        assert "#43A047" in primary_btn
 
         secondary_btn = theme.secondary_button_stylesheet()
         assert "background-color" in secondary_btn
-        assert "#1976D2" in secondary_btn
+        assert "#1E88E5" in secondary_btn
 
         accent_btn = theme.accent_button_stylesheet()
         assert "background-color" in accent_btn
-        assert "#7B1FA2" in accent_btn
+        assert "#D98E2B" in accent_btn
 
         title_style = theme.title_stylesheet(24)
         assert "font-size: 24px" in title_style
         assert "font-weight: bold" in title_style
-        assert "#2196F3" in title_style
+        assert "#F0F2F5" in title_style
 
     def test_theme_refresh_works(self) -> None:
-        """Theme refresh updates from configuration."""
+        """Theme refresh updates from configuration (legacy light theme)."""
         config_manager = create_config_manager()
         theme = ThemeManager(config_manager)
+        theme.set_theme("light")
 
         original_primary = theme.primary()
         assert original_primary == "#2E7D32"
@@ -270,6 +284,9 @@ class TestThemeManager:
 
         dark_colors = theme.colors_for("dark")
         assert dark_colors.background != "#FFFFFF"  # Should be inverted
+
+        industrial = theme.colors_for("industrial_dark")
+        assert industrial.background == "#15181D"
 
         # Unknown theme falls back to light
         unknown_colors = theme.colors_for("unknown")

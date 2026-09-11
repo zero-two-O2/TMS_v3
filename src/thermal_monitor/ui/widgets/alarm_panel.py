@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -37,6 +38,11 @@ from thermal_monitor.core.models import (
 )
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_variant
+from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
+
+#: Fallback chrome colors when no theme manager is attached.
+_FALLBACK = BUILTIN_THEMES["industrial_dark"]
 
 
 class AlarmPanel(QWidget):
@@ -86,7 +92,7 @@ class AlarmPanel(QWidget):
         self._delete_alarm_btn = QPushButton("Delete")
         self._delete_alarm_btn.clicked.connect(self._on_delete_alarm)
         self._delete_alarm_btn.setEnabled(False)
-        self._apply_button_style(self._delete_alarm_btn, "accent")
+        self._apply_button_style(self._delete_alarm_btn, "danger")
 
         toolbar.addWidget(self._add_alarm_btn)
         toolbar.addWidget(self._edit_alarm_btn)
@@ -473,35 +479,29 @@ class AlarmPanel(QWidget):
 
     def update_live_alarms(self, alarm_result, analysis) -> None:
         """Update alarm tree with live alarm state."""
+        if self._theme:
+            alarm_bg = QColor(self._theme.danger_bg())
+            clear_bg = QColor(self._theme.surface())
+        else:
+            alarm_bg = QColor(_FALLBACK.danger_bg)
+            clear_bg = QColor(_FALLBACK.surface)
         if not alarm_result or not alarm_result.active_alarms:
             # Clear any active highlights
             for i in range(self._alarm_tree.topLevelItemCount()):
                 item = self._alarm_tree.topLevelItem(i)
-                if self._theme:
-                    item.setBackground(0, self._theme.colors().background)
-                    item.setBackground(1, self._theme.colors().background)
-                else:
-                    item.setBackground(0, Qt.GlobalColor.white)
-                    item.setBackground(1, Qt.GlobalColor.white)
+                item.setBackground(0, clear_bg)
+                item.setBackground(1, clear_bg)
             return
 
         for i in range(self._alarm_tree.topLevelItemCount()):
             item = self._alarm_tree.topLevelItem(i)
             rule_id = item.data(0, Qt.ItemDataRole.UserRole)
             if rule_id in alarm_result.active_alarms:
-                if self._theme:
-                    item.setBackground(0, QColor("#FFCDD2"))
-                    item.setBackground(1, QColor("#FFCDD2"))
-                else:
-                    item.setBackground(0, QColor("#FFCDD2"))
-                    item.setBackground(1, QColor("#FFCDD2"))
+                item.setBackground(0, alarm_bg)
+                item.setBackground(1, alarm_bg)
             else:
-                if self._theme:
-                    item.setBackground(0, self._theme.colors().background)
-                    item.setBackground(1, self._theme.colors().background)
-                else:
-                    item.setBackground(0, Qt.GlobalColor.white)
-                    item.setBackground(1, Qt.GlobalColor.white)
+                item.setBackground(0, clear_bg)
+                item.setBackground(1, clear_bg)
 
     def has_unsaved_changes(self) -> bool:
         return bool(self._dirty_camera_configs)
@@ -510,37 +510,17 @@ class AlarmPanel(QWidget):
         self._dirty_camera_configs.discard(camera_id)
 
     def _apply_button_style(self, btn: QPushButton, style: str) -> None:
-        if not self._theme:
-            return
-        if style == "primary":
-            btn.setStyleSheet(self._theme.primary_button_stylesheet())
-        elif style == "secondary":
-            btn.setStyleSheet(self._theme.secondary_button_stylesheet())
-        elif style == "accent":
-            btn.setStyleSheet(self._theme.accent_button_stylesheet())
+        # Kept for call-site compatibility: historic semantic names map
+        # directly onto the global button variants.
+        set_variant(btn, style if style in ("primary", "secondary", "accent", "danger", "outline", "ghost") else "outline")
 
     def _apply_input_style(self, widget) -> None:
-        if self._theme:
-            widget.setStyleSheet(self._theme.base_stylesheet())
+        # Inputs are styled centrally; nothing per-widget to do.
+        return
 
     def _apply_tree_style(self, tree: QTreeWidget) -> None:
-        if self._theme:
-            tree.setStyleSheet(f"""
-                QTreeWidget {{
-                    background-color: {self._theme.colors().background};
-                    border: 1px solid {self._theme.colors().border};
-                }}
-                QTreeWidget::item {{
-                    padding: 4px;
-                }}
-                QHeaderView::section {{
-                    background-color: {self._theme.colors().panel};
-                    color: {self._theme.colors().text_primary};
-                    border: 1px solid {self._theme.colors().border};
-                    padding: 6px;
-                    font-weight: bold;
-                }}
-            """)
+        # Trees are styled centrally; nothing per-widget to do.
+        return
 
 
 __all__ = ["AlarmPanel"]

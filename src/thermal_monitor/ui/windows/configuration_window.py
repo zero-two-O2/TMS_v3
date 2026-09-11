@@ -75,6 +75,7 @@ from thermal_monitor.ui.widgets import (
     ImageAcquisitionPanel,
 )
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_status
 
 
 logger = logging.getLogger(__name__)
@@ -402,10 +403,8 @@ class ConfigurationModeWidget(QWidget):
         self._status_frames = QLabel("Frames: 0")
         self._status_label = QLabel("Ready")
 
-        if self._theme:
-            style = f"color: {self._theme.text_secondary()}; font-size: 11px;"
-            for label in [self._status_fps, self._status_proc, self._status_conn, self._status_frames, self._status_label]:
-                label.setStyleSheet(style)
+        for label in [self._status_fps, self._status_proc, self._status_conn, self._status_frames, self._status_label]:
+            set_role(label, "status")
 
         status_layout.addWidget(self._status_fps)
         status_layout.addWidget(QLabel("|"))
@@ -1404,18 +1403,15 @@ class ConfigurationModeWidget(QWidget):
 
     # Config editor handlers
     def _on_config_saved(self) -> None:
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.success()};")
+        set_status(self._status_label, "ok")
         self._status_label.setText("Configuration saved - restart required")
 
     def _on_config_error(self, error: str) -> None:
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.error()};")
+        set_status(self._status_label, "error")
         self._status_label.setText(f"Config error: {error}")
 
     def _on_restart_required(self, message: str) -> None:
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.warning()};")
+        set_status(self._status_label, "warning")
         self._status_label.setText(message)
 
     def on_mode_activated(self) -> None:
@@ -1491,8 +1487,7 @@ class ConfigurationWindow(QMainWindow):
         self._status_bar = QStatusBar()
         self.setStatusBar(self._status_bar)
         self._status_label = QLabel("Configuration Mode")
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()};")
+        set_role(self._status_label, "status")
         self._status_bar.addWidget(self._status_label)
 
     def _apply_window_config(self) -> None:

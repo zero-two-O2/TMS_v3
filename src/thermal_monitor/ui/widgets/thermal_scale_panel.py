@@ -33,6 +33,12 @@ from PyQt6.QtWidgets import (
 import numpy as np
 
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_variant
+from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
+
+#: Fallback chrome colors when no theme manager is attached (the app
+#: always provides one).  Sourced centrally, never scattered literals.
+_FALLBACK = BUILTIN_THEMES["industrial_dark"]
 
 
 class ThermalScaleLegend(QWidget):
@@ -84,11 +90,11 @@ class ThermalScaleLegend(QWidget):
 
         painter.fillRect(rect, QBrush(gradient))
 
-        # Draw border
+        # Draw border (chrome; the gradient itself is thermal data and stays)
         if self._theme:
             painter.setPen(QPen(QColor(self._theme.colors().border), 1))
         else:
-            painter.setPen(QPen(QColor("#444"), 1))
+            painter.setPen(QPen(QColor(_FALLBACK.border), 1))
         painter.drawRect(rect)
 
         # Draw tick marks and labels
@@ -96,7 +102,7 @@ class ThermalScaleLegend(QWidget):
         if self._theme:
             painter.setPen(QColor(self._theme.colors().text_primary))
         else:
-            painter.setPen(QColor("#ddd"))
+            painter.setPen(QColor(_FALLBACK.text))
 
         num_ticks = 5
         for i in range(num_ticks + 1):
@@ -121,7 +127,7 @@ class ThermalScaleLegend(QWidget):
                 if self._theme:
                     indicator_color = QColor(self._theme.colors().accent)
                 else:
-                    indicator_color = QColor("#00BFFF")
+                    indicator_color = QColor(_FALLBACK.accent)
 
                 painter.setBrush(QBrush(indicator_color))
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -276,7 +282,7 @@ class ThermalScalePanel(QWidget):
 
         # Cursor temperature readout
         self._cursor_temp_label = QLabel("Cursor: — °C")
-        self._cursor_temp_label.setStyleSheet("font-family: monospace; font-size: 11px; font-weight: bold;")
+        set_role(self._cursor_temp_label, "readout")
 
         controls_layout.addRow("Palette:", self._palette_combo)
         controls_layout.addRow("", self._auto_range_check)
@@ -304,7 +310,7 @@ class ThermalScalePanel(QWidget):
         self._view_finder = QLabel("View Finder\n(thumbnail)")
         self._view_finder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._view_finder.setMinimumHeight(120)
-        self._view_finder.setStyleSheet("border: 1px solid #444; background-color: #1a1a1a; color: #888;")
+        set_role(self._view_finder, "viewfinder")
         finder_layout.addWidget(self._view_finder)
 
         layout.addWidget(finder_group)
@@ -312,92 +318,23 @@ class ThermalScalePanel(QWidget):
         layout.addStretch()
 
     def _apply_theme(self) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        self.setStyleSheet(f"""
-            QGroupBox {{
-                border: 1px solid {colors.border};
-                border-radius: 4px;
-                margin-top: 8px;
-                padding-top: 8px;
-                font-weight: bold;
-                font-size: 10px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-                color: {colors.text_secondary};
-            }}
-            QLabel {{
-                color: {colors.text_primary};
-            }}
-        """)
+        # Groups, labels, and inputs are styled centrally; nothing
+        # per-widget to do.
+        return
 
     def _apply_button_style(self, btn: QPushButton, style: str) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        if style == "primary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.accent};
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-weight: bold;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.disabled}; color: {colors.secondary_disabled_text}; }}
-            """)
-        elif style == "accent":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {colors.accent};
-                    border: 1px solid {colors.accent};
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent}; color: white; }}
-                QPushButton:disabled {{ background-color: transparent; color: {colors.disabled}; border-color: {colors.disabled}; }}
-            """)
+        # Kept for call-site compatibility: maps historic local style
+        # names onto the global semantic button variants.
+        set_variant(btn, {"primary": "accent", "accent": "ghost"}.get(style, "outline"))
 
     def _apply_input_style(self, widget) -> None:
-        if self._theme:
-            colors = self._theme.colors()
-            widget.setStyleSheet(f"""
-                QSpinBox, QDoubleSpinBox, QComboBox, QCheckBox {{
-                    background-color: {colors.background};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    border-radius: 3px;
-                    padding: 4px 8px;
-                    font-size: 11px;
-                }}
-                QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
-                    border-color: {colors.accent};
-                }}
-                QComboBox::drop-down {{
-                    border: none;
-                    width: 20px;
-                }}
-                QComboBox::down-arrow {{
-                    image: none;
-                    border-left: 4px solid transparent;
-                    border-right: 4px solid transparent;
-                    border-top: 5px solid {colors.text_primary};
-                    margin-right: 8px;
-                }}
-            """)
+        # Inputs are styled centrally; nothing per-widget to do.
+        return
 
     def _apply_border_style(self, widget) -> None:
-        if self._theme:
-            widget.setStyleSheet(f"border-color: {self._theme.colors().border};")
+        # Separators inherit the central QFrame border color.
+        # Separators inherit the central QFrame border color.
+        return
 
     def _on_palette_changed(self, text: str) -> None:
         palette_map = {

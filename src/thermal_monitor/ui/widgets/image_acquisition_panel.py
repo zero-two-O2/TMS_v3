@@ -33,9 +33,24 @@ from PyQt6.QtWidgets import (
 
 from thermal_monitor.core.models import CameraConnectionState, CameraIdentity
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_status, set_variant
 
 
 logger = logging.getLogger(__name__)
+
+
+#: Historic local button-style names mapped onto global semantic variants.
+_BUTTON_VARIANT_MAP = {"primary": "accent", "secondary": "outline", "accent": "ghost"}
+
+_CONNECTION_STATUS_MAP = {
+    CameraConnectionState.DISCONNECTED: "disconnected",
+    CameraConnectionState.CONNECTING: "connecting",
+    CameraConnectionState.CONNECTED: "connected",
+    CameraConnectionState.ACQUIRING: "acquiring",
+    CameraConnectionState.DEGRADED: "degraded",
+    CameraConnectionState.RECONNECTING: "connecting",
+    CameraConnectionState.ERROR: "error",
+}
 
 
 class ImageAcquisitionPanel(QWidget):
@@ -80,7 +95,7 @@ class ImageAcquisitionPanel(QWidget):
         # Camera identity (compact)
         self._camera_label = QLabel("No camera selected")
         self._camera_label.setWordWrap(True)
-        self._camera_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        set_role(self._camera_label, "strong")
         group_layout.addWidget(self._camera_label)
 
         # Connection status
@@ -90,7 +105,7 @@ class ImageAcquisitionPanel(QWidget):
         self._status_indicator = QLabel("●")
         self._status_indicator.setFixedWidth(16)
         self._status_text = QLabel("Disconnected")
-        self._status_text.setStyleSheet("font-weight: bold; font-size: 11px;")
+        set_status(self._status_text, "disconnected")
 
         status_layout.addWidget(self._status_indicator)
         status_layout.addWidget(self._status_text)
@@ -161,11 +176,11 @@ class ImageAcquisitionPanel(QWidget):
         acq_layout.addRow("Requested FPS:", self._requested_fps)
 
         self._acq_fps_label = QLabel("— Hz")
-        self._acq_fps_label.setStyleSheet("font-family: monospace;")
+        set_role(self._acq_fps_label, "mono")
         acq_layout.addRow("Acquisition FPS:", self._acq_fps_label)
 
         self._disp_fps_label = QLabel("— Hz")
-        self._disp_fps_label.setStyleSheet("font-family: monospace;")
+        set_role(self._disp_fps_label, "mono")
         acq_layout.addRow("Display FPS:", self._disp_fps_label)
 
         # Averaging
@@ -204,11 +219,11 @@ class ImageAcquisitionPanel(QWidget):
         focus_layout.setContentsMargins(8, 12, 8, 8)
 
         self._focus_current_label = QLabel("— mm")
-        self._focus_current_label.setStyleSheet("font-family: monospace;")
+        set_role(self._focus_current_label, "mono")
         focus_layout.addRow("Current:", self._focus_current_label)
 
         self._focus_range_label = QLabel("—")
-        self._focus_range_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        set_role(self._focus_range_label, "mono")
         focus_layout.addRow("Range:", self._focus_range_label)
 
         focus_row = QHBoxLayout()
@@ -243,7 +258,7 @@ class ImageAcquisitionPanel(QWidget):
         focus_layout.addRow("", focus_btn_row)
 
         self._focus_status_label = QLabel("Focus unavailable")
-        self._focus_status_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        set_role(self._focus_status_label, "mono")
         self._focus_status_label.setWordWrap(True)
         focus_layout.addRow("Status:", self._focus_status_label)
 
@@ -263,7 +278,7 @@ class ImageAcquisitionPanel(QWidget):
         nuc_layout.addWidget(self._nuc_button)
 
         self._nuc_status_label = QLabel("NUC unavailable")
-        self._nuc_status_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        set_role(self._nuc_status_label, "mono")
         self._nuc_status_label.setWordWrap(True)
         nuc_layout.addWidget(self._nuc_status_label)
 
@@ -293,7 +308,7 @@ class ImageAcquisitionPanel(QWidget):
             self._info_frame, self._info_timestamp, self._info_calibration,
             self._info_emissivity, self._info_ambient, self._info_processing
         ]:
-            label.setStyleSheet("font-family: monospace; font-size: 10px;")
+            set_role(label, "mono")
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         info_layout.addRow("Camera:", self._info_camera)
@@ -316,105 +331,22 @@ class ImageAcquisitionPanel(QWidget):
         self.setMaximumWidth(300)
 
     def _apply_theme(self) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        self.setStyleSheet(f"""
-            QGroupBox {{
-                border: 1px solid {colors.border};
-                border-radius: 4px;
-                margin-top: 8px;
-                padding-top: 8px;
-                font-weight: bold;
-                font-size: 10px;
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-                color: {colors.text_secondary};
-            }}
-            QLabel {{
-                color: {colors.text_primary};
-            }}
-        """)
+        # Group boxes, labels, and inputs are styled centrally; nothing
+        # per-widget to do.
+        return
 
     def _apply_button_style(self, btn: QPushButton, style: str) -> None:
-        if not self._theme:
-            return
-        colors = self._theme.colors()
-        if style == "primary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.accent};
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-weight: bold;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.disabled}; color: {colors.primary_disabled_text}; }}
-            """)
-        elif style == "secondary":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {colors.panel};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.secondary_hover}; }}
-                QPushButton:disabled {{ background-color: {colors.background}; color: {colors.secondary_disabled_text}; }}
-            """)
-        elif style == "accent":
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: transparent;
-                    color: {colors.accent};
-                    border: 1px solid {colors.accent};
-                    border-radius: 4px;
-                    padding: 6px 16px;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{ background-color: {colors.accent}; color: white; }}
-                QPushButton:disabled {{ background-color: transparent; color: {colors.disabled}; border-color: {colors.disabled}; }}
-            """)
+        # Kept for call-site compatibility: maps historic local style
+        # names onto the global semantic button variants.
+        set_variant(btn, _BUTTON_VARIANT_MAP.get(style, "outline"))
 
     def _apply_input_style(self, widget) -> None:
-        if self._theme:
-            colors = self._theme.colors()
-            widget.setStyleSheet(f"""
-                QSpinBox, QDoubleSpinBox, QComboBox {{
-                    background-color: {colors.background};
-                    color: {colors.text_primary};
-                    border: 1px solid {colors.border};
-                    border-radius: 3px;
-                    padding: 4px 8px;
-                    font-size: 11px;
-                }}
-                QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus {{
-                    border-color: {colors.accent};
-                }}
-                QComboBox::drop-down {{
-                    border: none;
-                    width: 20px;
-                }}
-                QComboBox::down-arrow {{
-                    image: none;
-                    border-left: 4px solid transparent;
-                    border-right: 4px solid transparent;
-                    border-top: 5px solid {colors.text_primary};
-                    margin-right: 8px;
-                }}
-            """)
+        # Inputs are styled centrally; nothing per-widget to do.
+        return
 
     def _apply_border_style(self, widget) -> None:
-        if self._theme:
-            widget.setStyleSheet(f"border-color: {self._theme.colors().border};")
+        # Separators inherit the central QFrame border color.
+        return
 
     def _update_button_states(self) -> None:
         connected = self._connection_state in (CameraConnectionState.CONNECTED, CameraConnectionState.ACQUIRING)
@@ -488,26 +420,12 @@ class ImageAcquisitionPanel(QWidget):
             self._stop_btn.isEnabled(),
         )
 
-        if not self._theme:
-            return
-
-        colors = self._theme.colors()
-        state_colors = {
-            CameraConnectionState.DISCONNECTED: colors.disabled,
-            CameraConnectionState.CONNECTING: colors.info,
-            CameraConnectionState.CONNECTED: colors.success,
-            CameraConnectionState.ACQUIRING: colors.success,
-            CameraConnectionState.DEGRADED: colors.warning,
-            CameraConnectionState.RECONNECTING: colors.warning,
-            CameraConnectionState.ERROR: colors.danger,
-        }
-
-        color = state_colors.get(state, colors.disabled)
+        status = _CONNECTION_STATUS_MAP.get(state, "disconnected")
         status_text = state.value.replace("_", " ").title()
 
-        self._status_indicator.setStyleSheet(f"color: {color}; font-size: 14px;")
+        set_status(self._status_indicator, status)
         self._status_text.setText(status_text)
-        self._status_text.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {color};")
+        set_status(self._status_text, status)
 
     def set_acquisition_running(self, running: bool) -> None:
         """Update acquisition running state."""

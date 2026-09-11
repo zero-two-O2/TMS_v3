@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import ClassVar, Optional
 
 
 @dataclass(frozen=True, slots=True)
@@ -429,15 +429,31 @@ class UIDisplayConfig:
 
 @dataclass(frozen=True, slots=True)
 class UIConfig:
-    theme: str = "light"
+    theme: str = "industrial_dark"
     colors: UIColorsConfig = field(default_factory=UIColorsConfig)
     windows: UIWindowsConfig = field(default_factory=UIWindowsConfig)
     live: UILiveConfig = field(default_factory=UILiveConfig)
     display: UIDisplayConfig = field(default_factory=UIDisplayConfig)
 
+    #: Token-based registry themes plus the legacy config-driven themes.
+    #: ``ui.colors`` only affects the legacy ``light``/``dark``/``system``
+    #: themes; registry themes (industrial_*, blue_engineering,
+    #: high_contrast) are fully defined by the ui.theme token registry.
+    VALID_THEMES: ClassVar[tuple[str, ...]] = (
+        "industrial_dark",
+        "industrial_light",
+        "blue_engineering",
+        "high_contrast",
+        "light",
+        "dark",
+        "system",
+    )
+
     def __post_init__(self) -> None:
-        if self.theme not in ("light", "dark", "system"):
-            raise ValueError(f"ui.theme must be 'light', 'dark', or 'system'; got {self.theme!r}")
+        if self.theme not in self.VALID_THEMES:
+            raise ValueError(
+                f"ui.theme must be one of {list(self.VALID_THEMES)}; got {self.theme!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)

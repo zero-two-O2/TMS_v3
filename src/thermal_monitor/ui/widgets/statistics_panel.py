@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
 
 from thermal_monitor.core.models import AnalysisResult, TemperatureUnit
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role
 
 
 class StatisticsPanel(QWidget):
@@ -52,9 +53,7 @@ class StatisticsPanel(QWidget):
             self._overall_mean, self._overall_stddev
         ]:
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            label.setStyleSheet("font-family: monospace;")
-            if self._theme:
-                label.setStyleSheet(f"font-family: monospace; color: {self._theme.text_secondary()};")
+            set_role(label, "mono")
 
         overall_form.addRow("Min:", self._overall_min)
         overall_form.addRow("Max:", self._overall_max)
@@ -78,22 +77,8 @@ class StatisticsPanel(QWidget):
         layout.addWidget(roi_group, 1)
 
     def _apply_table_style(self, table: QTableWidget) -> None:
-        if self._theme:
-            table.setStyleSheet(f"""
-                QTableWidget {{
-                    background-color: {self._theme.colors().background};
-                    alternate-background-color: {self._theme.colors().panel};
-                    border: 1px solid {self._theme.colors().border};
-                    gridline-color: {self._theme.colors().border};
-                }}
-                QHeaderView::section {{
-                    background-color: {self._theme.colors().panel};
-                    color: {self._theme.colors().text_primary};
-                    border: 1px solid {self._theme.colors().border};
-                    padding: 6px;
-                    font-weight: bold;
-                }}
-            """)
+        # Tables are styled centrally; nothing per-widget to do.
+        return
 
     # Public API
 

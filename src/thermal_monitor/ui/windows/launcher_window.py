@@ -31,6 +31,12 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.discovery import CameraDiscoveryService, DiscoveredCamera, CameraDiscoveryError, GvcpDiscoveryService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role, set_variant
+from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
+
+#: Fallback status colors when no theme manager is attached (the app
+#: always provides one).  Sourced centrally, never scattered literals.
+_FALLBACK = BUILTIN_THEMES["industrial_dark"]
 
 
 class LauncherWindow(QMainWindow):
@@ -68,23 +74,9 @@ class LauncherWindow(QMainWindow):
         else:   
             self.setMinimumSize(1000, 700)
 
-    def _theme_stylesheet(self, widget_type: str) -> str:
-        """Get stylesheet for widget type from theme manager."""
-        if not self._theme:
-            return ""
-        if widget_type == "title":
-            return self._theme.title_stylesheet(28)
-        elif widget_type == "subtitle":
-            return self._theme.subtitle_stylesheet(16)
-        elif widget_type == "status":
-            return self._theme.status_stylesheet(12)
-        elif widget_type == "primary_button":
-            return self._theme.primary_button_stylesheet()
-        elif widget_type == "secondary_button":
-            return self._theme.secondary_button_stylesheet()
-        elif widget_type == "accent_button":
-            return self._theme.accent_button_stylesheet()
-        return ""
+    # --- Semantic styling -------------------------------------------------
+    # Widgets declare variant/role properties only; the central
+    # stylesheet resolves all colors.  No per-widget stylesheets here.
 
     def _setup_ui(self) -> None:
         central = QWidget()
@@ -96,12 +88,12 @@ class LauncherWindow(QMainWindow):
 
         # Title
         title = QLabel("Thermal Monitoring System")
-        title.setStyleSheet(self._theme_stylesheet("title"))
+        set_role(title, "title")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
 
         subtitle = QLabel("Available Cameras")
-        subtitle.setStyleSheet(self._theme_stylesheet("subtitle"))
+        set_role(subtitle, "subtitle")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(subtitle)
 
@@ -138,17 +130,17 @@ class LauncherWindow(QMainWindow):
 
         self._live_btn = QPushButton("LIVE")
         self._live_btn.setMinimumSize(140, 60)
-        self._live_btn.setStyleSheet(self._theme_stylesheet("primary_button"))
+        set_variant(self._live_btn, "primary")
         self._live_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.LIVE))
 
         self._config_btn = QPushButton("CONFIGURATION")
         self._config_btn.setMinimumSize(140, 60)
-        self._config_btn.setStyleSheet(self._theme_stylesheet("secondary_button"))
+        set_variant(self._config_btn, "secondary")
         self._config_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.CONFIGURATION))
 
         self._offline_btn = QPushButton("OFFLINE")
         self._offline_btn.setMinimumSize(140, 60)
-        self._offline_btn.setStyleSheet(self._theme_stylesheet("accent_button"))
+        set_variant(self._offline_btn, "accent")
         self._offline_btn.clicked.connect(lambda: self.mode_requested.emit(ApplicationMode.OFFLINE))
 
         mode_layout.addStretch()
@@ -162,7 +154,7 @@ class LauncherWindow(QMainWindow):
         # Status
         self._status_label = QLabel("Discovering cameras...")
         self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._status_label.setStyleSheet(self._theme_stylesheet("status"))
+        set_role(self._status_label, "status")
         layout.addWidget(self._status_label)
 
     def _create_status_bar(self) -> None:
@@ -231,7 +223,7 @@ class LauncherWindow(QMainWindow):
             if self._theme:
                 status_item.setForeground(QColor(self._theme.success()))
             else:
-                status_item.setForeground(Qt.GlobalColor.darkGreen)
+                status_item.setForeground(QColor(_FALLBACK.camera_connected))
             self._camera_table.setItem(row, 4, status_item)
 
         # Fill remaining slots as unavailable
@@ -246,7 +238,7 @@ class LauncherWindow(QMainWindow):
             if self._theme:
                 status_item.setForeground(QColor(self._theme.disabled_text()))
             else:
-                status_item.setForeground(Qt.GlobalColor.gray)
+                status_item.setForeground(QColor(_FALLBACK.camera_disconnected))
             self._camera_table.setItem(row, 4, status_item)
 
     def _update_status(self) -> None:

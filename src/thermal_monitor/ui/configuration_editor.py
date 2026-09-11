@@ -73,6 +73,7 @@ from thermal_monitor.config.models import (
     NetworkConfig,
 )
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_dirty, set_role, set_variant
 
 
 class ConfigEditorField:
@@ -162,17 +163,14 @@ class ConfigSectionEditor(QWidget):
 
         if field_def.readonly:
             widget.setEnabled(False)
-            if self._theme:
-                widget.setStyleSheet(f"background-color: {self._theme.surface()}; color: {self._theme.text_muted()};")
-            else:
-                widget.setStyleSheet("background-color: #F5F5F5; color: #888888;")
+            # Read-only/disabled inputs are styled centrally
+            # (:read-only and :disabled selectors).
 
         if field_def.tooltip:
             widget.setToolTip(field_def.tooltip)
 
         label = QLabel(field_def.label)
-        if self._theme:
-            label.setStyleSheet(f"color: {self._theme.text()};")
+        set_role(label, "strong")
         form_layout.addRow(label, widget)
 
         self._layout.addLayout(form_layout)
@@ -230,9 +228,8 @@ class ConfigSectionEditor(QWidget):
             if field_def.default is not None:
                 widget.setText(str(field_def.default))
 
-        if self._theme:
-            widget.setStyleSheet(self._theme.base_stylesheet())
-
+        # Inputs inherit the central application stylesheet; no
+        # per-widget stylesheets (keeps theme switching to one QSS).
         return widget
 
     def _load_values(self) -> None:
@@ -474,27 +471,22 @@ class ConfigurationEditor(QWidget):
 
         self._save_btn = QPushButton("Save")
         self._save_btn.clicked.connect(self._on_save)
-        if self._theme:
-            self._save_btn.setStyleSheet(self._theme.primary_button_stylesheet())
+        set_variant(self._save_btn, "primary")
 
         self._cancel_btn = QPushButton("Cancel")
         self._cancel_btn.clicked.connect(self._on_cancel)
-        if self._theme:
-            self._cancel_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+        set_variant(self._cancel_btn, "secondary")
 
         self._reset_btn = QPushButton("Reset")
         self._reset_btn.clicked.connect(self._on_reset)
-        if self._theme:
-            self._reset_btn.setStyleSheet(self._theme.accent_button_stylesheet())
+        set_variant(self._reset_btn, "accent")
 
         self._search_btn = QPushButton("Search Cameras")
         self._search_btn.clicked.connect(self._on_search_cameras)
-        if self._theme:
-            self._search_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+        set_variant(self._search_btn, "secondary")
 
         self._status_label = QLabel("Configuration loaded")
-        if self._theme:
-            self._status_label.setStyleSheet(f"color: {self._theme.text_secondary()}; font-weight: bold;")
+        set_role(self._status_label, "strong")
 
         toolbar_layout.addWidget(self._save_btn)
         toolbar_layout.addWidget(self._cancel_btn)
@@ -604,8 +596,9 @@ class ConfigurationEditor(QWidget):
     def _update_save_button(self) -> None:
         """Update save button state."""
         self._save_btn.setEnabled(self._dirty)
-        if self._theme and self._dirty:
-            self._save_btn.setStyleSheet(self._theme.primary_button_stylesheet() + " background-color: #FF5722;")
+        # Unsaved changes are signaled centrally via the `dirty`
+        # dynamic property -- no hardcoded highlight colors here.
+        set_dirty(self._save_btn, self._dirty)
 
     def _on_save(self) -> None:
         """Handle save button click."""
@@ -943,12 +936,10 @@ class ConfigurationEditor(QWidget):
         btn_layout = QHBoxLayout()
         self._add_mapping_btn = QPushButton("Add Mapping")
         self._add_mapping_btn.clicked.connect(self._add_camera_mapping)
-        if self._theme:
-            self._add_mapping_btn.setStyleSheet(self._theme.secondary_button_stylesheet())
+        set_variant(self._add_mapping_btn, "secondary")
         self._remove_mapping_btn = QPushButton("Remove Mapping")
         self._remove_mapping_btn.clicked.connect(self._remove_camera_mapping)
-        if self._theme:
-            self._remove_mapping_btn.setStyleSheet(self._theme.accent_button_stylesheet())
+        set_variant(self._remove_mapping_btn, "danger")
         btn_layout.addWidget(self._add_mapping_btn)
         btn_layout.addWidget(self._remove_mapping_btn)
         btn_layout.addStretch()
@@ -1165,8 +1156,8 @@ class ConfigurationEditor(QWidget):
 
     def _create_theme_editor(self) -> ConfigSectionEditor:
         editor = ConfigSectionEditor("Theme", self._edit_config.ui, self._theme)
-        editor.add_field(ConfigEditorField("theme", "Theme", str, "light",
-            options=["light", "dark", "system"]))
+        editor.add_field(ConfigEditorField("theme", "Theme", str, "industrial_dark",
+            options=ThemeManager.available_themes()))
         return editor
 
     def _create_colors_editor(self) -> ConfigSectionEditor:

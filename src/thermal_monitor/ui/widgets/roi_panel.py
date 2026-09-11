@@ -41,6 +41,7 @@ from thermal_monitor.core.models import (
 )
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_variant
 
 
 class ROIPanel(QWidget):
@@ -90,7 +91,7 @@ class ROIPanel(QWidget):
         self._delete_roi_btn = QPushButton("Delete")
         self._delete_roi_btn.clicked.connect(self._on_delete_roi)
         self._delete_roi_btn.setEnabled(False)
-        self._apply_button_style(self._delete_roi_btn, "accent")
+        self._apply_button_style(self._delete_roi_btn, "danger")
 
         toolbar.addWidget(self._add_roi_btn)
         toolbar.addWidget(self._edit_roi_btn)
@@ -671,37 +672,17 @@ class ROIPanel(QWidget):
         self._dirty_camera_configs.discard(camera_id)
 
     def _apply_button_style(self, btn: QPushButton, style: str) -> None:
-        if not self._theme:
-            return
-        if style == "primary":
-            btn.setStyleSheet(self._theme.primary_button_stylesheet())
-        elif style == "secondary":
-            btn.setStyleSheet(self._theme.secondary_button_stylesheet())
-        elif style == "accent":
-            btn.setStyleSheet(self._theme.accent_button_stylesheet())
+        # Kept for call-site compatibility: historic semantic names map
+        # directly onto the global button variants.
+        set_variant(btn, style if style in ("primary", "secondary", "accent", "danger", "outline", "ghost") else "outline")
 
     def _apply_input_style(self, widget) -> None:
-        if self._theme:
-            widget.setStyleSheet(self._theme.base_stylesheet())
+        # Inputs are styled centrally; nothing per-widget to do.
+        return
 
     def _apply_tree_style(self, tree: QTreeWidget) -> None:
-        if self._theme:
-            tree.setStyleSheet(f"""
-                QTreeWidget {{
-                    background-color: {self._theme.colors().background};
-                    border: 1px solid {self._theme.colors().border};
-                }}
-                QTreeWidget::item {{
-                    padding: 4px;
-                }}
-                QHeaderView::section {{
-                    background-color: {self._theme.colors().panel};
-                    color: {self._theme.colors().text_primary};
-                    border: 1px solid {self._theme.colors().border};
-                    padding: 6px;
-                    font-weight: bold;
-                }}
-            """)
+        # Trees are styled centrally; nothing per-widget to do.
+        return
 
 
 __all__ = ["ROIPanel"]

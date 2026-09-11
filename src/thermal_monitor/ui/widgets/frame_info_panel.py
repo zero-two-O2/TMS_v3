@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
 )
 
 from thermal_monitor.ui.theme import ThemeManager
+from thermal_monitor.ui.theme.properties import set_role
 
 
 class FrameInfoPanel(QWidget):
@@ -70,10 +71,7 @@ class FrameInfoPanel(QWidget):
 
         for label in labels:
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            if self._theme:
-                label.setStyleSheet(f"color: {self._theme.text_secondary()}; font-family: monospace;")
-            else:
-                label.setStyleSheet("color: #666666; font-family: monospace;")
+            set_role(label, "mono")
 
         frame_form.addRow("Camera ID:", self._info_camera_id)
         frame_form.addRow("Frame Size:", self._info_frame_size)
