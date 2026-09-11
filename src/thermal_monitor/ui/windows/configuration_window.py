@@ -288,6 +288,23 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.focus_set_requested.connect(self._on_focus_set_requested)
         self._acq_panel.focus_refresh_requested.connect(self._on_focus_refresh_requested)
         self._acq_panel.nuc_requested.connect(self._on_nuc_requested)
+        # Diagnostic direct slot: proves the physical click reaches Qt
+        # independently of the worker chain (see _debug_focus_apply_clicked).
+        self._acq_panel.focus_apply_button.clicked.connect(
+            self._debug_focus_apply_clicked
+        )
+        logger.info(
+            "APPLY BUTTON SIGNAL CONNECTED panel_id=%r btn_id=%r name=%s",
+            id(self._acq_panel),
+            id(self._acq_panel.focus_apply_button),
+            self._acq_panel.focus_apply_button.objectName(),
+        )
+        logger.debug(
+            "Panel wired id=%r apply_btn=%r visible=%s",
+            id(self._acq_panel),
+            id(self._acq_panel.focus_apply_button),
+            self._acq_panel.focus_apply_button.isVisible(),
+        )
         main_splitter.addWidget(self._acq_panel)
 
         # CENTER PANE: Large thermal image (primary workspace)
@@ -652,9 +669,90 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.set_focus_busy("Reading…")
         self._start_focus_operation(camera_id, None)
 
+    def _debug_focus_apply_clicked(self, checked: bool = False) -> None:
+        """Diagnostic direct slot: proves the physical click reaches Qt.
+
+        Connected straight to ``focusApplyButton.clicked`` alongside the
+        normal path. Involves no worker/runtime/driver call by design: if
+        this line never appears, the mouse event never reached the button
+        (overlay, geometry, enabled-state, or event-filter cause).
+        """
+        import threading
+
+        from PyQt6.QtCore import QThread
+
+        try:
+            btn = self._acq_panel.focus_apply_button
+            geo = btn.geometry()
+            info = (
+                f"name={btn.objectName()} id={id(btn)} "
+                f"enabled={btn.isEnabled()} visible={btn.isVisible()} "
+                f"enabledToWindow={btn.isEnabledTo(btn.window())} "
+                f"visibleToWindow={btn.isVisibleTo(btn.window())} "
+                f"underMouse={btn.underMouse()} "
+                f"geometry={geo.x()},{geo.y()},{geo.width()}x{geo.height()} "
+                f"global={btn.mapToGlobal(geo.topLeft()).x()},"
+                f"{btn.mapToGlobal(geo.topLeft()).y()} "
+                f"parentEnabled={btn.parentWidget().isEnabled() if btn.parentWidget() else '?'} "
+                f"parentVisible={btn.parentWidget().isVisible() if btn.parentWidget() else '?'}"
+            )
+        except RuntimeError as exc:
+            info = f"unreadable (deleted?): {exc}"
+        try:
+            requested = self._acq_panel.focus_spin_value
+        except Exception as exc:
+            requested = f"unreadable: {exc}"
+        logger.warning(
+            "FOCUS APPLY BUTTON CLICKED cam=%s requested=%r %s "
+            "py_thread=%s qt_thread=%s",
+            self._selected_camera_id,
+            requested,
+            info,
+            threading.get_ident(),
+            int(QThread.currentThreadId()),
+        )
+
     def _on_focus_set_requested(self, value_mm: int) -> None:
+        import threading
+
+        from PyQt6.QtCore import QThread
+
         camera_id = self._selected_camera_id
+        try:
+            sender = self.sender()
+            sender_info = (
+                f"{type(sender).__name__}:{sender.objectName()}:id={id(sender)}"
+                if sender is not None
+                else "unknown"
+            )
+        except Exception:
+            sender_info = "unknown"
+        try:
+            apply_btn = self._acq_panel.focus_apply_button
+            btn_info = (
+                f"enabled={apply_btn.isEnabled()} "
+                f"visible={apply_btn.isVisible()} "
+                f"enabledToWindow={apply_btn.isEnabledTo(apply_btn.window())} "
+                f"name={apply_btn.objectName()} id={id(apply_btn)}"
+            )
+            displayed = self._acq_panel._focus_current_label.text()
+        except Exception as exc:
+            btn_info = f"unreadable: {exc}"
+            displayed = "?"
+        logger.info(
+            "FOCUS-UI APPLY CLICKED cam=%s selected=%s requested=%r "
+            "displayed=%r button[%s] sender=%s py_thread=%s qt_thread=%s",
+            camera_id,
+            self._selected_camera_id,
+            value_mm,
+            displayed,
+            btn_info,
+            sender_info,
+            threading.get_ident(),
+            int(QThread.currentThreadId()),
+        )
         if camera_id is None:
+            logger.warning("FOCUS-UI APPLY dropped: no camera selected")
             return
         self._acq_panel.set_focus_busy("Writing…")
         self._start_focus_operation(camera_id, value_mm)
@@ -692,6 +790,12 @@ class ConfigurationModeWidget(QWidget):
                 self._selected_camera_id,
             )
             return
+        logger.debug(
+            "Focus write finished cam=%s requested=%r readback=%r",
+            camera_id,
+            requested,
+            readback,
+        )
         self._acq_panel.set_focus_result(requested, readback)
 
     def _on_focus_failed(self, camera_id: str, message: str) -> None:
@@ -829,9 +933,12 @@ class ConfigurationModeWidget(QWidget):
 
         self._latest_result = result
 
-        # The renderer owns the expensive conversion. The processing contract
-        # publishes immutable arrays, so no GUI-thread frame copy is needed.
+        # CRITICAL: copy the temperature buffer before retaining any display
+        # data, so we never share memory with the consumer's mutable result
+        # (same guarantee as the live wall tiles).
         temperature_image = result.temperature_image
+        if temperature_image is not None:
+            temperature_image = np.asarray(temperature_image).copy()
         minimum = maximum = None
         if result.analysis_result is not None:
             minimum = result.analysis_result.overall_min

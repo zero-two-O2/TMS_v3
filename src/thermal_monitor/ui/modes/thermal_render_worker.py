@@ -11,6 +11,11 @@ import numpy as np
 from PyQt6.QtCore import QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QImage
 
+from thermal_monitor.core.frame_latency import (
+    get_default_tracker as _latency_tracker,
+    latency_enabled as _latency_enabled,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,9 +38,12 @@ PALETTE_LUTS = {
 @dataclass(frozen=True)
 class RenderRequest:
     temperature: np.ndarray
-    sequence: int
+    sequence: int  # acquisition worker sequence (latest-wins gating)
     minimum: float | None = None
     maximum: float | None = None
+    hw_sequence: int | None = None  # hardware/GVSP frame id (trace only)
+    camera_id: str | None = None  # latency/display-age correlation (trace only)
+    acq_mono_ns: int | None = None  # acquisition monotonic timestamp, ns (trace only)
 
 
 class ThermalRenderWorker(QThread):
@@ -44,7 +52,11 @@ class ThermalRenderWorker(QThread):
     rendered = pyqtSignal(object, object, float, float, int, object, object)
     render_error = pyqtSignal(str)
 
-    def __init__(self, palette: str = "temperature", max_fps: float = 10.0, parent=None) -> None:
+    def __init__(self, palette: str = "temperature", max_fps: float = 20.0, parent=None) -> None:
+        # Display throttle only: pending depth 1 already gives latest-wins.
+        # 20 fps keeps the throttle floor (~50 ms) inside the <100 ms
+        # acquisition-to-display budget at 9 fps input; input rate, not this
+        # cap, sets the actual render rate.
         super().__init__()
         if parent is not None:
             self.setParent(parent)
@@ -54,7 +66,10 @@ class ThermalRenderWorker(QThread):
         self._pending: RenderRequest | None = None
         self._stopping = False
         self._last_sequence = -1
+        self._last_hw_sequence: int | None = None
         self.dropped_frames = 0
+        self.submitted_frames = 0
+        self.rendered_frames = 0
         self.last_render_ms = 0.0
         self.last_palette_ms = 0.0
 
@@ -66,6 +81,7 @@ class ThermalRenderWorker(QThread):
             if self._pending is not None:
                 self.dropped_frames += 1
             self._pending = request
+            self.submitted_frames += 1
             self._condition.notify()
 
     def set_palette(self, palette: str) -> None:
@@ -92,11 +108,33 @@ class ThermalRenderWorker(QThread):
                 self._pending = None
                 palette = self._palette
             started = time.perf_counter()
+            if request.camera_id is not None and _latency_enabled():
+                _latency_tracker().note_stage(
+                    request.camera_id, request.sequence, "render_start", time.perf_counter_ns()
+                )
             try:
                 image, temperature, minimum, maximum, thumbnail, rgb, palette_ms = self._render(request, palette)
                 self._last_sequence = request.sequence
+                self._last_hw_sequence = request.hw_sequence
+                self.rendered_frames += 1
+                if request.camera_id is not None and _latency_enabled():
+                    _latency_tracker().note_stage(
+                        request.camera_id, request.sequence, "render_done", time.perf_counter_ns()
+                    )
                 self.last_render_ms = (time.perf_counter() - started) * 1000.0
                 self.last_palette_ms = palette_ms
+                if logger.isEnabledFor(logging.DEBUG) and (
+                    self.rendered_frames == 1 or self.rendered_frames % 90 == 0
+                ):
+                    logger.debug(
+                        "thermal render seq=%d hw=%s render_ms=%.1f submitted=%d rendered=%d dropped=%d",
+                        request.sequence,
+                        request.hw_sequence,
+                        self.last_render_ms,
+                        self.submitted_frames,
+                        self.rendered_frames,
+                        self.dropped_frames,
+                    )
                 self.rendered.emit(image, temperature, minimum, maximum, request.sequence, thumbnail, rgb)
             except Exception as exc:  # Rendering must not affect acquisition.
                 logger.exception("Thermal renderer failed")

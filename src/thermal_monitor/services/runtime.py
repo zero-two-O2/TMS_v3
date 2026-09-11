@@ -387,6 +387,11 @@ class CameraRuntimeService:
         fusion-selector change reported). The custom GVSP stream is never
         restarted by NUC itself.
 
+        Locking: only the driver lookup holds ``self._lock``. The blocking
+        GVCP round-trips run unlocked so a NUC (or a 5 s focus settle on a
+        sibling call) can never stall GUI-thread readers such as
+        :meth:`camera_stats`, which would freeze live display event delivery.
+
         Returns a diagnostics mapping with ``nuc_duration_s``,
         ``stream_config`` (post-NUC readback), and ``status`` (receiver
         counters). Raises :class:`CameraRuntimeError` when the camera is
@@ -396,37 +401,37 @@ class CameraRuntimeService:
 
         with self._lock:
             source = self._require_custom_source(camera_id)
-            started = time.perf_counter()
-            try:
-                source.perform_nuc()
-            except Exception as exc:
-                raise CameraRuntimeError(
-                    f"NUC failed for camera {camera_id}: {exc}"
-                ) from exc
-            duration_s = time.perf_counter() - started
-            try:
-                stream_config = source.verify_stream_config(PACKET_DELAY_TICKS)
-            except Exception as exc:
-                raise CameraRuntimeError(
-                    f"NUC stream verification failed for camera {camera_id}: {exc}"
-                ) from exc
-            try:
-                status = source.get_status()
-            except Exception:
-                status = {}
-            logger.info(
-                "Camera %s: NUC complete in %.3fs (packet_delay=%s fusion=%s)",
-                camera_id,
-                duration_s,
-                stream_config.get("packet_delay"),
-                stream_config.get("fusion_selector"),
-            )
-            return {
-                "camera_id": camera_id,
-                "nuc_duration_s": duration_s,
-                "stream_config": dict(stream_config),
-                "status": dict(status),
-            }
+        started = time.perf_counter()
+        try:
+            source.perform_nuc()
+        except Exception as exc:
+            raise CameraRuntimeError(
+                f"NUC failed for camera {camera_id}: {exc}"
+            ) from exc
+        duration_s = time.perf_counter() - started
+        try:
+            stream_config = source.verify_stream_config(PACKET_DELAY_TICKS)
+        except Exception as exc:
+            raise CameraRuntimeError(
+                f"NUC stream verification failed for camera {camera_id}: {exc}"
+            ) from exc
+        try:
+            status = source.get_status()
+        except Exception:
+            status = {}
+        logger.info(
+            "Camera %s: NUC complete in %.3fs (packet_delay=%s fusion=%s)",
+            camera_id,
+            duration_s,
+            stream_config.get("packet_delay"),
+            stream_config.get("fusion_selector"),
+        )
+        return {
+            "camera_id": camera_id,
+            "nuc_duration_s": duration_s,
+            "stream_config": dict(stream_config),
+            "status": dict(status),
+        }
 
     def get_focus_limits(
         self, camera_id: str, op_id: str | None = None
@@ -435,56 +440,66 @@ class CameraRuntimeService:
         op_id = op_id or new_focus_op_id("FOCUS-READ")
         with self._lock:
             source = self._require_custom_source(camera_id)
-            logger.debug(
-                "%s runtime call cam=%s ip=%s get_focus_limits",
-                op_id,
-                camera_id,
-                source.camera_ip,
-            )
-            limits = source.get_focus_limits(op_id=op_id)
-            logger.debug("%s runtime returned cam=%s limits=%r", op_id, camera_id, limits)
-            return limits
+            camera_ip = source.camera_ip
+        logger.debug(
+            "%s runtime call cam=%s ip=%s get_focus_limits",
+            op_id,
+            camera_id,
+            camera_ip,
+        )
+        limits = source.get_focus_limits(op_id=op_id)
+        logger.debug("%s runtime returned cam=%s limits=%r", op_id, camera_id, limits)
+        return limits
 
     def get_focus_mm(self, camera_id: str, op_id: str | None = None) -> int:
         """Current focus distance readback in mm for a running camera."""
         op_id = op_id or new_focus_op_id("FOCUS-READ")
         with self._lock:
             source = self._require_custom_source(camera_id)
-            logger.debug(
-                "%s runtime call cam=%s ip=%s get_focus_mm", op_id, camera_id, source.camera_ip
-            )
-            current = source.get_focus_mm(op_id=op_id)
-            logger.debug("%s runtime returned cam=%s current=%r", op_id, camera_id, current)
-            return current
+            camera_ip = source.camera_ip
+        logger.debug(
+            "%s runtime call cam=%s ip=%s get_focus_mm", op_id, camera_id, camera_ip
+        )
+        current = source.get_focus_mm(op_id=op_id)
+        logger.debug("%s runtime returned cam=%s current=%r", op_id, camera_id, current)
+        return current
 
     def set_focus_mm(
         self, camera_id: str, value_mm: int, op_id: str | None = None
     ) -> int:
-        """Set focus distance (mm, never clamped) and return the readback."""
+        """Set focus distance (mm, never clamped) and return the readback.
+
+        Locking: only the driver lookup holds ``self._lock``. The focus
+        write plus up-to-5 s motor-settle poll run unlocked, so GUI-thread
+        readers (stats, liveness) keep serving live display delivery while
+        focus settles. GVCP transactions stay serialised by the driver's
+        own control-socket lock.
+        """
         op_id = op_id or new_focus_op_id("FOCUS-WRITE")
         with self._lock:
             source = self._require_custom_source(camera_id)
-            logger.debug(
-                "%s runtime call cam=%s ip=%s set_focus_mm value=%r",
-                op_id,
-                camera_id,
-                source.camera_ip,
-                value_mm,
-            )
-            try:
-                readback = source.set_focus_mm(value_mm, op_id=op_id)
-            except (ValueError, RuntimeError) as exc:
-                raise CameraRuntimeError(
-                    f"Focus failed for camera {camera_id}: {exc}"
-                ) from exc
-            logger.debug(
-                "%s runtime returned cam=%s requested=%r readback=%r",
-                op_id,
-                camera_id,
-                value_mm,
-                readback,
-            )
-            return readback
+            camera_ip = source.camera_ip
+        logger.debug(
+            "%s runtime call cam=%s ip=%s set_focus_mm value=%r",
+            op_id,
+            camera_id,
+            camera_ip,
+            value_mm,
+        )
+        try:
+            readback = source.set_focus_mm(value_mm, op_id=op_id)
+        except (ValueError, RuntimeError) as exc:
+            raise CameraRuntimeError(
+                f"Focus failed for camera {camera_id}: {exc}"
+            ) from exc
+        logger.debug(
+            "%s runtime returned cam=%s requested=%r readback=%r",
+            op_id,
+            camera_id,
+            value_mm,
+            readback,
+        )
+        return readback
 
     def diagnose_focus(self, camera_id: str) -> dict:
         """Runtime-direct focus probe (same app, same driver, no UI involved).
@@ -500,8 +515,8 @@ class CameraRuntimeService:
         with self._lock:
             source = self._require_custom_source(camera_id)
             camera_ip = source.camera_ip
-            limits = source.get_focus_limits(op_id=op_id)
-            current = source.get_focus_mm(op_id=op_id)
+        limits = source.get_focus_limits(op_id=op_id)
+        current = source.get_focus_mm(op_id=op_id)
         elapsed_s = time.perf_counter() - t_start
         result = {
             "op_id": op_id,
@@ -527,7 +542,8 @@ class CameraRuntimeService:
     def get_driver_status(self, camera_id: str) -> dict:
         """Receiver counters + stream state for a running custom camera."""
         with self._lock:
-            return self._require_custom_source(camera_id).get_status()
+            source = self._require_custom_source(camera_id)
+        return source.get_status()
 
     # ─── Observer (consumer bridge to the GUI) ───────────────────────────────
 
@@ -690,6 +706,40 @@ class CameraRuntimeService:
             if runtime is None or runtime.recording is None:
                 return None
             return runtime.recording.stats()
+
+    def frame_integrity_snapshot(self, camera_id: str) -> dict:
+        """Diagnostic bundle for intermittent-distortion triage (no side effects).
+
+        Returns acquisition stats, observer/processing stats, the live GVSP
+        receiver counters (packet/block health at call time), and the sampled
+        acquisition/snapshot checksum counters for ``camera_id``. Used for
+        the corruption-moment packet statistics and the acceptance-test
+        totals. Returns an empty mapping for an unknown camera.
+        """
+        from thermal_monitor.core.frame_integrity import get_default_registry
+
+        with self._lock:
+            runtime = self._runtimes.get(camera_id)
+            if runtime is None:
+                return {}
+            worker_stats = runtime.worker.stats()
+            observer_stats = (
+                runtime.observer.stats()
+                if runtime.observer is not None
+                else None
+            )
+            try:
+                driver_status = self._require_custom_source(camera_id).get_status()
+            except Exception:
+                driver_status = {}
+        return {
+            "camera_id": camera_id,
+            "acquisition": worker_stats,
+            "observer": observer_stats,
+            "driver": dict(driver_status),
+            "integrity": get_default_registry().stats(camera_id=camera_id),
+            "worker_integrity": runtime.worker.integrity_stats(),
+        }
 
     # ─── Internal helpers ────────────────────────────────────────────────────
 

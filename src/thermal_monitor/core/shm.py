@@ -1392,6 +1392,8 @@ class SharedMemoryPublisher:
         self._ring = ring
         self._producer = ring.producer()
         self._closed = False
+        self._lock = threading.Lock()
+        self._latest_consumer: Consumer | None = None
 
     def publish(self, frame: "Frame") -> PublishResult:
         if self._closed:
@@ -1399,16 +1401,27 @@ class SharedMemoryPublisher:
         return self._producer.publish(frame)
 
     def latest(self) -> "Frame | None":
-        """Development convenience - returns a copied Frame."""
-        # Create a temporary consumer to get latest
-        consumer = self._ring.consumer("_latest_temp")
-        try:
-            view = consumer.latest()
-            if view:
-                return view.copy()
-            return None
-        finally:
-            consumer.close()
+        """Development convenience - returns a copied Frame.
+
+        Uses one persistent pinned consumer snapshot so repeated calls are
+        safe (a fresh ``ring.consumer(...)`` per call would collide on the
+        consumer name and copy SHM without pinning).
+        """
+        with self._lock:
+            if self._closed:
+                return None
+            if self._latest_consumer is None:
+                self._latest_consumer = self._ring.consumer("_latest")
+            pinned = self._latest_consumer.latest_pinned()
+            if pinned is None:
+                return None
+            try:
+                return pinned.view.copy()
+            finally:
+                try:
+                    self._latest_consumer.release(pinned)
+                except Exception:
+                    logger.debug("SharedMemoryPublisher.latest: release failed", exc_info=True)
 
     def reset(self) -> None:
         # Not meaningful for ring buffer; would require producer cooperation
@@ -1418,6 +1431,13 @@ class SharedMemoryPublisher:
         if not self._closed:
             self._closed = True
             self._producer.close()
+            with self._lock:
+                consumer, self._latest_consumer = self._latest_consumer, None
+            if consumer is not None:
+                try:
+                    consumer.close()
+                except Exception:
+                    pass
 
 
 # ─── Convenience factory ────────────────────────────────────────────────────

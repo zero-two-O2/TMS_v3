@@ -13,6 +13,7 @@ import pytest
 from PyQt6.QtCore import QThread
 from PyQt6.QtWidgets import QApplication
 
+from thermal_monitor.core.models import CameraConnectionState
 from thermal_monitor.ui.widgets.image_acquisition_panel import ImageAcquisitionPanel
 from thermal_monitor.ui.windows.configuration_window import FocusWorker, NucWorker
 
@@ -26,6 +27,51 @@ def qapp():
     if app is None:
         app = QApplication([])
     yield app
+
+
+def _buttons(panel):
+    return (
+        panel._connect_btn.isEnabled(),
+        panel._disconnect_btn.isEnabled(),
+        panel._start_btn.isEnabled(),
+        panel._stop_btn.isEnabled(),
+    )
+
+
+class TestPanelConnectionButtons:
+    """Button enablement must track runtime state with or without a theme.
+
+    Regression: set_connection_state() returned early when the theme
+    manager was missing, freezing Connect/Disconnect/Start/Stop at
+    construction defaults while acquisition ran.
+    """
+
+    EXPECTED = {
+        CameraConnectionState.DISCONNECTED: (True, False, False, False),
+        CameraConnectionState.CONNECTING: (False, False, False, False),
+        CameraConnectionState.CONNECTED: (False, True, True, False),
+        CameraConnectionState.ACQUIRING: (False, False, False, True),
+    }
+
+    def test_states_without_theme(self, qapp):
+        panel = ImageAcquisitionPanel()  # theme_manager=None
+        for state, expected in self.EXPECTED.items():
+            panel.set_connection_state(state)
+            assert _buttons(panel) == expected, state
+
+    def test_acquisition_running_without_theme(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_acquisition_running(True)
+        assert _buttons(panel) == self.EXPECTED[CameraConnectionState.ACQUIRING]
+        panel.set_acquisition_running(False)
+        assert _buttons(panel) == self.EXPECTED[CameraConnectionState.CONNECTED]
+
+    def test_focus_apply_button_identity(self, qapp):
+        panel = ImageAcquisitionPanel()
+        btn = panel.focus_apply_button
+        assert btn.objectName() == "focusApplyButton"
+        assert btn.text() == "Apply"
+        assert isinstance(panel.focus_spin_value, int)
 
 
 class TestFocusPanel:
@@ -89,6 +135,41 @@ class TestFocusPanel:
         panel = ImageAcquisitionPanel()
         panel.set_focus_enabled(False, "Camera not running")
         assert "not running" in panel._focus_status_label.text()
+
+    def test_read_cycle_leaves_buttons_clickable(self, qapp):
+        """Regression: after busy->read-complete the buttons must work.
+
+        Field symptom: values displayed + Status Ready, but Apply and Read
+        physically dead (set_focus_busy disabled them; nothing re-enabled
+        them on the read path, so clicked() never fired).
+        """
+        panel = ImageAcquisitionPanel()
+        panel.set_focus_enabled(True)
+        assert panel._focus_apply_btn.isEnabled()
+        assert panel._focus_refresh_btn.isEnabled()
+        panel.set_focus_busy("Reading…")
+        assert not panel._focus_apply_btn.isEnabled()
+        assert not panel._focus_refresh_btn.isEnabled()
+        # Read completion path: _on_focus_read_finished does exactly this.
+        panel.set_focus_enabled(True)
+        panel.set_focus_state(868, 150, 1000000)
+        assert panel._focus_apply_btn.isEnabled()
+        assert panel._focus_refresh_btn.isEnabled()
+        assert panel._focus_apply_btn.isEnabledTo(panel.window())
+        assert "Ready" in panel._focus_status_label.text()
+        # Clicking Apply now emits the requested value.
+        seen: list[int] = []
+        panel.focus_set_requested.connect(seen.append)
+        panel._focus_spin.setValue(1000)
+        panel._focus_apply_btn.click()
+        assert seen == [1000]
+
+    def test_disable_kills_both_buttons(self, qapp):
+        panel = ImageAcquisitionPanel()
+        panel.set_focus_enabled(True)
+        panel.set_focus_enabled(False, "Camera not running")
+        assert not panel._focus_apply_btn.isEnabled()
+        assert not panel._focus_refresh_btn.isEnabled()
 
 
 class FakeRuntime:

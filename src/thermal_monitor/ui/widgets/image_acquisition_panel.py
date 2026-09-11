@@ -64,6 +64,7 @@ class ImageAcquisitionPanel(QWidget):
         self._setup_ui()
         self._apply_theme()
         self._update_button_states()
+        logger.debug("Panel constructed id=%r theme=%r", id(self), theme_manager)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -217,8 +218,14 @@ class ImageAcquisitionPanel(QWidget):
         self._focus_spin.setSuffix(" mm")
         self._apply_input_style(self._focus_spin)
         self._focus_apply_btn = QPushButton("Apply")
+        self._focus_apply_btn.setObjectName("focusApplyButton")
         self._focus_apply_btn.clicked.connect(
             lambda: self.focus_set_requested.emit(self._focus_spin.value())
+        )
+        logger.info(
+            "APPLY BUTTON CREATED name=%s id=%r",
+            self._focus_apply_btn.objectName(),
+            id(self._focus_apply_btn),
         )
         self._apply_button_style(self._focus_apply_btn, "primary")
         focus_row.addWidget(self._focus_spin, 1)
@@ -228,6 +235,7 @@ class ImageAcquisitionPanel(QWidget):
         focus_btn_row = QHBoxLayout()
         focus_btn_row.setSpacing(6)
         self._focus_refresh_btn = QPushButton("Read")
+        self._focus_refresh_btn.setObjectName("focusReadButton")
         self._focus_refresh_btn.clicked.connect(self.focus_refresh_requested.emit)
         self._apply_button_style(self._focus_refresh_btn, "secondary")
         focus_btn_row.addWidget(self._focus_refresh_btn)
@@ -463,8 +471,22 @@ class ImageAcquisitionPanel(QWidget):
             self._info_serial.setText("—")
 
     def set_connection_state(self, state: CameraConnectionState) -> None:
-        """Update connection state and UI."""
+        """Update connection state and UI.
+
+        Button enablement is applied FIRST and never depends on styling:
+        a missing theme manager must freeze colors, never controls.
+        """
         self._connection_state = state
+        self._update_button_states()
+        logger.debug(
+            "Panel %r connection=%s buttons(connect=%s disconnect=%s start=%s stop=%s)",
+            id(self),
+            state.value,
+            self._connect_btn.isEnabled(),
+            self._disconnect_btn.isEnabled(),
+            self._start_btn.isEnabled(),
+            self._stop_btn.isEnabled(),
+        )
 
         if not self._theme:
             return
@@ -486,8 +508,6 @@ class ImageAcquisitionPanel(QWidget):
         self._status_indicator.setStyleSheet(f"color: {color}; font-size: 14px;")
         self._status_text.setText(status_text)
         self._status_text.setStyleSheet(f"font-weight: bold; font-size: 11px; color: {color};")
-
-        self._update_button_states()
 
     def set_acquisition_running(self, running: bool) -> None:
         """Update acquisition running state."""
@@ -565,11 +585,41 @@ class ImageAcquisitionPanel(QWidget):
 
     # -- Focus (Stage 8D; dumb view, window drives runtime asynchronously) --
 
+    @property
+    def focus_apply_button(self) -> "QPushButton":
+        """The visible Focus Apply button (identity/wiring diagnostics)."""
+        return self._focus_apply_btn
+
+    @property
+    def focus_spin_value(self) -> int:
+        """Current Set-field value as plain int (Apply-path type audit)."""
+        return int(self._focus_spin.value())
+
     def set_focus_enabled(self, enabled: bool, reason: str = "") -> None:
-        """Enable/disable the focus group (e.g. camera not running)."""
+        """Enable/disable the focus group AND its Apply/Read buttons.
+
+        Single authority for focus interactivity: set_focus_busy() blocks
+        re-entry during an operation, and this method restores it after.
+        (Previously the buttons were only disabled here-by-omission and
+        never re-enabled on the read path, leaving them dead while the
+        panel showed Ready.)
+        """
+        old_apply = self._focus_apply_btn.isEnabled()
+        old_read = self._focus_refresh_btn.isEnabled()
         self._focus_group.setEnabled(enabled)
+        self._focus_apply_btn.setEnabled(enabled)
+        self._focus_refresh_btn.setEnabled(enabled)
         if not enabled:
             self._focus_status_label.setText(reason or "Focus unavailable")
+        logger.debug(
+            "Panel focus enabled=%s apply: %s->%s read: %s->%s reason=%r",
+            enabled,
+            old_apply,
+            self._focus_apply_btn.isEnabled(),
+            old_read,
+            self._focus_refresh_btn.isEnabled(),
+            reason,
+        )
 
     def set_focus_state(self, current_mm: int, min_mm: int, max_mm: int) -> None:
         """Show hardware-reported focus state; clamp spinbox to [min, max].
@@ -600,12 +650,23 @@ class ImageAcquisitionPanel(QWidget):
 
     def set_focus_busy(self, text: str = "Writing…") -> None:
         """Indicate an in-flight focus operation; block re-entry."""
+        logger.debug(
+            "Panel focus busy %r apply: %s->False read: %s->False",
+            text,
+            self._focus_apply_btn.isEnabled(),
+            self._focus_refresh_btn.isEnabled(),
+        )
         self._focus_apply_btn.setEnabled(False)
         self._focus_refresh_btn.setEnabled(False)
         self._focus_status_label.setText(text)
 
     def set_focus_result(self, requested_mm: int, readback_mm: int) -> None:
         """Report completion with the hardware readback (may differ slightly)."""
+        logger.debug(
+            "Panel focus result requested=%r readback=%r",
+            requested_mm,
+            readback_mm,
+        )
         self._focus_apply_btn.setEnabled(True)
         self._focus_refresh_btn.setEnabled(True)
         self._focus_current_label.setText(f"{readback_mm} mm")
@@ -618,6 +679,7 @@ class ImageAcquisitionPanel(QWidget):
 
     def set_focus_error(self, message: str) -> None:
         """Report failure clearly and re-enable the controls."""
+        logger.debug("Panel focus error %r", message)
         self._focus_apply_btn.setEnabled(True)
         self._focus_refresh_btn.setEnabled(True)
         self._focus_status_label.setText(f"Error: {message}")

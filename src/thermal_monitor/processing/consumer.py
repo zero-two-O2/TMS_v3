@@ -19,6 +19,21 @@ from typing import Callable, Optional
 import numpy as np
 
 from thermal_monitor.core.frame import Frame
+from thermal_monitor.core.frame_integrity import (
+    FrameIntegrityRegistry,
+    IntegrityStats,
+    compute_thermal_crc,
+    get_default_registry,
+    integrity_diag_enabled,
+    integrity_sample_every as _resolve_sample_every,
+)
+from thermal_monitor.core.frame_latency import (
+    format_summary_brief as _format_latency_brief,
+    get_default_tracker as _default_latency_tracker,
+    latency_enabled as _latency_enabled,
+    latency_sample_every as _resolve_latency_every,
+)
+from thermal_monitor.core.raw_ir_diag import maybe_dump_raw as _maybe_dump_raw_ir
 from thermal_monitor.core.models import AnalysisConfig
 from thermal_monitor.core.shm import Consumer, SharedMemoryRingBuffer, RingConfig, PayloadSpec
 from thermal_monitor.processing.alarms import AlarmEvaluator
@@ -91,12 +106,24 @@ class ProcessingConsumer:
         pipeline: ProcessingPipeline,
         alarm_evaluator: AlarmEvaluator | None = None,
         result_callback: Callable[[ProcessingResult], None] | None = None,
+        integrity_diag: bool | None = None,
+        integrity_sample_every: int | None = None,
+        integrity_registry: FrameIntegrityRegistry | None = None,
     ) -> None:
         self._camera_id = camera_id
+        self._consumer_name = consumer_name
         self._consumer = ring_buffer.consumer(consumer_name)
         self._pipeline = pipeline
         self._alarm_evaluator = alarm_evaluator
         self._result_callback = result_callback
+        # Frame-integrity triage (diagnostic-only, off unless enabled).
+        self._integrity_diag = integrity_diag_enabled(integrity_diag)
+        self._integrity_every = _resolve_sample_every(integrity_sample_every)
+        self._integrity = integrity_registry or get_default_registry()
+        # Latency triage + raw-IR capture (diagnostic-only, env-gated).
+        self._latency_diag = _latency_enabled()
+        self._latency_every = _resolve_latency_every()
+        self._latency = _default_latency_tracker()
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -112,6 +139,20 @@ class ProcessingConsumer:
             self._result_callback = result_callback
 
         self._stop_event.clear()
+        logger.info(
+            "FRAME INTEGRITY DIAG camera=%s consumer=%s enabled=%s every=%d",
+            self._camera_id,
+            self._consumer_name,
+            self._integrity_diag,
+            self._integrity_every,
+        )
+        logger.info(
+            "FRAME LATENCY DIAG camera=%s consumer=%s enabled=%s every=%d",
+            self._camera_id,
+            self._consumer_name,
+            self._latency_diag,
+            self._latency_every,
+        )
         self._thread = threading.Thread(
             target=self._run,
             name=f"ProcessingConsumer-{self._camera_id}",
@@ -129,6 +170,28 @@ class ProcessingConsumer:
             if thread.is_alive():
                 logger.warning("Camera %s: processing consumer thread did not stop within %.1f s", self._camera_id, timeout)
         self._thread = None
+        with self._stats_lock:
+            consumed = self._stats.frames_consumed
+            processed = self._stats.frames_processed
+            failed = self._stats.frames_failed
+        integrity = self._integrity.stats(camera_id=self._camera_id)
+        logger.info(
+            "FRAME INTEGRITY SUMMARY camera=%s consumer_snapshots=%d processed=%d failed=%d "
+            "comparisons=%d matched=%d mismatched=%d unsampled=%d",
+            self._camera_id,
+            consumed,
+            processed,
+            failed,
+            integrity.snapshots_checked,
+            integrity.snapshots_matched,
+            integrity.snapshots_mismatched,
+            integrity.snapshots_unsampled,
+        )
+        if self._latency_diag:
+            logger.info(
+                "FRAME LATENCY SUMMARY %s",
+                _format_latency_brief(self._latency.summary(self._camera_id)),
+            )
         logger.info("ProcessingConsumer stopped for camera %s", self._camera_id)
 
     def restart(self, timeout: float = 5.0) -> None:
@@ -176,6 +239,7 @@ class ProcessingConsumer:
 
         expected_sequence = 0
         first_frame = True
+        seen_overwritten = 0
 
         while not self._stop_event.is_set():
             try:
@@ -183,6 +247,7 @@ class ProcessingConsumer:
 
                 if pinned_view is not None:
                     frame = pinned_view.view.copy()
+                    self._mark_latency(frame, "consumed")
                     try:
                         self._process_frame(frame)
                     finally:
@@ -197,6 +262,7 @@ class ProcessingConsumer:
                 else:
                     # Frame not available - check consumer stats for drops
                     consumer_stats = self._consumer.stats()
+                    overwritten_grew = consumer_stats.overwritten > seen_overwritten
                     with self._stats_lock:
                         if consumer_stats.overwritten > self._stats.ring_overwritten:
                             self._stats.ring_overwritten = consumer_stats.overwritten
@@ -207,21 +273,16 @@ class ProcessingConsumer:
                         if consumer_stats.invalid > self._stats.ring_invalid:
                             self._stats.ring_invalid = consumer_stats.invalid
 
-                    # If we haven't seen any frames yet, try latest_pinned() to catch up
-                    if first_frame:
-                        latest_pinned = self._consumer.latest_pinned()
-                        if latest_pinned is not None:
-                            frame = latest_pinned.view.copy()
-                            try:
-                                self._process_frame(frame)
-                            finally:
-                                try:
-                                    self._consumer.release(latest_pinned)
-                                except Exception as exc:
-                                    logger.warning("Camera %s: failed to release pinned view: %s", self._camera_id, exc)
-
-                            expected_sequence = frame.descriptor.sequence + 1
+                    # Catch up to the newest published frame when starting up
+                    # or when our expected sequence was overwritten while we
+                    # lagged; retrying the stale sequence alone would spin
+                    # forever without ever processing a new frame.
+                    if first_frame or overwritten_grew:
+                        caught_up = self._catch_up_to_latest()
+                        if caught_up is not None:
+                            expected_sequence = caught_up
                             first_frame = False
+                    seen_overwritten = consumer_stats.overwritten
 
                     # Small sleep to avoid busy-waiting when frames not yet available
                     time.sleep(0.001)
@@ -235,8 +296,96 @@ class ProcessingConsumer:
 
         logger.debug("ProcessingConsumer %s: run loop exited", self._camera_id)
 
+    def _catch_up_to_latest(self) -> int | None:
+        """Process the newest published frame (latest-wins) after a gap.
+
+        Returns the next expected sequence, or None when no frame is
+        available yet.
+        """
+        latest_pinned = self._consumer.latest_pinned()
+        if latest_pinned is None:
+            return None
+        frame = latest_pinned.view.copy()
+        try:
+            self._process_frame(frame)
+        finally:
+            try:
+                self._consumer.release(latest_pinned)
+            except Exception as exc:
+                logger.warning("Camera %s: failed to release pinned view: %s", self._camera_id, exc)
+        return frame.descriptor.sequence + 1
+
+    def integrity_stats(self) -> IntegrityStats:
+        """Sampled frame-integrity counters for this camera (diagnostic)."""
+        return self._integrity.stats(camera_id=self._camera_id)
+
+    def _mark_latency(self, frame: Frame, stage: str) -> None:
+        """Record one consumer-side latency stage (diagnostic-only)."""
+        if not self._latency_diag:
+            return
+        self._latency.note_stage(
+            self._camera_id,
+            frame.descriptor.sequence,
+            stage,
+            time.perf_counter_ns(),
+        )
+
+    def _maybe_verify_integrity(self, frame: Frame) -> None:
+        """Verify one consumer-snapshot checksum per N frames (diagnostic).
+
+        The frame here is the durable pinned copy, i.e. exactly what the
+        renderer snapshot path will consume. A mismatch against the
+        acquisition sample for the same worker sequence proves corruption
+        between acquisition and the snapshot; a match exonerates SHM.
+        """
+        if not self._integrity_diag:
+            return
+        sequence = frame.descriptor.sequence
+        if self._integrity_every > 1 and (sequence % self._integrity_every) != 0:
+            return
+        crc = compute_thermal_crc(frame.payload.thermal)
+        if crc is None:
+            return
+        hw_frame_id = frame.descriptor.thermal.sequence
+        matched = self._integrity.record_snapshot(
+            camera_id=self._camera_id,
+            sequence=sequence,
+            hw_frame_id=hw_frame_id,
+            crc32=crc,
+            wall_ts=frame.descriptor.timestamp,
+            mono_ts=frame.descriptor.monotonic_timestamp,
+        )
+        if matched is False:
+            stats = self._integrity.stats(camera_id=self._camera_id)
+            mismatch = stats.last_mismatch
+            acq_sample = self._integrity.acquisition_sample(self._camera_id, sequence)
+            acq_hw = acq_sample.hw_frame_id if acq_sample is not None else None
+            logger.error(
+                "FRAME INTEGRITY MISMATCH cam=%s seq=%d hw_snap=%s hw_acq=%s hw_match=%s "
+                "acq_crc=%s snap_crc=%08x packets=%s ring=%s",
+                self._camera_id,
+                sequence,
+                hw_frame_id,
+                acq_hw,
+                (acq_hw == hw_frame_id),
+                f"{mismatch.acquisition_crc32:08x}" if mismatch and mismatch.acquisition_crc32 is not None else "?",
+                crc,
+                frame.descriptor.metadata.get("packet_stats"),
+                self._consumer.stats(),
+            )
+        elif matched is True and logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "integrity match cam=%s seq=%d hw=%s crc=%08x",
+                self._camera_id,
+                sequence,
+                hw_frame_id,
+                crc,
+            )
+
     def _process_frame(self, frame: Frame) -> None:
         """Run the processing pipeline on one durable frame copy."""
+        self._maybe_verify_integrity(frame)
+        self._mark_latency(frame, "process_start")
         start_time = time.perf_counter()
         try:
             analysis_result = self._pipeline.process_frame(frame)
@@ -252,6 +401,18 @@ class ProcessingConsumer:
             temperature_image = None
             if getattr(self._pipeline, "temperature_converter", None) is not None:
                 temperature_image = getattr(self._pipeline, "last_temperature_image", None)
+
+            self._mark_latency(frame, "process_end")
+            # Raw-IR distortion triage dump (diagnostic-only, env-gated):
+            # raw Mono16 pre-processing + converted temperature sidecar share
+            # one filename stem so a distorted display can be classified.
+            _maybe_dump_raw_ir(
+                self._camera_id,
+                frame.descriptor.sequence,
+                frame.descriptor.thermal.sequence,
+                frame.payload.thermal,
+                temperature_image,
+            )
 
             result = ProcessingResult(
                 frame=frame,
@@ -307,6 +468,9 @@ def create_processing_consumer(
     visible_width: int | None = None,
     visible_height: int | None = None,
     visible_dtype: np.dtype | None = None,
+    integrity_diag: bool | None = None,
+    integrity_sample_every: int | None = None,
+    integrity_registry: FrameIntegrityRegistry | None = None,
 ) -> tuple[SharedMemoryRingBuffer, ProcessingConsumer]:
     """Factory to attach to an existing ring buffer and create a ProcessingConsumer.
 
@@ -329,6 +493,10 @@ def create_processing_consumer(
         visible_width: Visible plane width (must match producer; None = IR-only ring)
         visible_height: Visible plane height (must match producer)
         visible_dtype: Visible plane dtype (must match producer)
+        integrity_diag: Enable sampled snapshot-checksum verification
+            (default: ``TMS_FRAME_INTEGRITY_DIAG`` env).
+        integrity_sample_every: Verify one frame per N worker sequences.
+        integrity_registry: Registry correlating acquisition/snapshot samples.
 
     Returns:
         Tuple of (ring_buffer, processing_consumer). The ring_buffer must be
@@ -376,6 +544,9 @@ def create_processing_consumer(
         pipeline=pipeline,
         alarm_evaluator=alarm_evaluator,
         result_callback=result_callback,
+        integrity_diag=integrity_diag,
+        integrity_sample_every=integrity_sample_every,
+        integrity_registry=integrity_registry,
     )
 
     return ring, consumer

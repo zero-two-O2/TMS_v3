@@ -100,6 +100,8 @@ class FakeTV46L:
         self.nuc_pending_once = True
         self.running = True
         self.requests = 0
+        # Raw WRITE requests as (addr, value, request_hex) for wire audits.
+        self.writes: list[tuple[int, int, str]] = []
         self.thread = threading.Thread(target=self._loop, daemon=True)
 
     def start(self) -> "FakeTV46L":
@@ -148,6 +150,7 @@ class FakeTV46L:
                 )
             elif cmd == GVCPCommand.WRITE_REG and len(data) >= 16:
                 address, value = struct.unpack(">II", data[8:16])
+                self.writes.append((address, value, bytes(data[8:16]).hex()))
                 if address == REG_NUC_COMMAND and self.nuc_pending_once:
                     # Action register: PENDING first, final ack after execute.
                     self.nuc_pending_once = False
@@ -390,7 +393,46 @@ class TestNucOverLoopback:
             service.shutdown()
 
 
-class TestRuntimeDirectDiagnose:
+class TestFocusApplyWireBytes:
+    def test_apply_500_sends_exact_bytes_and_panel_updates(self, qapp, camera):
+        """Full Apply path: 500 must hit the wire as 0020a138 000001f4.
+
+        Guards the QSpinBox -> int -> struct.pack('>I') chain against
+        float/str/clamp/wrong-register corruption end to end.
+        """
+        from thermal_monitor.camera.tv46_gvcp import REG_FOCUS_SET
+
+        service = _service()
+        camera_id = "cam_loop_apply_bytes"
+        panel = ImageAcquisitionPanel()
+        try:
+            service.start_camera(_app_camera(camera_id))
+            panel.set_focus_enabled(True)
+            panel.set_focus_state(917, 150, 1000000)
+            panel._focus_spin.setValue(500)
+            emitted: list = []
+            panel.focus_set_requested.connect(emitted.append)
+            panel._focus_apply_btn.click()
+            assert emitted == [500]
+            assert isinstance(emitted[0], int)
+            # Drive the same value through the real worker path (Apply handler).
+            worker = FocusWorker(service, camera_id, emitted[0])
+            worker.write_finished.connect(
+                lambda _cid, req, rb: panel.set_focus_result(req, rb)
+            )
+            done, failed, thread = _run_worker(qapp, worker, "write_finished")
+            assert done and not failed
+            assert done == [(camera_id, 500, 500)]
+            focus_writes = [w for w in camera.writes if w[0] == REG_FOCUS_SET]
+            assert focus_writes, "no WRITE to 0x20A138 reached the camera"
+            assert focus_writes[-1][1] == 500
+            assert focus_writes[-1][2] == "0020a138000001f4"
+            assert "500" in panel._focus_current_label.text()
+            assert "OK" in panel._focus_status_label.text()
+            assert thread.isFinished()
+            assert service.is_camera_running(camera_id)
+        finally:
+            service.shutdown()
     def test_diagnose_focus_returns_real_values_while_streaming(self, camera):
         """Runtime-direct probe (§4): same app, same driver, no UI involved."""
         service = _service()

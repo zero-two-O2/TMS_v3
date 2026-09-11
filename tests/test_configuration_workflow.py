@@ -711,5 +711,125 @@ class TestDependencyInjectionRegression:
         dialog.close()
 
 
+def _teardown_controller():
+    """Build a real AppController with real services (offscreen-safe)."""
+    from thermal_monitor.ui.controller import AppController
+    from thermal_monitor.services.mode import ModeService
+    from thermal_monitor.services.configuration import ConfigurationService
+    from thermal_monitor.services.offline import OfflineService
+    from thermal_monitor.services.runtime import CameraRuntimeService
+    from thermal_monitor.services.discovery import CameraDiscoveryService
+    from thermal_monitor.config import create_config_manager
+    from thermal_monitor.ui.theme import ThemeManager
+
+    config_manager = create_config_manager()
+    config = config_manager.get_config()
+    controller = AppController(
+        mode_service=ModeService(),
+        config_service=ConfigurationService(),
+        offline_service=OfflineService(),
+        runtime_service=CameraRuntimeService(
+            cameras_config=config.cameras,
+            system_config=config.system,
+            recording_config=config.recording,
+            storage_config=config.storage,
+            calibration_config=config.calibration,
+        ),
+        discovery_service=CameraDiscoveryService(),
+        config_manager=config_manager,
+        theme_manager=ThemeManager(config_manager),
+    )
+    return controller
+
+
+class TestControllerTeardownRace:
+    """Launcher may be half-dead (C++ children gone) while controller lives.
+
+    Regression for: RuntimeError: wrapped C/C++ object of type QPushButton
+    has been deleted (controller -> _update_launcher_buttons ->
+    launcher._live_btn.setEnabled during teardown). The dead-children state
+    is injected by making set_mode_buttons_enabled raise exactly that
+    RuntimeError; the controller must skip + log instead of propagating.
+    """
+
+    def test_update_launcher_buttons_survives_dead_children(self, qapp):
+        controller = _teardown_controller()
+        controller._create_launcher_window()
+
+        def dead(*args, **kwargs):
+            raise RuntimeError(
+                "wrapped C/C++ object of type QPushButton has been deleted"
+            )
+
+        controller._launcher_window.set_mode_buttons_enabled = dead
+        controller._update_launcher_buttons()  # must not raise
+        controller.shutdown()
+
+    def test_config_destroyed_with_dead_children(self, qapp):
+        from unittest.mock import Mock
+
+        controller = _teardown_controller()
+        controller._create_launcher_window()
+        controller._create_config_window()
+
+        def dead(*args, **kwargs):
+            raise RuntimeError(
+                "wrapped C/C++ object of type QPushButton has been deleted"
+            )
+
+        controller._launcher_window.set_mode_buttons_enabled = dead
+        controller._show_launcher = Mock()
+        controller._on_config_window_destroyed()  # must not raise
+        assert controller._config_window is None
+        controller._show_launcher.assert_called_once()
+        controller.shutdown()
+
+    def test_destroyed_handlers_noop_during_shutdown(self, qapp):
+        from unittest.mock import Mock
+
+        controller = _teardown_controller()
+        controller._create_launcher_window()
+        controller._create_config_window()
+        controller._show_launcher = Mock()
+        controller._shutting_down = True
+        controller._on_config_window_destroyed()
+        controller._on_live_window_destroyed()
+        controller._show_launcher.assert_not_called()
+        controller.shutdown()
+
+    def test_update_launcher_buttons_without_launcher(self, qapp):
+        controller = _teardown_controller()
+        controller._update_launcher_buttons()  # no launcher yet: no-op
+
+
+class TestFocusApplyClickSlot:
+    """The diagnostic click slot fires from the visible button, WARNING-level."""
+
+    def test_debug_slot_logs_click(self, qapp, caplog):
+        import logging
+
+        controller = _teardown_controller()
+        widget = controller._create_config_window()._config_widget
+        btn = widget._acq_panel.focus_apply_button
+        assert btn.objectName() == "focusApplyButton"
+        with caplog.at_level(logging.WARNING):
+            widget._debug_focus_apply_clicked(False)
+        assert "FOCUS APPLY BUTTON CLICKED" in caplog.text
+        assert "focusApplyButton" in caplog.text
+        controller.shutdown()
+
+    def test_apply_button_click_reaches_both_slots(self, qapp):
+        controller = _teardown_controller()
+        widget = controller._create_config_window()._config_widget
+        btn = widget._acq_panel.focus_apply_button
+        widget._acq_panel.set_focus_enabled(True)
+        seen: list = []
+        widget._acq_panel.focus_set_requested.connect(seen.append)
+        widget._acq_panel._focus_spin.setValue(1000)
+        btn.click()
+        assert seen == [1000]
+        controller.shutdown()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

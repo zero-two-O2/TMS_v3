@@ -7,10 +7,12 @@ Enforces mutual exclusion between Live and Configuration modes.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from PyQt6.QtCore import QObject, pyqtSlot
 from PyQt6.QtWidgets import QMessageBox
+from PyQt6.sip import isdeleted
 
 from thermal_monitor.core.modes import ApplicationMode, ModeState
 from thermal_monitor.services.mode import ModeService
@@ -30,6 +32,9 @@ from thermal_monitor.services.discovery import (
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.config import ConfigurationManager, CamerasConfig, SystemConfig, RecordingConfig, StorageConfig, CalibrationConfig
 from thermal_monitor.ui.theme import ThemeManager
+
+
+logger = logging.getLogger(__name__)
 
 
 class AppController(QObject):
@@ -77,6 +82,11 @@ class AppController(QObject):
         # Track which mode windows are currently open
         self._live_open = False
         self._config_open = False
+        # True once shutdown() starts: destroyed-signal handlers become
+        # no-ops so teardown can never cascade through half-dead windows
+        # (e.g. touching launcher buttons whose C++ objects are already
+        # gone) or resurrect UI via _show_launcher().
+        self._shutting_down = False
 
         # Connect mode service for mutual exclusion enforcement
         self._mode_service.add_observer(self._on_mode_changed)
@@ -170,8 +180,8 @@ class AppController(QObject):
         self._database = database
 
     def _create_launcher_window(self) -> None:
-        """Create the launcher window."""
-        if self._launcher_window is not None:
+        """Create the launcher window (recreates if the C++ object died)."""
+        if self._launcher_alive():
             return
 
         self._launcher_window = LauncherWindow(
@@ -286,19 +296,45 @@ class AppController(QObject):
 
     def _show_launcher(self) -> None:
         """Show launcher window maximized."""
-        if self._launcher_window is None:
+        if not self._launcher_alive():
             self._create_launcher_window()
         self._launcher_window.showMaximized()
         self._launcher_window.refresh_discovery()
         self._update_launcher_buttons()
 
+    def _launcher_alive(self) -> bool:
+        """True when the launcher window exists and its C++ object is alive.
+
+        Guards every cross-window touch: during teardown Qt may destroy
+        child widgets (e.g. mode buttons) while this controller still holds
+        the Python wrapper, and any call into them raises RuntimeError.
+        """
+        window = self._launcher_window
+        if window is None:
+            return False
+        try:
+            return not isdeleted(window)
+        except Exception:
+            return False
+
     def _update_launcher_buttons(self) -> None:
-        """Update launcher mode button enabled states based on mutual exclusion."""
-        if self._launcher_window:
+        """Update launcher mode button enabled states based on mutual exclusion.
+
+        Safe during teardown: the launcher shell may outlive its already
+        destroyed child buttons (Qt destroys C++ children in arbitrary
+        order), in which case the update is skipped with a log instead of
+        raising RuntimeError on a deleted QPushButton.
+        """
+        if not self._launcher_alive():
+            logger.debug("Launcher buttons update skipped (launcher not alive)")
+            return
+        try:
             self._launcher_window.set_mode_buttons_enabled(
                 live_enabled=not self._config_open,
                 config_enabled=not self._live_open,
             )
+        except RuntimeError as exc:
+            logger.debug("Launcher buttons update skipped (teardown race): %s", exc)
 
     @pyqtSlot(ModeState)
     def _on_mode_changed(self, state: ModeState) -> None:
@@ -309,6 +345,8 @@ class AppController(QObject):
 
     def _on_live_window_destroyed(self) -> None:
         """Handle Live window close."""
+        if self._shutting_down:
+            return
         self._live_open = False
         self._mode_service.set_live_active(False)
         self._live_window = None
@@ -317,6 +355,8 @@ class AppController(QObject):
 
     def _on_config_window_destroyed(self) -> None:
         """Handle Configuration window close."""
+        if self._shutting_down:
+            return
         self._config_open = False
         self._mode_service.set_configuration_active(False)
         self._config_window = None
@@ -325,11 +365,14 @@ class AppController(QObject):
 
     def _on_offline_window_destroyed(self) -> None:
         """Handle Offline window close."""
+        if self._shutting_down:
+            return
         self._offline_window = None
         # Offline is independent, launcher not affected
 
     def shutdown(self) -> None:
         """Clean shutdown of all windows."""
+        self._shutting_down = True
         # Close mode windows first (they stop their runtimes)
         if self._live_window:
             self._live_window.close()
@@ -337,7 +380,7 @@ class AppController(QObject):
             self._config_window.close()
         if self._offline_window:
             self._offline_window.close()
-        if self._launcher_window:
+        if self._launcher_alive():
             self._launcher_window.close()
 
         # Shutdown runtime service

@@ -46,6 +46,21 @@ from thermal_monitor.camera.model import (
     PublishResult,
 )
 from thermal_monitor.core.frame import Frame, FrameDescriptor, FramePayload, StreamMetadata, SyncInfo, SyncStatus
+from thermal_monitor.core.frame_integrity import (
+    FrameIntegrityRegistry,
+    IntegrityStats,
+    compute_thermal_crc,
+    get_default_registry,
+    integrity_diag_enabled,
+    integrity_sample_every as _resolve_sample_every,
+)
+from thermal_monitor.core.frame_latency import (
+    FrameLatencyTracker,
+    format_summary_brief as _format_latency_brief,
+    get_default_tracker as _default_latency_tracker,
+    latency_enabled as _latency_enabled,
+    latency_sample_every as _resolve_latency_every,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -175,11 +190,23 @@ class AcquisitionWorker:
         source: FrameSource,
         publisher: FramePublisher,
         config: CameraConfig,
+        integrity_diag: bool | None = None,
+        integrity_sample_every: int | None = None,
+        integrity_registry: FrameIntegrityRegistry | None = None,
     ) -> None:
         self._camera_id = camera_id
         self._source = source
         self._publisher = publisher
         self._config = config
+        # Frame-integrity triage (diagnostic-only, off unless enabled).
+        self._integrity_diag = integrity_diag_enabled(integrity_diag)
+        self._integrity_every = _resolve_sample_every(integrity_sample_every)
+        self._integrity = integrity_registry or get_default_registry()
+        # Acquisition-to-display latency triage (diagnostic-only, off unless
+        # enabled via TMS_FRAME_LATENCY_DIAG; one boolean check per frame).
+        self._latency_diag = _latency_enabled()
+        self._latency_every = _resolve_latency_every()
+        self._latency = _default_latency_tracker()
 
         self._state = AcquisitionState.DISCOVERED
         self._state_lock = threading.Lock()
@@ -223,6 +250,18 @@ class AcquisitionWorker:
                 raise RuntimeError("Worker thread already running")
             self._state = AcquisitionState.CONNECTING
         self._stop_event.clear()
+        logger.info(
+            "FRAME INTEGRITY DIAG camera=%s enabled=%s every=%d",
+            self._camera_id,
+            self._integrity_diag,
+            self._integrity_every,
+        )
+        logger.info(
+            "FRAME LATENCY DIAG camera=%s enabled=%s every=%d",
+            self._camera_id,
+            self._latency_diag,
+            self._latency_every,
+        )
         self._thread = threading.Thread(
             target=self._run,
             name=f"Acquisition-{self._camera_id}",
@@ -602,11 +641,88 @@ class AcquisitionWorker:
             if result.accepted:
                 self._published += 1
                 self._publish_times.append(time.perf_counter())
+                self._maybe_record_integrity(frame)
+                self._maybe_mark_latency(frame)
             else:
                 self._dropped += 1
             # Acquisition tracks its own sequence; consumer/transport gaps
             # are the responsibility of the transport layer, not acquisition.
             # The worker does not query publisher stats every frame.
+
+    def integrity_stats(self) -> IntegrityStats:
+        """Sampled frame-integrity counters for this camera (diagnostic)."""
+        return self._integrity.stats(camera_id=self._camera_id)
+
+    def latency_summary(self) -> dict:
+        """Acquisition-to-display latency statistics (diagnostic)."""
+        return self._latency.summary(self._camera_id)
+
+    def _maybe_mark_latency(self, frame: Frame) -> None:
+        """Record grab/publish stage timestamps for latency triage.
+
+        Timestamp semantics (all ``perf_counter`` clock):
+        - T0 ``grab`` = metadata ``grab_started``: immediately BEFORE the
+          blocking ``grab()`` call. Wait metric only, NOT display latency.
+        - T1 ``frame_complete`` = ``descriptor.monotonic_timestamp``: set in
+          ``_build_frame`` immediately AFTER ``grab()`` returns a complete
+          frame. This is the latency origin.
+        Disabled by default; enable via TMS_FRAME_LATENCY_DIAG.
+        """
+        if not self._latency_diag:
+            return
+        grab_started = frame.descriptor.metadata.get("grab_started", 0.0)
+        try:
+            grab_ns = int(float(grab_started) * 1e9)
+        except (TypeError, ValueError):
+            grab_ns = time.perf_counter_ns()
+        try:
+            complete_ns = int(float(frame.descriptor.monotonic_timestamp) * 1e9)
+        except (TypeError, ValueError):
+            complete_ns = grab_ns
+        self._latency.note_published(
+            self._camera_id,
+            frame.descriptor.sequence,
+            frame.descriptor.thermal.sequence,
+            grab_ns,
+            complete_ns,
+            time.perf_counter_ns(),
+            self._latency_every,
+        )
+
+    def _maybe_record_integrity(self, frame: Frame) -> None:
+        """Sample one acquisition-side checksum per N published frames.
+
+        Runs post-GVSP-assembly / pre-SHM-publication on the owned GrabResult
+        copy, so the checksum represents the coherent acquisition frame.
+        Disabled by default; enable per worker or via TMS_FRAME_INTEGRITY_DIAG.
+        """
+        if not self._integrity_diag:
+            return
+        sequence = frame.descriptor.sequence
+        if self._integrity_every > 1 and (sequence % self._integrity_every) != 0:
+            return
+        crc = compute_thermal_crc(frame.payload.thermal)
+        if crc is None:
+            return
+        hw_frame_id = frame.descriptor.thermal.sequence
+        packet_stats = frame.descriptor.metadata.get("packet_stats")
+        self._integrity.record_acquisition(
+            camera_id=self._camera_id,
+            sequence=sequence,
+            hw_frame_id=hw_frame_id,
+            crc32=crc,
+            wall_ts=frame.descriptor.timestamp,
+            mono_ts=frame.descriptor.monotonic_timestamp,
+        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "integrity acq cam=%s seq=%d hw=%s crc=%08x packets=%s",
+                self._camera_id,
+                sequence,
+                hw_frame_id,
+                crc,
+                packet_stats,
+            )
 
     def _compute_fps(self, now: float) -> float:
         window = 1.0
@@ -632,6 +748,29 @@ class AcquisitionWorker:
             self._publisher.close()
         except Exception:
             logger.exception("Camera %s: error closing publisher", self._camera_id)
+        with self._stats_lock:
+            total_acquired = self._total_acquired
+            published = self._published
+            dropped = self._dropped
+        integrity = self._integrity.stats(camera_id=self._camera_id)
+        logger.info(
+            "FRAME INTEGRITY SUMMARY camera=%s acquired_frames=%d published=%d dropped=%d "
+            "acquisition_samples=%d comparisons=%d matched=%d mismatched=%d unsampled=%d",
+            self._camera_id,
+            total_acquired,
+            published,
+            dropped,
+            integrity.acquisitions_sampled,
+            integrity.snapshots_checked,
+            integrity.snapshots_matched,
+            integrity.snapshots_mismatched,
+            integrity.snapshots_unsampled,
+        )
+        if self._latency_diag:
+            logger.info(
+                "FRAME LATENCY SUMMARY %s",
+                _format_latency_brief(self._latency.summary(self._camera_id)),
+            )
         with self._state_lock:
             if self._state not in (AcquisitionState.FAILED, AcquisitionState.STOPPING):
                 self._state = AcquisitionState.STOPPED

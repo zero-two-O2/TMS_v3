@@ -16,6 +16,7 @@ touches the TV46L driver, HALCON, the acquisition loop, or the recording writer.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import numpy as np
@@ -29,6 +30,10 @@ except ImportError:
     _HAS_PYQT6 = False
 
 from thermal_monitor.core.models import AnalysisConfig
+from thermal_monitor.core.frame_latency import (
+    get_default_tracker as _default_latency_tracker,
+    latency_enabled as _latency_enabled,
+)
 from thermal_monitor.processing import (
     ProcessingConsumer,
     ProcessingResult,
@@ -175,6 +180,13 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
     def _forward_result(self, result: ProcessingResult) -> None:
         """Called from the consumer thread; forwards to the GUI thread."""
         try:
+            if _latency_enabled():
+                _default_latency_tracker().note_stage(
+                    result.frame.descriptor.camera_id,
+                    result.frame.descriptor.sequence,
+                    "emitted",
+                    time.perf_counter_ns(),
+                )
             if _HAS_PYQT6 and self.result_ready:
                 self.result_ready.emit(result)
         except Exception:

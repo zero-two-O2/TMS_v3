@@ -11,6 +11,7 @@ ThermoView-style thermal image display with:
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -20,6 +21,10 @@ from PyQt6.QtWidgets import QWidget
 
 import numpy as np
 
+from thermal_monitor.core.frame_latency import (
+    get_default_tracker as _latency_tracker,
+    latency_enabled as _latency_enabled,
+)
 from thermal_monitor.ui.modes.thermal_render_worker import RenderRequest, ThermalRenderWorker
 
 
@@ -58,6 +63,12 @@ class LiveThermalWidget(QWidget):
         self.destroyed.connect(self._render_worker.stop)
         self._render_worker.start()
         self._last_submitted_sequence = -1
+        self._last_hw_sequence: int | None = None
+        self._last_camera_id: str | None = None
+        self._last_acq_mono_ns: int | None = None
+        # seq -> (camera_id, hw_sequence, acq_mono_ns) for display-age
+        # correlation at render completion; bounded by pruning on render.
+        self._pending_meta: dict[int, tuple[str | None, int | None, int | None]] = {}
 
         # Display settings
         self._palette = "temperature"
@@ -109,7 +120,25 @@ class LiveThermalWidget(QWidget):
         if sequence <= self._last_submitted_sequence:
             return
         self._last_submitted_sequence = sequence
-        self._render_worker.submit(RenderRequest(np.asarray(source), sequence, minimum, maximum))
+        descriptor = getattr(frame, "descriptor", None)
+        thermal_meta = getattr(descriptor, "thermal", None)
+        hw_sequence = getattr(thermal_meta, "sequence", None)
+        try:
+            hw_sequence = int(hw_sequence) if hw_sequence is not None else None
+        except (TypeError, ValueError):
+            hw_sequence = None
+        self._last_hw_sequence = hw_sequence
+        camera_id = getattr(descriptor, "camera_id", None)
+        acq_mono = getattr(descriptor, "monotonic_timestamp", None)
+        try:
+            acq_mono_ns = int(float(acq_mono) * 1e9) if acq_mono is not None else None
+        except (TypeError, ValueError):
+            acq_mono_ns = None
+        self._last_camera_id = camera_id
+        self._last_acq_mono_ns = acq_mono_ns
+        if _latency_enabled():
+            self._pending_meta[sequence] = (camera_id, hw_sequence, acq_mono_ns)
+        self._render_worker.submit(RenderRequest(np.asarray(source), sequence, minimum, maximum, hw_sequence, camera_id, acq_mono_ns))
 
     def clear(self) -> None:
         self._temperature_image = None
@@ -162,12 +191,29 @@ class LiveThermalWidget(QWidget):
         if source is not None:
             minimum = None if self._auto_range else self._manual_min
             maximum = None if self._auto_range else self._manual_max
-            self._render_worker.submit(RenderRequest(np.asarray(source), self._last_submitted_sequence + 1, minimum, maximum))
+            sequence = self._last_submitted_sequence + 1
+            if _latency_enabled():
+                self._pending_meta[sequence] = (
+                    self._last_camera_id,
+                    self._last_hw_sequence,
+                    self._last_acq_mono_ns,
+                )
+            self._render_worker.submit(RenderRequest(np.asarray(source), sequence, minimum, maximum, self._last_hw_sequence, self._last_camera_id, self._last_acq_mono_ns))
 
     @pyqtSlot(object, object, float, float, int, object, object)
     def _on_rendered(self, image: QImage, temperature: np.ndarray, minimum: float, maximum: float, sequence: int, thumbnail: QImage, rgb: np.ndarray) -> None:
         self._display_image = image
         self._display_array = rgb
+        if _latency_enabled():
+            meta = self._pending_meta.pop(sequence, None)
+            # Prune superseded entries: delivery is ordered, so anything at
+            # or below the rendered sequence can never complete later.
+            for old in [s for s in self._pending_meta if s <= sequence]:
+                del self._pending_meta[old]
+            if meta is not None and meta[0] is not None:
+                _latency_tracker().note_displayed(
+                    meta[0], sequence, meta[1], meta[2], time.perf_counter_ns()
+                )
         self.range_changed.emit(minimum, maximum)
         self.rendered_frame.emit(image, thumbnail)
         self._temperature_image = temperature

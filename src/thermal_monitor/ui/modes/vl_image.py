@@ -9,11 +9,17 @@ thread; this widget only paints the latest QImage.
 
 from __future__ import annotations
 
+import time
+
 import numpy as np
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage, QPainter, QFont
 from PyQt6.QtWidgets import QWidget
 
+from thermal_monitor.core.frame_latency import (
+    get_default_tracker as _latency_tracker,
+    latency_enabled as _latency_enabled,
+)
 from thermal_monitor.ui.modes.vl_render_worker import VlRenderRequest, VlRenderWorker
 
 
@@ -33,6 +39,8 @@ class VlImageWidget(QWidget):
         self._worker.render_error.connect(self.render_error.emit)
         self.destroyed.connect(self._worker.stop)
         self._worker.start()
+        # seq -> (camera_id, hw_sequence, acq_mono_ns), bounded by pruning.
+        self._pending_meta: dict[int, tuple[str | None, int | None, int | None]] = {}
         self.setMinimumSize(320, 240)
 
     def set_frame(
@@ -40,6 +48,8 @@ class VlImageWidget(QWidget):
         yuyv: np.ndarray | None,
         sequence: int,
         hw_sequence: "int | None" = None,
+        camera_id: str | None = None,
+        acq_mono_ns: int | None = None,
     ) -> None:
         """Submit a VL plane for display (latest-wins; stale dropped).
 
@@ -52,13 +62,23 @@ class VlImageWidget(QWidget):
             return
         self._has_vl = True
         owned = np.ascontiguousarray(yuyv, dtype=np.uint8).copy()
-        self._worker.submit(VlRenderRequest(yuyv=owned, sequence=sequence, hw_sequence=hw_sequence))
+        if _latency_enabled():
+            self._pending_meta[sequence] = (camera_id, hw_sequence, acq_mono_ns)
+        self._worker.submit(VlRenderRequest(yuyv=owned, sequence=sequence, hw_sequence=hw_sequence, camera_id=camera_id, acq_mono_ns=acq_mono_ns))
 
     @pyqtSlot(object, int, object)
     def _on_rendered(self, image: QImage, sequence: int, hw_sequence: "int | None") -> None:
         self._display_image = image
         self._sequence = sequence
         self._hw_sequence = hw_sequence
+        if _latency_enabled():
+            meta = self._pending_meta.pop(sequence, None)
+            for old in [s for s in self._pending_meta if s <= sequence]:
+                del self._pending_meta[old]
+            if meta is not None and meta[0] is not None:
+                _latency_tracker().note_displayed(
+                    meta[0] + "#vl", sequence, meta[1], meta[2], time.perf_counter_ns()
+                )
         self.update()
 
     def clear(self) -> None:

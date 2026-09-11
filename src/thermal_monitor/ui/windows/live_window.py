@@ -8,6 +8,7 @@ Unavailable cameras show a clear "NOT AVAILABLE" state.
 
 from __future__ import annotations
 
+import time
 from enum import Enum
 from typing import Optional
 
@@ -30,6 +31,10 @@ from PyQt6.QtWidgets import (
 import numpy as np
 
 from thermal_monitor.core.models import AnalysisConfig, TemperatureUnit
+from thermal_monitor.core.frame_latency import (
+    get_default_tracker as _latency_tracker,
+    latency_enabled as _latency_enabled,
+)
 from thermal_monitor.processing import ProcessingResult
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.mode import ModeService
@@ -182,6 +187,13 @@ class LiveCameraTile(QWidget):
 
         self._latest_result = result
         self._frames_received += 1
+        if _latency_enabled():
+            _latency_tracker().note_stage(
+                result.frame.descriptor.camera_id,
+                result.frame.descriptor.sequence,
+                "ui_received",
+                time.perf_counter_ns(),
+            )
 
         # CRITICAL: copy the temperature buffer before retaining any display
         # data, so we never share memory with the consumer's mutable result.
@@ -202,7 +214,17 @@ class LiveCameraTile(QWidget):
                 if frame is not None and frame.descriptor.visible.sequence is not None
                 else frame.descriptor.sequence
             )
-            self._vl_widget.set_frame(visible, frame.descriptor.sequence, vl_sequence)
+            try:
+                vl_acq_ns = int(float(frame.descriptor.monotonic_timestamp) * 1e9)
+            except (TypeError, ValueError):
+                vl_acq_ns = None
+            self._vl_widget.set_frame(
+                visible,
+                frame.descriptor.sequence,
+                vl_sequence,
+                camera_id=frame.descriptor.camera_id,
+                acq_mono_ns=vl_acq_ns,
+            )
 
         self._latest_sequence = frame.descriptor.sequence
         self._update_display(result)
