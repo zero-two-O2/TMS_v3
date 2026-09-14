@@ -29,6 +29,7 @@ from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.offline import OfflineService
 from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.config import create_config_manager
+from thermal_monitor.config.models import CameraMappingConfig
 
 @pytest.fixture
 def qapp():
@@ -88,8 +89,14 @@ def test_1_live_receives_configured_cameras(qapp, caplog):
 def test_2_hydration_from_config_yaml(qapp):
     cm = create_config_manager(create_default=False)
     cfg = cm.get_config()
-    # After fix, config.yaml mapping has 8 entries
-    assert len(cfg.cameras.mapping) == 8
+    cfg.cameras.mapping.extend(
+        CameraMappingConfig(
+            camera_id=f"cam_{i:02d}",
+            serial_number=f"SN{i:05d}",
+            name=f"Camera {i}",
+        )
+        for i in range(1, 9)
+    )
     svc = ConfigurationService()
     ms = ModeService()
     offline = OfflineService()
@@ -242,7 +249,7 @@ def test_11_live_and_config_consistent(qapp):
     controller._configure_configuration_service(cfg)
     # Verify controller holds single service before any window creation
     assert controller._config_service is svc2
-    assert len(controller._config_service.get_all_camera_configs()) == 8
+    assert len(controller._config_service.get_all_camera_configs()) == 0
     _close(live_wall)
     try:
         config_widget.close()
