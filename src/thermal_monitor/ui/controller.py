@@ -212,7 +212,6 @@ class AppController(QObject):
                     # Respect enabled flag from mapping; CameraConfig.enabled defaults True
                     if not entry.enabled:
                         # Recreate with enabled=False (CameraConfig is frozen)
-                        from thermal_monitor.core.models import CameraConfig
                         cfg = CameraConfig(
                             identity=cfg.identity,
                             name=cfg.name,
@@ -241,7 +240,6 @@ class AppController(QObject):
                             )
                     else:
                         if entry.target_fps is not None:
-                            from thermal_monitor.core.models import CameraConfig
                             meta = dict(cfg.metadata) if cfg.metadata else {}
                             meta["target_fps"] = entry.target_fps
                             cfg = CameraConfig(

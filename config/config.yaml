@@ -46,39 +46,7 @@ cameras:
     ip_mode: auto
   startup:
     acquire_timeout_s: 10.0
-  mapping:
-    - camera_id: cam_01
-      serial_number: SN00001
-      enabled: true
-      name: Camera 1
-    - camera_id: cam_02
-      serial_number: SN00002
-      enabled: true
-      name: Camera 2
-    - camera_id: cam_03
-      serial_number: SN00003
-      enabled: true
-      name: Camera 3
-    - camera_id: cam_04
-      serial_number: SN00004
-      enabled: true
-      name: Camera 4
-    - camera_id: cam_05
-      serial_number: SN00005
-      enabled: true
-      name: Camera 5
-    - camera_id: cam_06
-      serial_number: SN00006
-      enabled: true
-      name: Camera 6
-    - camera_id: cam_07
-      serial_number: SN00007
-      enabled: true
-      name: Camera 7
-    - camera_id: cam_08
-      serial_number: SN00008
-      enabled: true
-      name: Camera 8
+  mapping: []
 system:
   max_cameras: 8
   auto_save_config: true
@@ -175,7 +143,7 @@ logging:
   max_size_mb: 20
   backup_count: 5
 ui:
-  theme: industrial_light
+  theme: industrial_dark
   colors:
     primary: '#2E7D32'
     primary_hover: '#388E3C'
