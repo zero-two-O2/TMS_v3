@@ -183,6 +183,89 @@ class AppController(QObject):
             )
             self._config_service.set_camera_config(camera_config)
 
+        # Hydrate ConfigurationService.camera_configs from config.cameras.mapping
+        # This is the single source for fixed camera positions 1-8. The mapping
+        # order defines position assignment; no second loader may exist.
+        try:
+            mapping = getattr(config.cameras, "mapping", []) or []
+            logger.info("CONFIG SERVICE HYDRATION: config_path=%s exists=%s mapping_count=%d config_service_id=%s", self._config_manager.config_path if self._config_manager else "unknown", self._config_manager.config_path.exists() if self._config_manager and hasattr(self._config_manager, "config_path") else "?", len(mapping), hex(id(self._config_service)))
+            if self._config_manager and hasattr(self._config_manager, "config_path"):
+                tmp_path = self._config_manager.config_path.with_suffix(self._config_manager.config_path.suffix + ".tmp")
+                logger.info("CONFIG SERVICE HYDRATION: tmp_path=%s exists=%s", tmp_path, tmp_path.exists())
+            for idx, entry in enumerate(mapping):
+                try:
+                    # entry is CameraMappingConfig: camera_id, serial_number, enabled, name, target_fps
+                    identity = self._config_service.create_camera_identity(
+                        camera_id=entry.camera_id,
+                        serial_number=entry.serial_number,
+                        model="",
+                        vendor="",
+                        firmware="",
+                        user_name=entry.name or "",
+                    )
+                    cfg = self._config_service.create_camera_config(
+                        identity=identity,
+                        name=entry.name or entry.camera_id,
+                        thermal_enabled=True,
+                        visible_enabled=False,
+                    )
+                    # Respect enabled flag from mapping; CameraConfig.enabled defaults True
+                    if not entry.enabled:
+                        # Recreate with enabled=False (CameraConfig is frozen)
+                        from thermal_monitor.core.models import CameraConfig
+                        cfg = CameraConfig(
+                            identity=cfg.identity,
+                            name=cfg.name,
+                            description=cfg.description,
+                            enabled=False,
+                            thermal_enabled=cfg.thermal_enabled,
+                            visible_enabled=cfg.visible_enabled,
+                            ptz_config=cfg.ptz_config,
+                            tags=cfg.tags,
+                            metadata=dict(cfg.metadata) if cfg.metadata else {},
+                        )
+                        # Preserve target_fps hint in metadata if present
+                        if entry.target_fps is not None:
+                            meta = dict(cfg.metadata) if cfg.metadata else {}
+                            meta["target_fps"] = entry.target_fps
+                            cfg = CameraConfig(
+                                identity=cfg.identity,
+                                name=cfg.name,
+                                description=cfg.description,
+                                enabled=cfg.enabled,
+                                thermal_enabled=cfg.thermal_enabled,
+                                visible_enabled=cfg.visible_enabled,
+                                ptz_config=cfg.ptz_config,
+                                tags=cfg.tags,
+                                metadata=meta,
+                            )
+                    else:
+                        if entry.target_fps is not None:
+                            from thermal_monitor.core.models import CameraConfig
+                            meta = dict(cfg.metadata) if cfg.metadata else {}
+                            meta["target_fps"] = entry.target_fps
+                            cfg = CameraConfig(
+                                identity=cfg.identity,
+                                name=cfg.name,
+                                description=cfg.description,
+                                enabled=cfg.enabled,
+                                thermal_enabled=cfg.thermal_enabled,
+                                visible_enabled=cfg.visible_enabled,
+                                ptz_config=cfg.ptz_config,
+                                tags=cfg.tags,
+                                metadata=meta,
+                            )
+                    self._config_service.set_camera_config(cfg)
+                    logger.info("  MAPPING CAM %d: id=%r serial=%r name=%r enabled=%r thermal_enabled=%r position=%d", idx + 1, entry.camera_id, entry.serial_number, entry.name, entry.enabled, cfg.thermal_enabled, idx + 1)
+                except Exception as exc:
+                    logger.exception("Failed to hydrate mapping entry %d (%r): %s", idx, entry, exc)
+            total_after = len(self._config_service.get_all_camera_configs())
+            logger.info("CONFIG SERVICE HYDRATION COMPLETE: total_camera_configs=%d", total_after)
+            for i, c in enumerate(self._config_service.get_all_camera_configs()):
+                logger.info("  SERVICE CAM %d: id=%r name=%r serial=%r enabled=%r thermal_enabled=%r", i + 1, c.identity.camera_id, getattr(c, "name", ""), getattr(c.identity, "serial_number", ""), getattr(c, "enabled", "?"), getattr(c, "thermal_enabled", "?"))
+        except Exception as exc:
+            logger.exception("CONFIG SERVICE HYDRATION FAILED: %s", exc)
+
     def _configure_database(self, db_config) -> None:
         """Configure Database with DatabaseConfig."""
         from thermal_monitor.storage.database import Database, DatabaseConfig
@@ -220,6 +303,7 @@ class AppController(QObject):
     def _create_live_window(self) -> LiveWindow:
         """Create the live window."""
         if self._live_window is None:
+            logger.info("CONTROLLER CREATE LIVE: config_service id=%s count=%d config_path=%s", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()), self._config_manager.config_path if self._config_manager else "unknown")
             self._live_window = LiveWindow(
                 mode_service=self._mode_service,
                 config_service=self._config_service,
@@ -228,12 +312,16 @@ class AppController(QObject):
                 theme_manager=self._theme_manager,
                 config_manager=self._config_manager,
             )
+            logger.info("CONTROLLER LIVE CREATED: live_window config_service id=%s same_as_controller=%s", hex(id(self._live_window._config_service)), hex(id(self._live_window._config_service)) == hex(id(self._config_service)))
             self._live_window.destroyed.connect(self._on_live_window_destroyed)
+        else:
+            logger.info("CONTROLLER REUSE LIVE: config_service id=%s count=%d", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()))
         return self._live_window
 
     def _create_config_window(self) -> ConfigurationWindow:
         """Create the configuration window."""
         if self._config_window is None:
+            logger.info("CONTROLLER CREATE CONFIG: config_service id=%s count=%d config_path=%s", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()), self._config_manager.config_path if self._config_manager else "unknown")
             self._config_window = ConfigurationWindow(
                 config_service=self._config_service,
                 mode_service=self._mode_service,
@@ -242,7 +330,10 @@ class AppController(QObject):
                 theme_manager=self._theme_manager,
                 config_manager=self._config_manager,
             )
+            logger.info("CONTROLLER CONFIG CREATED: config_window config_service id=%s same_as_controller=%s live_same=%s", hex(id(self._config_window._config_service)), hex(id(self._config_window._config_service)) == hex(id(self._config_service)), hex(id(self._config_window._config_service)) == hex(id(self._live_window._config_service)) if self._live_window else "no_live")
             self._config_window.destroyed.connect(self._on_config_window_destroyed)
+        else:
+            logger.info("CONTROLLER REUSE CONFIG: config_service id=%s count=%d", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()))
         return self._config_window
 
     def _create_offline_window(self) -> OfflineWindow:

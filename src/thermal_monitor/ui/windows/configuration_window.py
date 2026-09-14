@@ -253,9 +253,26 @@ class ConfigurationModeWidget(QWidget):
         self._dirty_camera_configs: set[str] = set()
         self._pending_camera_switch: str | None = None
 
+        # Diagnostics: log config service identity and counts for comparison with Live
+        try:
+            svc_id = hex(id(self._config_service))
+            total = len(self._config_service.get_all_camera_configs())
+            logger.info("CONFIG MODE WIDGET CREATED: config_service id=%s total_cameras=%d", svc_id, total)
+            if self._config_manager is not None and hasattr(self._config_manager, "config_path"):
+                logger.info("CONFIG MODE config_path=%s exists=%s", self._config_manager.config_path, self._config_manager.config_path.exists())
+        except Exception:
+            pass
+
         self._setup_ui()
         self._connect_signals()
         self._load_initial_data()
+        try:
+            total2 = len(self._config_service.get_all_camera_configs())
+            logger.info("CONFIG MODE INITIAL LOAD: config_service id=%s total_cameras=%d", hex(id(self._config_service)), total2)
+            for idx, c in enumerate(self._config_service.get_all_camera_configs()):
+                logger.info("  CONFIG CAM %d: id=%r name=%r serial=%r enabled=%r thermal_enabled=%r", idx + 1, c.identity.camera_id, getattr(c, "name", ""), getattr(c.identity, "serial_number", ""), getattr(c, "enabled", "?"), getattr(c, "thermal_enabled", "?"))
+        except Exception:
+            pass
 
     def _setup_ui(self) -> None:
         """Set up the industrial workstation-style UI layout."""
@@ -1470,6 +1487,16 @@ class ConfigurationWindow(QMainWindow):
 
         self.setWindowTitle("Thermal Monitoring System V3 - Configuration Mode")
         self._apply_window_config()
+
+        # Diagnostics: compare service identity with Live
+        try:
+            logger.info("CONFIG WINDOW CREATED: config_service id=%s (%s)", hex(id(config_service)), type(config_service).__name__)
+            if config_manager is not None and hasattr(config_manager, "config_path"):
+                logger.info("CONFIG WINDOW config_path=%s exists=%s", config_manager.config_path, config_manager.config_path.exists())
+                tmp = config_manager.config_path.with_suffix(config_manager.config_path.suffix + ".tmp")
+                logger.info("CONFIG WINDOW tmp_path=%s exists=%s", tmp, tmp.exists())
+        except Exception:
+            pass
 
         # Central widget
         self._config_widget = ConfigurationModeWidget(
