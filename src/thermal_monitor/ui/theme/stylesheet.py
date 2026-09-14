@@ -111,7 +111,7 @@ QLabel[status="ok"], QLabel[status="active"] {{
     color: {defn.camera_connected};
     font-weight: bold;
 }}
-QLabel[status="connecting"] {{
+QLabel[status="connecting"], QLabel[status="ready"] {{
     color: {defn.info};
     font-weight: bold;
 }}
@@ -121,7 +121,7 @@ QLabel[status="unavailable"], QLabel[status="inactive"] {{
     font-weight: bold;
 }}
 QLabel[status="degraded"], QLabel[status="warning"],
-QLabel[status="starting"] {{
+QLabel[status="starting"], QLabel[status="reconnecting"] {{
     color: {defn.camera_warning};
     font-weight: bold;
 }}
@@ -136,7 +136,13 @@ QWidget[role="tile"] {{
     border: {bw}px solid {defn.border};
     border-radius: {m.radius_md}px;
 }}
+QWidget[role="tile"][tileState="ready"] {{
+    border-color: {defn.border_strong};
+}}
 QWidget[role="tile"][tileState="starting"] {{
+    border-color: {defn.camera_warning};
+}}
+QWidget[role="tile"][tileState="reconnecting"] {{
     border-color: {defn.camera_warning};
 }}
 QWidget[role="tile"][tileState="running"] {{

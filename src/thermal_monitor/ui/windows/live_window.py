@@ -26,7 +26,7 @@ import time
 from enum import Enum
 from typing import Optional
 
-from PyQt6.QtCore import QEvent, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, Qt, QThread, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -35,12 +35,18 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QScrollArea,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QStackedWidget,
     QStatusBar,
 )
 
 import numpy as np
+
+import threading
+
+import logging
+from pathlib import Path
 
 from thermal_monitor.core.models import AnalysisConfig, TemperatureUnit
 from thermal_monitor.core.frame_latency import (
@@ -59,7 +65,10 @@ from thermal_monitor.ui.theme.properties import (
     set_role,
     set_status,
     set_tile_state,
+    set_variant,
 )
+
+logger = logging.getLogger(__name__)
 
 
 _UNIT_SYMBOLS = {
@@ -72,26 +81,32 @@ _UNIT_SYMBOLS = {
 class LiveTileState(str, Enum):
     """High-level lifecycle state shown on a live camera tile."""
 
+    NOT_AVAILABLE = "not_available"
+    READY = "ready"
     STARTING = "starting"
+    RECONNECTING = "reconnecting"
     RUNNING = "running"
     ERROR = "error"
-    NOT_AVAILABLE = "not_available"
 
 
 #: LiveTileState mapped onto the global status vocabulary (the central
 #: stylesheet resolves the actual colors for every theme).
 _STATE_STATUS = {
+    LiveTileState.NOT_AVAILABLE: "not_available",
+    LiveTileState.READY: "ready",
     LiveTileState.STARTING: "starting",
+    LiveTileState.RECONNECTING: "reconnecting",
     LiveTileState.RUNNING: "running",
     LiveTileState.ERROR: "error",
-    LiveTileState.NOT_AVAILABLE: "not_available",
 }
 
 _STATE_TEXT = {
+    LiveTileState.NOT_AVAILABLE: "NOT AVAILABLE",
+    LiveTileState.READY: "READY",
     LiveTileState.STARTING: "STARTING",
+    LiveTileState.RECONNECTING: "RECONNECTING",
     LiveTileState.RUNNING: "LIVE",
     LiveTileState.ERROR: "ERROR",
-    LiveTileState.NOT_AVAILABLE: "NOT AVAILABLE",
 }
 
 
@@ -172,7 +187,9 @@ class LiveCameraTile(QWidget):
         self._last_fps: float | None = None
         self._last_temp: float | None = None
         self._last_temp_unit: str = "C"
-        self._state = LiveTileState.NOT_AVAILABLE if camera_id is None else LiveTileState.STARTING
+        self._ir_live = False
+        self._vl_live = False
+        self._state = LiveTileState.NOT_AVAILABLE if camera_id is None else LiveTileState.READY
         self._error_message: str | None = None
 
         self._setup_ui()
@@ -335,10 +352,12 @@ class LiveCameraTile(QWidget):
         if not self._theme:
             return ""
         color_map = {
+            LiveTileState.NOT_AVAILABLE: self._theme.disabled_text(),
+            LiveTileState.READY: self._theme.info(),
             LiveTileState.STARTING: self._theme.warning(),
+            LiveTileState.RECONNECTING: self._theme.warning(),
             LiveTileState.RUNNING: self._theme.success(),
             LiveTileState.ERROR: self._theme.error(),
-            LiveTileState.NOT_AVAILABLE: self._theme.disabled_text(),
         }
         color = color_map.get(state, self._theme.text())
         return f"color: {color}; font-weight: bold;"
@@ -401,6 +420,7 @@ class LiveCameraTile(QWidget):
         temperature_image = result.temperature_image
         if temperature_image is not None:
             temperature_image = np.asarray(temperature_image).copy()
+            self._ir_live = True
 
         frame = result.frame
         self._image_widget.set_frame(temperature_image, frame)
@@ -410,6 +430,8 @@ class LiveCameraTile(QWidget):
         # to their existing bounded latest-wins workers; stale sequences
         # are dropped inside the feed widgets, never queued here.
         visible = frame.payload.visible if frame is not None else None
+        if visible is not None:
+            self._vl_live = True
         try:
             sequence = int(frame.descriptor.sequence)
         except (TypeError, ValueError):
@@ -439,7 +461,7 @@ class LiveCameraTile(QWidget):
             self._last_age_ms = None
         self._update_display(result)
 
-        if self._state is LiveTileState.STARTING:
+        if self._state in (LiveTileState.STARTING, LiveTileState.RECONNECTING):
             self.set_state(LiveTileState.RUNNING)
 
     @pyqtSlot(str)
@@ -477,10 +499,16 @@ class LiveCameraTile(QWidget):
             # Keep the last images and the camera identity visible; the
             # reason travels in tooltips so the fixed row never grows.
             pass
+        elif state == LiveTileState.RECONNECTING:
+            # Driver-level reconnect: keep the last images and identity
+            # visible; the next result flips the tile back to LIVE.
+            pass
         elif state == LiveTileState.NOT_AVAILABLE:
             self._image_widget.clear()
             self._vl_widget.clear()
             self._last_temp = None
+            self._ir_live = False
+            self._vl_live = False
             self._fps_label.setText("-- fps")
             self._sequence_label.setText("--")
             self._sequence_label.setToolTip("")
@@ -514,6 +542,8 @@ class LiveCameraTile(QWidget):
         self._last_age_ms = None
         self._last_fps = None
         self._last_temp = None
+        self._ir_live = False
+        self._vl_live = False
         self._error_message = None
         self._image_widget.clear()
         self._vl_widget.clear()
@@ -538,12 +568,12 @@ class LiveCameraTile(QWidget):
         return "both"
 
     def set_camera(self, camera_id: str, name: str, serial: str) -> None:
-        """Assign a camera to this fixed position slot."""
+        """Assign a camera to this fixed position slot (READY, not started)."""
         self._camera_id = camera_id
         self._name = name
         self._serial = serial
         self._refresh_identity()
-        self.set_state(LiveTileState.STARTING)
+        self.set_state(LiveTileState.READY)
 
     def clear_camera(self) -> None:
         """Remove camera assignment; the tile keeps its position and size."""
@@ -617,6 +647,8 @@ class LiveStatsPanel(QWidget):
         system_layout.setSpacing(2)
         self._sys_cams = QLabel("Configured: --   Running: --   Failed: --")
         set_role(self._sys_cams, "mono")
+        self._sys_feeds = QLabel("IR: --/8   VL: --/8")
+        set_role(self._sys_feeds, "mono")
         self._sys_fps = QLabel("Total FPS: --")
         set_role(self._sys_fps, "mono")
         self._sys_note = QLabel("")
@@ -628,6 +660,7 @@ class LiveStatsPanel(QWidget):
         set_role(self._sys_wall, "muted")
         for widget in (
             self._sys_cams,
+            self._sys_feeds,
             self._sys_fps,
             self._sys_note,
             self._sys_temps,
@@ -682,8 +715,13 @@ class LiveStatsPanel(QWidget):
         """Refresh the aggregate page from a wall snapshot (text only)."""
         self._sys_cams.setText(
             f"Configured: {snapshot.get('configured', '--')}   "
+            f"Connected: {snapshot.get('connected', '--')}   "
             f"Running: {snapshot.get('running', '--')}   "
-            f"Failed: {snapshot.get('failed', '--')}"
+            f"Failed: {snapshot.get('failed', '--')}   "
+            f"Reconnecting: {snapshot.get('reconnecting', '--')}"
+        )
+        self._sys_feeds.setText(
+            f"IR: {snapshot.get('ir', '--')}/8   VL: {snapshot.get('vl', '--')}/8"
         )
         total_fps = snapshot.get("total_fps")
         self._sys_fps.setText(
@@ -720,6 +758,38 @@ class LiveStatsPanel(QWidget):
         self._pages.setCurrentIndex(0)
 
 
+class _StartupWorker(QThread):
+    """Blocking camera startup off the GUI thread (one acquisition path).
+
+    Runs only ``CameraRuntimeService.start_camera`` — the single,
+    potentially slow network/blocking step — for each queued camera and
+    reports back per camera. Observer attach and all widget updates stay
+    on the GUI thread. The runtime service serializes internally, so the
+    sequential loop here never contends with GUI-thread readers.
+    """
+
+    camera_started = pyqtSignal(str)
+    camera_failed = pyqtSignal(str, str)
+
+    def __init__(self, runtime_service, configs: list, abort: threading.Event, parent=None) -> None:
+        super().__init__(parent)
+        self._runtime_service = runtime_service
+        self._configs = list(configs)
+        self._abort = abort
+
+    def run(self) -> None:
+        for config in self._configs:
+            if self._abort.is_set():
+                break
+            camera_id = config.identity.camera_id
+            try:
+                if not self._runtime_service.is_camera_running(camera_id):
+                    self._runtime_service.start_camera(config)
+                self.camera_started.emit(camera_id)
+            except Exception as exc:
+                self.camera_failed.emit(camera_id, str(exc))
+
+
 class LiveModeWidget(QWidget):
     """Live monitoring mode with a 3x3 wall.
 
@@ -736,6 +806,7 @@ class LiveModeWidget(QWidget):
         runtime_service: CameraRuntimeService | None = None,
         stats_interval_ms: int = 1000,
         theme_manager: Optional[ThemeManager] = None,
+        config_manager=None,
     ) -> None:
         super().__init__()
         self._mode_service = mode_service
@@ -744,11 +815,16 @@ class LiveModeWidget(QWidget):
         self._legacy_observer = observer_service
         self._stats_interval_ms = stats_interval_ms
         self._theme = theme_manager
+        self._config_manager = config_manager
 
         self._tiles: list[LiveCameraTile] = []  # Fixed 8 tiles, index = slot
         self._camera_to_slot: dict[str, int] = {}  # camera_id -> slot index
         self._stats_panel: LiveStatsPanel | None = None  # Permanent ninth cell
         self._hovered: tuple[int | None, str | None] | None = None
+        self._connected_observers: set[str] = set()  # camera_ids with wired signals
+        self._startup_worker: _StartupWorker | None = None
+        self._startup_abort = threading.Event()
+        self._startup_token = 0
         self._stats_timer: QTimer | None = None
         self._last_poll: dict[str, tuple[int, float]] = {}
 
@@ -760,7 +836,7 @@ class LiveModeWidget(QWidget):
         layout.setContentsMargins(WALL_OUTER_MARGIN, WALL_OUTER_MARGIN, WALL_OUTER_MARGIN, WALL_OUTER_MARGIN)
         layout.setSpacing(2)
 
-        # Compact header bar: wall identity plus overall summary only.
+        # Compact header bar: wall identity, connect control, summary.
         self._header_bar = QWidget()
         header = QHBoxLayout(self._header_bar)
         header.setContentsMargins(0, 0, 0, 0)
@@ -768,6 +844,10 @@ class LiveModeWidget(QWidget):
         title = QLabel("LIVE  •  8 CAMERAS  •  16 FEEDS")
         set_role(title, "strong")
         header.addWidget(title)
+        self._connect_button = QPushButton("CONNECT & START ALL")
+        set_variant(self._connect_button, "primary")
+        self._connect_button.clicked.connect(self._on_connect_clicked)
+        header.addWidget(self._connect_button)
         header.addStretch(1)
         self._summary_label = QLabel("Initializing...")
         set_role(self._summary_label, "muted")
@@ -891,6 +971,51 @@ class LiveModeWidget(QWidget):
         except RuntimeError:
             pass
 
+    def _tile_counts(self) -> dict:
+        """Single source for wall counts from existing tile/runtime state."""
+        configured = len(self._config_service.get_all_camera_configs())
+        assigned = len(self._camera_to_slot)
+        running = sum(1 for t in self._tiles if t.state is LiveTileState.RUNNING)
+        failed = sum(1 for t in self._tiles if t.state is LiveTileState.ERROR)
+        reconnecting = sum(1 for t in self._tiles if t.state is LiveTileState.RECONNECTING)
+        if self._runtime_service is not None and assigned:
+            try:
+                connected = sum(
+                    1 for camera_id in self._camera_to_slot
+                    if self._runtime_service.is_camera_running(camera_id)
+                )
+            except Exception:
+                connected = running
+        else:
+            connected = running
+        fps_values = [t._last_fps for t in self._tiles if t._last_fps is not None]
+        return {
+            "configured": configured,
+            "assigned": assigned,
+            "extra": max(0, configured - FIXED_CAMERA_SLOTS),
+            "connected": connected,
+            "running": running,
+            "failed": failed,
+            "reconnecting": reconnecting,
+            "total_fps": sum(fps_values) if fps_values else None,
+            "temps": [(t.slot_index + 1, t.temp_text()) for t in self._tiles],
+            "ir": sum(1 for t in self._tiles if t._ir_live),
+            "vl": sum(1 for t in self._tiles if t._vl_live),
+        }
+
+    def _header_status_word(self, counts: dict) -> str:
+        if counts["configured"] == 0:
+            return ""
+        if counts["failed"] > 0:
+            return "DEGRADED"
+        if counts.get("reconnecting", 0) > 0:
+            return "DEGRADED"
+        if counts["running"] > 0:
+            return "NORMAL"
+        if any(t.state is LiveTileState.STARTING for t in self._tiles):
+            return "STARTING"
+        return "READY"
+
     @pyqtSlot(object, object)
     def _on_tile_hover(self, slot: int | None, feed: str | None) -> None:
         """Switch the statistics panel between hover and system views."""
@@ -907,37 +1032,22 @@ class LiveModeWidget(QWidget):
 
     def _system_snapshot(self) -> dict:
         """Aggregate wall state from existing tile data (text-ready)."""
-        configured = len(self._config_service.get_all_camera_configs())
-        running = sum(
-            1 for t in self._tiles
-            if t.state is not LiveTileState.ERROR and t.state is not LiveTileState.NOT_AVAILABLE
-        )
-        failed = sum(1 for t in self._tiles if t.state is LiveTileState.ERROR)
-        fps_values = [t._last_fps for t in self._tiles if t._last_fps is not None]
-        return {
-            "configured": configured,
-            "extra": max(0, configured - FIXED_CAMERA_SLOTS),
-            "running": running,
-            "failed": failed,
-            "total_fps": sum(fps_values) if fps_values else None,
-            "temps": [(t.slot_index + 1, t.temp_text()) for t in self._tiles],
-        }
+        return self._tile_counts()
 
     def _refresh_header_and_panel(self) -> None:
         """Refresh the compact header and statistics panel (text only)."""
         snapshot = self._system_snapshot()
         configured = snapshot["configured"]
-        running = snapshot["running"]
-        failed = snapshot["failed"]
+        assigned = snapshot["assigned"]
+        connected = snapshot["connected"]
         total_fps = snapshot["total_fps"]
         fps_text = f"{total_fps:.0f}" if total_fps is not None else "--"
         if configured == 0:
             self._set_summary("No cameras configured")
         else:
-            status = "NORMAL" if failed == 0 else "DEGRADED"
             self._set_summary(
-                f"Connected: {running}/{configured}   "
-                f"FPS: ~{fps_text}   Status: {status}"
+                f"Connected: {connected}/{assigned}   "
+                f"FPS: ~{fps_text}   Status: {self._header_status_word(snapshot)}"
             )
         if self._stats_panel is not None:
             self._stats_panel.update_system(snapshot)
@@ -960,18 +1070,30 @@ class LiveModeWidget(QWidget):
         return "both"
 
     def on_mode_activated(self) -> None:
-        """Start live monitoring when Live mode becomes active."""
+        """Show the wall with assigned cameras in READY state.
+
+        Entering Live mode never starts acquisition by itself; the
+        operator starts cameras explicitly with CONNECT & START ALL.
+        This keeps entry fast and start idempotent (no auto + button
+        duplicate observers).
+        """
+        logger.info("LIVE MODE ACTIVATED: config_service id=%s total_before=%d", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()))
         self._assign_cameras_to_slots()
-        if self._runtime_service is not None:
-            self._start_via_runtime()
-        elif self._legacy_observer is not None:
-            self._start_via_legacy()
-        else:
-            self._set_summary("Runtime service not available")
+        self._update_summary()
+        self._update_button_state()
         self._start_stats_timer()
+        # Post-activation summary for diagnostics
+        try:
+            counts = self._tile_counts()
+            logger.info("LIVE MODE POST-ACTIVATED: configured=%d assigned=%d eligible=%d button=%r summary=%r", counts["configured"], counts["assigned"], len(self._eligible_configs()), self._connect_button.text(), self._summary_label.text())
+        except Exception:
+            pass
 
     def on_mode_deactivated(self) -> None:
         """Stop live monitoring and tear down when leaving Live mode."""
+        self._startup_token += 1
+        self._startup_abort.set()
+        self._take_down_startup_worker()
         self._stop_stats_timer()
         self._disconnect_all_tiles()
         if self._runtime_service is not None:
@@ -990,13 +1112,118 @@ class LiveModeWidget(QWidget):
         for tile in self._tiles:
             tile.clear_camera()
         self._camera_to_slot.clear()
+        self._connected_observers.clear()
         self._hovered = None
         if self._stats_panel is not None:
             self._stats_panel.show_system()
         self._set_summary("Stopped")
+        self._update_button_state()
+
+    def _log_live_config_diagnostics(self) -> None:
+        """INFO-level trace of the exact configuration path Live sees.
+
+        Logs:
+          - ConfigurationService object identity
+          - configuration file/path being used
+          - total camera configurations returned
+          - each camera id / name / serial / enabled / thermal_enabled / position
+          - counts before vs after filtering
+          - why each rejected camera was excluded
+        No side effects on assignment, filtering or rendering.
+        """
+        try:
+            svc = self._config_service
+            svc_id = hex(id(svc))
+            # Resolve config path from injected manager or via default discovery
+            config_path_str = "unknown"
+            config_exists = "unknown"
+            tmp_exists = "unknown"
+            try:
+                if self._config_manager is not None and hasattr(self._config_manager, "config_path"):
+                    p = Path(self._config_manager.config_path)
+                    config_path_str = str(p)
+                    config_exists = str(p.exists())
+                    tmp = p.with_suffix(p.suffix + ".tmp")
+                    tmp_exists = f"{tmp} exists={tmp.exists()}"
+                    # Also check .bak
+                    bak = p.with_suffix(p.suffix + ".bak")
+                    if bak.exists():
+                        tmp_exists += f" bak_exists={bak.exists()}"
+                else:
+                    config_path_str = "unknown (no config_manager injected; single loader is AppController)"
+                    config_exists = "unknown"
+                    tmp_exists = "unknown"
+            except Exception as exc:
+                config_path_str = f"resolve_failed: {exc}"
+
+            all_configs = svc.get_all_camera_configs()
+            total = len(all_configs)
+            logger.info("LIVE CONFIG: config_service=%s (%s) config_path=%s exists=%s tmp=%s total cameras=%d", svc_id, type(svc).__name__, config_path_str, config_exists, tmp_exists, total)
+            if total == 0:
+                logger.info("LIVE CONFIG: no camera configurations returned by ConfigurationService.get_all_camera_configs()")
+            for idx, cfg in enumerate(all_configs):
+                try:
+                    cid = getattr(cfg.identity, "camera_id", "?") if hasattr(cfg, "identity") else getattr(cfg, "camera_id", "?")
+                except Exception:
+                    cid = "?"
+                try:
+                    name = getattr(cfg, "name", "")
+                except Exception:
+                    name = ""
+                try:
+                    serial = getattr(cfg.identity, "serial_number", "") if hasattr(cfg, "identity") else getattr(cfg, "serial", "")
+                except Exception:
+                    serial = ""
+                # actual semantics: enabled / thermal_enabled defaults must be explicit
+                has_enabled = hasattr(cfg, "enabled")
+                has_thermal = hasattr(cfg, "thermal_enabled")
+                try:
+                    enabled_val = cfg.enabled if has_enabled else "MISSING"
+                except Exception as e:
+                    enabled_val = f"ERROR:{e}"
+                try:
+                    thermal_val = cfg.thermal_enabled if has_thermal else "MISSING"
+                except Exception as e:
+                    thermal_val = f"ERROR:{e}"
+                pos = idx + 1
+                logger.info("  CAM %d: id=%r name=%r serial=%r enabled=%r (has_attr=%s) thermal_enabled=%r (has_attr=%s) position=%d", pos, cid, name, serial, enabled_val, has_enabled, thermal_val, has_thermal, pos)
+                # Rejection reason
+                if has_enabled and not enabled_val:
+                    logger.info("    -> REJECTED: enabled=False")
+                elif has_thermal and not thermal_val:
+                    logger.info("    -> REJECTED: thermal_enabled=False")
+                elif not has_enabled:
+                    logger.info("    -> NOTE: enabled attribute missing, would default to True if using getattr fallback (hides problem)")
+                elif not has_thermal:
+                    logger.info("    -> NOTE: thermal_enabled attribute missing, would default to True if using getattr fallback (hides problem)")
+
+            # Counts before vs after filtering
+            enabled_list = self._enabled_cameras()
+            enabled_count = len(enabled_list)
+            # thermal_enabled specific count
+            thermal_count = 0
+            for c in all_configs:
+                try:
+                    if getattr(c, "thermal_enabled", True):
+                        thermal_count += 1
+                except Exception:
+                    thermal_count += 0
+            eligible = enabled_list[:FIXED_CAMERA_SLOTS]
+            logger.info("LIVE COUNTS: get_all_camera_configs()=%d enabled=%d thermal_enabled=%d eligible(FIXED_CAMERA_SLOTS=%d)=%d", total, enabled_count, thermal_count, FIXED_CAMERA_SLOTS, len(eligible))
+            logger.info("LIVE ELIGIBLE CAMERAS = %d", len(eligible))
+            if len(eligible) == 0 and total > 0:
+                logger.info("LIVE DIAGNOSIS: %d configured cameras but zero eligible -> check enabled/thermal_enabled filtering", total)
+            if len(eligible) == 0 and total == 0:
+                logger.info("LIVE DIAGNOSIS: zero configured cameras -> check config file path, ConfigurationService hydration, mapping hydration, database, or lifecycle timing")
+            # Also log camera assignment order
+            for slot, cfg in enumerate(eligible):
+                logger.info("  ASSIGNMENT: slot %d (POS %d) <- camera_id=%r name=%r serial=%r", slot, slot + 1, cfg.identity.camera_id, getattr(cfg, "name", ""), getattr(cfg.identity, "serial_number", ""))
+        except Exception as exc:
+            logger.exception("LIVE CONFIG diagnostics failed: %s", exc)
 
     def _assign_cameras_to_slots(self) -> None:
         """Assign enabled cameras to fixed slots (1-8) in config order."""
+        self._log_live_config_diagnostics()
         enabled_cameras = self._enabled_cameras()
 
         # Clear all tiles first
@@ -1010,56 +1237,230 @@ class LiveModeWidget(QWidget):
             tile = self._tiles[slot_index]
             tile.set_camera(camera_id, config.name or camera_id, config.identity.serial_number)
             self._camera_to_slot[camera_id] = slot_index
+        # Log post-assignment tile states
+        try:
+            assigned = len(self._camera_to_slot)
+            logger.info("LIVE ASSIGNMENT COMPLETE: assigned=%d tiles=%d", assigned, len(self._tiles))
+            for idx, tile in enumerate(self._tiles):
+                logger.info("  TILE %d: camera_id=%r name=%r state=%s", idx + 1, tile.camera_id, getattr(tile, "_name", ""), tile.state.value if hasattr(tile, "state") else "?")
+        except Exception:
+            pass
 
     def _enabled_cameras(self) -> list:
         result = []
         for config in self._config_service.get_all_camera_configs():
-            if getattr(config, "enabled", True) and getattr(config, "thermal_enabled", True):
+            # Do not hide missing attributes with getattr default; check actual semantics
+            # CameraConfig defines enabled and thermal_enabled; if missing, treat as misconfiguration
+            has_enabled = hasattr(config, "enabled")
+            has_thermal = hasattr(config, "thermal_enabled")
+            enabled = config.enabled if has_enabled else True
+            thermal = config.thermal_enabled if has_thermal else True
+            if not has_enabled or not has_thermal:
+                logger.warning("LIVE FILTER: camera %r missing enabled/thermal_enabled attributes (has_enabled=%s has_thermal=%s) -> using defaults enabled=%s thermal=%s", getattr(getattr(config, "identity", None), "camera_id", "?"), has_enabled, has_thermal, enabled, thermal)
+            if enabled and thermal:
                 result.append(config)
         return result
 
-    def _start_via_runtime(self) -> None:
-        """Start every enabled camera through the lifecycle service."""
-        enabled = self._enabled_cameras()
-        if not enabled:
-            self._set_summary("Cameras: 0  Running: 0  Failed: 0")
+    def _eligible_configs(self) -> list:
+        """Configured Live cameras in fixed position order (max 8)."""
+        return self._enabled_cameras()[:FIXED_CAMERA_SLOTS]
+
+    def _wants_startup(self) -> bool:
+        """True while a startup worker owned by this session is active."""
+        worker = self._startup_worker
+        return worker is not None and worker.isRunning()
+
+    @pyqtSlot()
+    def _on_connect_clicked(self) -> None:
+        """CONNECT & START ALL / RETRY FAILED: start eligible cameras.
+
+        Returns immediately; the blocking runtime calls run in a worker
+        thread and each camera attaches on the GUI thread as it completes.
+        Pressing again only queues cameras that are not running, so healthy
+        cameras are never reconnected and observers are never duplicated.
+        """
+        if self._startup_worker is not None:
+            # A startup session is already owned by this wall (running or
+            # just created): ignore the repeat click so a second worker
+            # can never duplicate cameras, observers or connections.
             return
+        if self._runtime_service is None:
+            if self._legacy_observer is not None:
+                self._start_via_legacy()
+            return
+        eligible = self._eligible_configs()
+        if not eligible:
+            return
+        desired = {config.identity.camera_id: slot for slot, config in enumerate(eligible)}
+        if desired != self._camera_to_slot:
+            self._assign_cameras_to_slots()
+        queue = [
+            config for config in eligible
+            if not self._is_camera_live(config.identity.camera_id)
+        ]
+        if not queue:
+            self._update_button_state()
+            return
+        for config in queue:
+            self._tiles[self._camera_to_slot[config.identity.camera_id]].set_state(
+                LiveTileState.STARTING
+            )
+        self._startup_abort = threading.Event()
+        worker = _StartupWorker(self._runtime_service, queue, self._startup_abort, parent=self)
+        token = self._startup_token
+        worker.camera_started.connect(
+            lambda camera_id, _token=token: self._on_startup_camera_ready(camera_id, _token)
+        )
+        worker.camera_failed.connect(
+            lambda camera_id, message, _token=token: self._on_startup_camera_failed(
+                camera_id, message, _token
+            )
+        )
+        worker.finished.connect(lambda _token=token: self._on_startup_finished(_token))
+        self._startup_worker = worker
+        # Show STARTING synchronously: QThread.isRunning() lags behind
+        # start(), so the button must not depend on the thread state here.
+        # Progress/finish handlers reconcile it via _update_button_state.
+        self._connect_button.setText("STARTING...")
+        self._connect_button.setEnabled(False)
+        self._refresh_header_and_panel()
+        worker.start()
 
-        failed: list[str] = []
-        for config in enabled[:FIXED_CAMERA_SLOTS]:
-            camera_id = config.identity.camera_id
-            slot = self._camera_to_slot.get(camera_id)
-            if slot is None:
-                continue
+    def _is_camera_live(self, camera_id: str) -> bool:
+        """True when the camera runs and its observer signals are wired."""
+        if self._runtime_service is None:
+            return False
+        try:
+            running = self._runtime_service.is_camera_running(camera_id)
+        except Exception:
+            return False
+        return bool(running) and camera_id in self._connected_observers
 
-            tile = self._tiles[slot]
-
+    def _take_down_startup_worker(self) -> None:
+        worker, self._startup_worker = self._startup_worker, None
+        if worker is not None:
             try:
-                if not self._runtime_service.is_camera_running(camera_id):
-                    self._runtime_service.start_camera(config)
-            except Exception as exc:
-                tile.set_error(str(exc))
-                failed.append(camera_id)
-                continue
-
-            analysis = self._config_service.get_analysis_config(camera_id)
-            if analysis is None:
-                analysis = AnalysisConfig(camera_id=camera_id)
-
+                worker.camera_started.disconnect()
+            except Exception:
+                pass
             try:
-                observer = self._runtime_service.start_observer(
-                    camera_id, analysis_config=analysis
-                )
-            except Exception as exc:
-                tile.set_error(str(exc))
-                failed.append(camera_id)
-                continue
+                worker.camera_failed.disconnect()
+            except Exception:
+                pass
+            try:
+                worker.finished.disconnect()
+            except Exception:
+                pass
+            try:
+                worker.deleteLater()
+            except RuntimeError:
+                pass
 
+    @pyqtSlot(str)
+    def _on_startup_camera_ready(self, camera_id: str, token: int) -> None:
+        """Attach the observer for a started camera (GUI thread, fast)."""
+        if token != self._startup_token or camera_id not in self._camera_to_slot:
+            self._stop_orphan_camera(camera_id)
+            return
+        if camera_id in self._connected_observers:
+            try:
+                if self._runtime_service.is_camera_running(camera_id):
+                    return
+            except Exception:
+                pass
+            self._connected_observers.discard(camera_id)
+        analysis = self._config_service.get_analysis_config(camera_id)
+        if analysis is None:
+            analysis = AnalysisConfig(camera_id=camera_id)
+        try:
+            observer = self._runtime_service.start_observer(
+                camera_id, analysis_config=analysis
+            )
+        except Exception as exc:
+            self._tiles[self._camera_to_slot[camera_id]].set_error(str(exc))
+            self._refresh_header_and_panel()
+            self._update_button_state()
+            return
+        tile = self._tiles[self._camera_to_slot[camera_id]]
+        observer.result_ready.connect(tile.on_result, Qt.ConnectionType.QueuedConnection)
+        observer.error_occurred.connect(tile.on_error, Qt.ConnectionType.QueuedConnection)
+        self._connected_observers.add(camera_id)
+        if tile.state is not LiveTileState.ERROR:
             tile.set_state(LiveTileState.STARTING)
-            observer.result_ready.connect(tile.on_result, Qt.ConnectionType.QueuedConnection)
-            observer.error_occurred.connect(tile.on_error, Qt.ConnectionType.QueuedConnection)
+        self._refresh_header_and_panel()
 
-        self._update_summary(failed)
+    @pyqtSlot(str, str)
+    def _on_startup_camera_failed(self, camera_id: str, message: str, token: int) -> None:
+        """Mark one camera failed; every other tile is untouched."""
+        if token != self._startup_token or camera_id not in self._camera_to_slot:
+            return
+        self._tiles[self._camera_to_slot[camera_id]].set_error(message or "Camera failed")
+        self._refresh_header_and_panel()
+        self._update_button_state()
+
+    @pyqtSlot()
+    def _on_startup_finished(self, token: int) -> None:
+        """Finalize the button once every queued camera has reported."""
+        self._take_down_startup_worker()
+        if token != self._startup_token:
+            return
+        self._refresh_header_and_panel()
+        self._update_button_state()
+
+    def _stop_orphan_camera(self, camera_id: str) -> None:
+        """Tear down a camera that started after Live mode was left."""
+        if self._runtime_service is None:
+            return
+        try:
+            if self._runtime_service.is_camera_running(camera_id):
+                self._runtime_service.stop_camera(camera_id)
+        except Exception:
+            pass
+
+    def _update_button_state(self) -> None:
+        """Reflect startup progress on the connect button (text only)."""
+        button = self._connect_button
+        if self._startup_worker is not None:
+            # Owned startup session (running, queued, or finishing):
+            # isRunning() alone would miss the just-created window.
+            button.setText("STARTING...")
+            button.setEnabled(False)
+            return
+        eligible = self._eligible_configs()
+        all_configs = self._config_service.get_all_camera_configs()
+        configured = len(all_configs)
+        if self._runtime_service is None and self._legacy_observer is None:
+            button.setText("NO CAMERAS")
+            button.setEnabled(False)
+            button.setToolTip("No runtime service available")
+            return
+        if configured == 0:
+            button.setText("NO CAMERAS")
+            button.setEnabled(False)
+            button.setToolTip("No cameras configured (get_all_camera_configs()==0)")
+            return
+        if not eligible:
+            # Configured cameras exist but none eligible (disabled or thermal_enabled=False)
+            button.setText("NO ELIGIBLE CAMERAS")
+            button.setEnabled(False)
+            # Build explanation for tooltip
+            disabled = sum(1 for c in all_configs if not getattr(c, "enabled", True))
+            no_thermal = sum(1 for c in all_configs if not getattr(c, "thermal_enabled", True))
+            button.setToolTip(f"Configured={configured} but eligible=0 (disabled={disabled} thermal_disabled={no_thermal})")
+            logger.info("LIVE BUTTON: NO ELIGIBLE CAMERAS configured=%d disabled=%d thermal_disabled=%d", configured, disabled, no_thermal)
+            return
+        button.setToolTip("")
+        counts = self._tile_counts()
+        if counts["failed"] > 0:
+            button.setText("RETRY FAILED")
+            button.setEnabled(True)
+            return
+        if counts["assigned"] > 0 and counts["connected"] >= counts["assigned"]:
+            button.setText("ALL CAMERAS LIVE")
+            button.setEnabled(False)
+            return
+        button.setText("CONNECT & START ALL")
+        button.setEnabled(True)
 
     def _start_via_legacy(self) -> None:
         """Start the legacy injected ObserverService (display-only tests)."""
@@ -1113,28 +1514,19 @@ class LiveModeWidget(QWidget):
         return enabled[0] if enabled else None
 
     def _update_summary(self, failed: list[str] | None = None) -> None:
-        configured = len(self._config_service.get_all_camera_configs())
-        running = sum(
-            1 for t in self._tiles if t.state is not LiveTileState.ERROR and t.state is not LiveTileState.NOT_AVAILABLE
-        )
-        if failed is None:
-            failed_count = sum(
-                1 for t in self._tiles if t.state is LiveTileState.ERROR
-            )
-        else:
-            failed_count = len(failed)
-        total_values = [t._last_fps for t in self._tiles if t._last_fps is not None]
-        fps_text = f"{sum(total_values):.0f}" if total_values else "--"
-        if configured == 0:
+        """Refresh the header summary and statistics panel (text only)."""
+        counts = self._tile_counts()
+        total_fps = counts["total_fps"]
+        fps_text = f"{total_fps:.0f}" if total_fps is not None else "--"
+        if counts["configured"] == 0:
             self._set_summary("No cameras configured")
         else:
-            status = "NORMAL" if failed_count == 0 else "DEGRADED"
             self._set_summary(
-                f"Connected: {running}/{configured}   "
-                f"FPS: ~{fps_text}   Status: {status}"
+                f"Connected: {counts['connected']}/{counts['assigned']}   "
+                f"FPS: ~{fps_text}   Status: {self._header_status_word(counts)}"
             )
         if self._stats_panel is not None:
-            self._stats_panel.update_system(self._system_snapshot())
+            self._stats_panel.update_system(counts)
 
     def _set_summary(self, text: str) -> None:
         self._summary_label.setText(text)
@@ -1158,12 +1550,33 @@ class LiveModeWidget(QWidget):
                 observer = self._runtime_service.observer_service(camera_id)
                 obs_stats = observer.stats() if observer is not None else None
                 cam_stats = self._runtime_service.camera_stats(camera_id)
+                self._apply_worker_state(tile, cam_stats)
                 self._apply_stats(tile, camera_id, obs_stats, cam_stats)
         elif self._legacy_observer is not None:
             for tile in self._tiles:
                 if tile.camera_id:
                     self._apply_stats(tile, tile.camera_id, self._legacy_observer.stats(), None)
         self._refresh_header_and_panel()
+
+    def _apply_worker_state(self, tile, cam_stats) -> None:
+        """Reflect a driver-level reconnect on the tile (read-only).
+
+        Compares against the ``"reconnecting"`` value without importing
+        the acquisition domain, so the wall never depends on acquisition
+        internals. The acquisition worker keeps reconnecting by itself;
+        the tile only mirrors the state and keeps its last images.
+        """
+        worker_state = getattr(cam_stats, "state", None) if cam_stats is not None else None
+        if worker_state == "reconnecting":
+            if tile.state in (
+                LiveTileState.RUNNING,
+                LiveTileState.STARTING,
+                LiveTileState.RECONNECTING,
+            ):
+                tile.set_state(LiveTileState.RECONNECTING)
+        elif tile.state is LiveTileState.RECONNECTING:
+            # Worker recovered; the next result flips the tile back to LIVE.
+            tile.set_state(LiveTileState.STARTING)
 
     def _apply_stats(self, tile, camera_id, obs_stats, cam_stats) -> None:
         fps = None
@@ -1221,13 +1634,20 @@ class LiveWindow(QMainWindow):
         self._apply_window_config()
 
         # Central widget
+        logger.info("LIVE WINDOW CREATED: config_service id=%s (%s) runtime_service id=%s", hex(id(config_service)), type(config_service).__name__, hex(id(runtime_service)) if runtime_service else "None")
+        if config_manager is not None and hasattr(config_manager, "config_path"):
+            logger.info("LIVE WINDOW config_path=%s exists=%s", config_manager.config_path, Path(config_manager.config_path).exists() if hasattr(config_manager, "config_path") else "?")
+            tmp = Path(config_manager.config_path).with_suffix(Path(config_manager.config_path).suffix + ".tmp")
+            logger.info("LIVE WINDOW tmp_path=%s exists=%s", tmp, tmp.exists())
         self._live_widget = LiveModeWidget(
             mode_service=mode_service,
             config_service=config_service,
             observer_service=observer_service,
             runtime_service=runtime_service,
             theme_manager=theme_manager,
+            config_manager=config_manager,
         )
+        logger.info("LIVE MODE WIDGET CREATED: widget_config_service id=%s same_as_window=%s", hex(id(self._live_widget._config_service)), hex(id(config_service)) == hex(id(self._live_widget._config_service)))
         self.setCentralWidget(self._live_widget)
         self._setup_settings_menu()
 

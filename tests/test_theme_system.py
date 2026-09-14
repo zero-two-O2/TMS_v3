@@ -90,9 +90,9 @@ class TestThemeRegistry:
         for role in ("title", "subtitle", "status", "muted", "mono", "readout"):
             assert role in LABEL_ROLES
         for status in ("connected", "disconnected", "error", "starting",
-                       "running", "not_available"):
+                       "reconnecting", "ready", "running", "not_available"):
             assert status in STATUS_VALUES
-        assert set(TILE_STATES) == {"starting", "running", "error", "not_available"}
+        assert set(TILE_STATES) == {"ready", "starting", "reconnecting", "running", "error", "not_available"}
 
 
 class TestStylesheetGeneration:
@@ -118,8 +118,8 @@ class TestStylesheetGeneration:
             assert f'[variant="{variant}"]' in sheet, variant
         for role in LABEL_ROLES:
             assert f'[role="{role}"]' in sheet, role
-        for status in ("connected", "disconnected", "connecting", "error",
-                       "warning", "starting", "running", "not_available"):
+        for status in ("connected", "disconnected", "connecting", "ready",
+                        "error", "warning", "starting", "reconnecting", "running", "not_available"):
             assert f'[status="{status}"]' in sheet, status
         for state in TILE_STATES:
             assert f'[tileState="{state}"]' in sheet, state

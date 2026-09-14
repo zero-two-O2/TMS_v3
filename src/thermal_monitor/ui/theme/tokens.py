@@ -55,8 +55,9 @@ LABEL_ROLES = (
 )
 
 #: Connection / lifecycle / alarm states for indicators and status labels.
-#: Camera tiles reuse the same vocabulary (starting/running/error/
-#: not_available) so one selector set covers tiles, headers, and labels.
+#: Camera tiles reuse the same vocabulary (ready/starting/reconnecting/
+#: running/error/not_available) so one selector set covers tiles, headers,
+#: and labels.
 STATUS_VALUES = (
     "connected",
     "connecting",
@@ -64,7 +65,9 @@ STATUS_VALUES = (
     "acquiring",
     "running",
     "live",
+    "ready",
     "starting",
+    "reconnecting",
     "error",
     "degraded",
     "warning",
@@ -78,7 +81,9 @@ STATUS_VALUES = (
 
 #: Live-camera tile frame states (QWidget[role="tile"][tileState="..."]).
 TILE_STATES = (
+    "ready",
     "starting",
+    "reconnecting",
     "running",
     "error",
     "not_available",
