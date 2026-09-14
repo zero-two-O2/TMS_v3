@@ -46,7 +46,63 @@ cameras:
     ip_mode: auto
   startup:
     acquire_timeout_s: 10.0
-  mapping: []
+  mapping:
+  - camera_id: cam_HB25080009
+    serial_number: HB25080009
+    enabled: true
+    name: cam_HB25080009
+    target_fps: null
+    ip_address: 192.168.42.11
+    device_identifier: gvcp:HB25080009
+  - camera_id: cam_HB25100004
+    serial_number: HB25100004
+    enabled: true
+    name: cam_HB25100004
+    target_fps: null
+    ip_address: 192.168.42.12
+    device_identifier: gvcp:HB25100004
+  - camera_id: cam_HB25080011
+    serial_number: HB25080011
+    enabled: true
+    name: cam_HB25080011
+    target_fps: null
+    ip_address: 192.168.42.13
+    device_identifier: gvcp:HB25080011
+  - camera_id: cam_HB25100002
+    serial_number: HB25100002
+    enabled: true
+    name: cam_HB25100002
+    target_fps: null
+    ip_address: 192.168.42.14
+    device_identifier: gvcp:HB25100002
+  - camera_id: cam_HB25080001
+    serial_number: HB25080001
+    enabled: true
+    name: cam_HB25080001
+    target_fps: null
+    ip_address: 192.168.42.15
+    device_identifier: gvcp:HB25080001
+  - camera_id: cam_HB25080001
+    serial_number: HB25080001
+    enabled: true
+    name: cam_HB25080001
+    target_fps: null
+    ip_address: 192.168.42.16
+    device_identifier: gvcp:HB25080001
+  - camera_id: cam_HB25100007
+    serial_number: HB25100007
+    enabled: true
+    name: cam_HB25100007
+    target_fps: null
+    ip_address: 192.168.42.17
+    device_identifier: gvcp:HB25100007
+  - camera_id: cam_HB25100001
+    serial_number: HB25100001
+    enabled: true
+    name: cam_HB25100001
+    target_fps: null
+    ip_address: 192.168.42.18
+    device_identifier: gvcp:HB25100001
 system:
   max_cameras: 8
   auto_save_config: true
@@ -143,7 +199,7 @@ logging:
   max_size_mb: 20
   backup_count: 5
 ui:
-  theme: industrial_dark
+  theme: industrial_light
   colors:
     primary: '#2E7D32'
     primary_hover: '#388E3C'
