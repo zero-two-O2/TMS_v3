@@ -16,6 +16,7 @@ touches the TV46L driver, HALCON, the acquisition loop, or the recording writer.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any
 
@@ -59,6 +60,7 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
     """
 
     result_ready = pyqtSignal(object) if _HAS_PYQT6 else None  # ProcessingResult
+    latest_result_ready = pyqtSignal() if _HAS_PYQT6 else None
     error_occurred = pyqtSignal(str) if _HAS_PYQT6 else None
 
     def __init__(self) -> None:
@@ -67,6 +69,9 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
         self._camera_id: str | None = None
         self._ring = None
         self._consumer: ProcessingConsumer | None = None
+        self._latest_result = None
+        self._latest_result_lock = threading.Lock()
+        self._latest_result_pending = False
 
     @property
     def camera_id(self) -> str | None:
@@ -92,6 +97,7 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
         visible_width: int | None = None,
         visible_height: int | None = None,
         visible_dtype: np.dtype | None = None,
+        latest_wins: bool = False,
     ) -> None:
         """Start observing one camera.
 
@@ -129,6 +135,7 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
                 visible_width=visible_width,
                 visible_height=visible_height,
                 visible_dtype=visible_dtype,
+                latest_wins=latest_wins,
             )
         except Exception as exc:
             self._camera_id = None
@@ -159,6 +166,9 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
                 consumer.close()
             except Exception:
                 pass
+        with self._latest_result_lock:
+            self._latest_result = None
+            self._latest_result_pending = False
         if ring is not None:
             try:
                 ring.close()
@@ -177,6 +187,14 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
             return None
         return self._consumer.stats()
 
+    def take_latest_result(self):
+        """Return the newest result coalesced since the last GUI dispatch."""
+        with self._latest_result_lock:
+            result = self._latest_result
+            self._latest_result = None
+            self._latest_result_pending = False
+            return result
+
     def _forward_result(self, result: ProcessingResult) -> None:
         """Called from the consumer thread; forwards to the GUI thread."""
         try:
@@ -189,6 +207,13 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
                 )
             if _HAS_PYQT6 and self.result_ready:
                 self.result_ready.emit(result)
+            if _HAS_PYQT6 and self.latest_result_ready:
+                with self._latest_result_lock:
+                    self._latest_result = result
+                    if self._latest_result_pending:
+                        return
+                    self._latest_result_pending = True
+                self.latest_result_ready.emit()
         except Exception:
             logger.exception("Failed to forward ProcessingResult to GUI")
 

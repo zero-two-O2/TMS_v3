@@ -25,6 +25,7 @@ changing the worker.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -486,13 +487,28 @@ class AcquisitionWorker:
     def _try_reconnect(self) -> bool:
         attempt = 1
         while not self._stop_event.is_set():
-            if not self._sleep_reconnect(attempt):
+            if attempt > 1 and not self._sleep_reconnect(attempt):
                 return False
+            recovery_started = time.perf_counter()
             try:
-                logger.info("Camera %s: reopening framegrabber (attempt %d)", self._camera_id, attempt)
-                self._source.reopen()
+                logger.info(
+                    "RECOVERY camera=%s pid=%s attempt=%d started",
+                    self._camera_id,
+                    os.getpid(),
+                    attempt,
+                )
+                reopen = getattr(self._source, "reopen_fast", self._source.reopen)
+                reopen()
             except Exception as exc:
                 self._record_error(exc)
+                logger.warning(
+                    "RECOVERY camera=%s pid=%s attempt=%d failed elapsed_ms=%.1f error=%s",
+                    self._camera_id,
+                    os.getpid(),
+                    attempt,
+                    (time.perf_counter() - recovery_started) * 1000.0,
+                    exc,
+                )
                 attempt += 1
                 if attempt > self._config.max_reconnect_attempts:
                     self._set_state(AcquisitionState.FAILED)
@@ -503,11 +519,14 @@ class AcquisitionWorker:
                 self._reconnect_count += 1
                 self._prev_packet_stats = None
             self._set_state(AcquisitionState.CONTROL_READY)
-            if not self._validate_camera():
-                self._set_state(AcquisitionState.RECONNECTING)
-                attempt += 1
-                continue
             self._set_state(AcquisitionState.STREAMING)
+            logger.info(
+                "RECOVERY camera=%s pid=%s attempt=%d complete elapsed_ms=%.1f",
+                self._camera_id,
+                os.getpid(),
+                attempt,
+                (time.perf_counter() - recovery_started) * 1000.0,
+            )
             return True
         return False
 

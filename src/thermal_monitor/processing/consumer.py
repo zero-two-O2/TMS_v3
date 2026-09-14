@@ -109,6 +109,7 @@ class ProcessingConsumer:
         integrity_diag: bool | None = None,
         integrity_sample_every: int | None = None,
         integrity_registry: FrameIntegrityRegistry | None = None,
+        latest_wins: bool = False,
     ) -> None:
         self._camera_id = camera_id
         self._consumer_name = consumer_name
@@ -116,6 +117,7 @@ class ProcessingConsumer:
         self._pipeline = pipeline
         self._alarm_evaluator = alarm_evaluator
         self._result_callback = result_callback
+        self._latest_wins = latest_wins
         # Frame-integrity triage (diagnostic-only, off unless enabled).
         self._integrity_diag = integrity_diag_enabled(integrity_diag)
         self._integrity_every = _resolve_sample_every(integrity_sample_every)
@@ -240,16 +242,26 @@ class ProcessingConsumer:
         expected_sequence = 0
         first_frame = True
         seen_overwritten = 0
+        latest_processed_sequence = -1
 
         while not self._stop_event.is_set():
             try:
-                pinned_view = self._consumer.next_pinned(expected_sequence)
+                pinned_view = (
+                    self._consumer.latest_pinned()
+                    if self._latest_wins
+                    else self._consumer.next_pinned(expected_sequence)
+                )
 
                 if pinned_view is not None:
-                    frame = pinned_view.view.copy()
-                    self._mark_latency(frame, "consumed")
                     try:
+                        sequence = pinned_view.view.descriptor.sequence
+                        if self._latest_wins and sequence <= latest_processed_sequence:
+                            time.sleep(0.001)
+                            continue
+                        frame = pinned_view.view.copy()
+                        self._mark_latency(frame, "consumed")
                         self._process_frame(frame)
+                        latest_processed_sequence = sequence
                     finally:
                         try:
                             self._consumer.release(pinned_view)
@@ -468,6 +480,7 @@ def create_processing_consumer(
     visible_width: int | None = None,
     visible_height: int | None = None,
     visible_dtype: np.dtype | None = None,
+    latest_wins: bool = False,
     integrity_diag: bool | None = None,
     integrity_sample_every: int | None = None,
     integrity_registry: FrameIntegrityRegistry | None = None,
@@ -547,6 +560,7 @@ def create_processing_consumer(
         integrity_diag=integrity_diag,
         integrity_sample_every=integrity_sample_every,
         integrity_registry=integrity_registry,
+        latest_wins=latest_wins,
     )
 
     return ring, consumer

@@ -260,10 +260,10 @@ class CustomTV46LDriver:
         """Idempotent teardown: stop stream, release CCP, close sockets."""
         self._teardown()
 
-    def _teardown(self) -> None:
+    def _teardown(self, *, send_stop_commands: bool = True) -> None:
         self._streaming = False
         self._stop_heartbeat()
-        if self._gvcp is not None:
+        if self._gvcp is not None and send_stop_commands:
             try:
                 # Best-effort stream stop (WO command register; failures ignored).
                 self._gvcp.write_register(REG_ACQUISITION_START, 0)
@@ -294,6 +294,17 @@ class CustomTV46LDriver:
         """Close and reopen the stream (worker recovery action). A valid
         first frame is required before the handle is usable again."""
         self._teardown()
+        self.connect()
+        self.grab(FIRST_FRAME_TIMEOUT_MS)
+
+    def reopen_fast(self) -> None:
+        """Reconnect after stream loss without waiting on a dead GVCP socket.
+
+        Recovery already detected that the stream/control path is unresponsive.
+        Closing the receiver and control socket directly avoids serial
+        acquisition-stop/CCP-release waits before creating fresh sockets.
+        """
+        self._teardown(send_stop_commands=False)
         self.connect()
         self.grab(FIRST_FRAME_TIMEOUT_MS)
 

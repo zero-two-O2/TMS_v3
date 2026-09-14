@@ -82,13 +82,13 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.15
     device_identifier: gvcp:HB25080001
-  - camera_id: cam_HB25080001
-    serial_number: HB25080001
+  - camera_id: cam_HB25100010
+    serial_number: HB25100010
     enabled: true
-    name: cam_HB25080001
+    name: cam_HB25100010
     target_fps: null
     ip_address: 192.168.42.16
-    device_identifier: gvcp:HB25080001
+    device_identifier: gvcp:HB25100010
   - camera_id: cam_HB25100007
     serial_number: HB25100007
     enabled: true

@@ -35,7 +35,7 @@ class VlImageWidget(QWidget):
         self._hw_sequence: int | None = None
         self._has_vl = False
         self._worker = VlRenderWorker(parent=self)
-        self._worker.rendered.connect(self._on_rendered)
+        self._worker.latest_ready.connect(self._on_latest_ready)
         self._worker.render_error.connect(self.render_error.emit)
         self.destroyed.connect(self._worker.stop)
         self._worker.start()
@@ -80,6 +80,12 @@ class VlImageWidget(QWidget):
                     meta[0] + "#vl", sequence, meta[1], meta[2], time.perf_counter_ns()
                 )
         self.update()
+
+    @pyqtSlot()
+    def _on_latest_ready(self) -> None:
+        output = self._worker.take_latest_output()
+        if output is not None:
+            self._on_rendered(*output)
 
     def clear(self) -> None:
         self._display_image = None

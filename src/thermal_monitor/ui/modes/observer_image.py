@@ -58,7 +58,7 @@ class LiveThermalWidget(QWidget):
         self._display_image: QImage | None = None
         self._display_array: np.ndarray | None = None
         self._render_worker = ThermalRenderWorker(parent=self)
-        self._render_worker.rendered.connect(self._on_rendered)
+        self._render_worker.latest_ready.connect(self._on_latest_ready)
         self._render_worker.render_error.connect(self._on_render_error)
         self.destroyed.connect(self._render_worker.stop)
         self._render_worker.start()
@@ -218,6 +218,12 @@ class LiveThermalWidget(QWidget):
         self.rendered_frame.emit(image, thumbnail)
         self._temperature_image = temperature
         self.update()
+
+    @pyqtSlot()
+    def _on_latest_ready(self) -> None:
+        output = self._render_worker.take_latest_output()
+        if output is not None:
+            self._on_rendered(*output)
 
     @pyqtSlot(str)
     def _on_render_error(self, message: str) -> None:

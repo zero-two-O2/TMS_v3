@@ -44,6 +44,7 @@ from thermal_monitor.camera.model import (
     CameraIdentity as DriverCameraIdentity,
 )
 from thermal_monitor.camera.shm import create_frame_publisher_for_camera
+from thermal_monitor.camera.process import CameraProcessHandle, CameraProcessManager
 from thermal_monitor.core.models import AnalysisConfig, CameraConfig
 from thermal_monitor.core.shm import SharedMemoryRingBuffer
 from thermal_monitor.processing import CalibrationProvider
@@ -173,8 +174,9 @@ class CameraRuntime:
     driver_config: DriverCameraConfig
     ring: SharedMemoryRingBuffer
     publisher: FramePublisher
-    worker: AcquisitionWorker
-    source: FrameSource
+    worker: AcquisitionWorker | CameraProcessHandle
+    source: FrameSource | None
+    process_handle: CameraProcessHandle | None = None
     observer: ObserverService | None = None
     recording: RecordingConsumer | None = None
     recording_ring: SharedMemoryRingBuffer | None = None
@@ -193,8 +195,9 @@ class CameraRuntimeService:
     ``source_factory`` and a fixed calibration provider; the controller
     itself never knows the difference.
 
-    Serialized startup: ``_lock`` is held for the entire ``start_camera``
-    call, ensuring that camera connections are serialized.
+    Camera startup is serialized per camera. A failed camera must not hold the
+    service lock while it waits for acquisition, because that would stall
+    healthy cameras and their statistics.
     """
 
     def __init__(
@@ -214,12 +217,24 @@ class CameraRuntimeService:
         self._storage_config = storage_config
         self._calibration_config = calibration_config
         self._source_factory = source_factory or self._default_source_factory
+        self._use_camera_processes = source_factory is None
+        self._process_manager = CameraProcessManager(ring_depth=32)
         self._calibration_provider = calibration_provider
         self._ring_depth = 32
         self._acquire_timeout_s = cameras_config.startup.acquire_timeout_s
         self._shutdown_timeout_s = system_config.shutdown_timeout_s
         self._runtimes: dict[str, CameraRuntime] = {}
         self._lock = threading.RLock()
+        self._startup_locks: dict[str, threading.RLock] = {}
+        self._startup_locks_lock = threading.Lock()
+
+    def _camera_start_lock(self, camera_id: str) -> threading.RLock:
+        with self._startup_locks_lock:
+            lock = self._startup_locks.get(camera_id)
+            if lock is None:
+                lock = threading.RLock()
+                self._startup_locks[camera_id] = lock
+            return lock
 
     @property
     def calibration_provider(self) -> CalibrationProvider:
@@ -264,7 +279,7 @@ class CameraRuntimeService:
         if not camera_config.enabled:
             raise CameraRuntimeError(f"Camera {camera_id} is disabled")
 
-        with self._lock:
+        with self._camera_start_lock(camera_id):
             existing = self._runtimes.get(camera_id)
             if existing is not None:
                 if existing.is_alive():
@@ -273,6 +288,39 @@ class CameraRuntimeService:
                 self._stop_runtime_locked(existing, timeout=timeout)
 
             driver_config = build_driver_config(camera_config, self._cameras_config)
+
+            if self._use_camera_processes:
+                try:
+                    handle = self._process_manager.start_camera(
+                        driver_config,
+                        timeout=timeout,
+                    )
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"Camera process startup failed for {camera_id}: {exc}"
+                    ) from exc
+                if not handle.wait_for_state(AcquisitionState.STREAMING, timeout):
+                    handle.stop(timeout=1.0)
+                    raise CameraRuntimeError(
+                        f"Camera process {camera_id} did not reach STREAMING"
+                    )
+                if handle.ring is None:
+                    handle.stop(timeout=1.0)
+                    raise CameraRuntimeError(
+                        f"Camera process {camera_id} has no attached SHM ring"
+                    )
+                runtime = CameraRuntime(
+                    camera_id=camera_id,
+                    driver_config=driver_config,
+                    ring=handle.ring,
+                    publisher=None,
+                    worker=handle,
+                    source=None,
+                    process_handle=handle,
+                )
+                self._runtimes[camera_id] = runtime
+                logger.info("Camera %s: process runtime started", camera_id)
+                return camera_id
 
             # Dual-feed rings always carry the raw VL plane (custom backend).
             try:
@@ -337,12 +385,13 @@ class CameraRuntimeService:
         Safe to call for an unknown or already-stopped camera.
         """
         timeout = self._shutdown_timeout_s if timeout is None else timeout
-        with self._lock:
-            runtime = self._runtimes.get(camera_id)
-            if runtime is None:
-                return
-            self._stop_runtime_locked(runtime, timeout=timeout)
-            self._runtimes.pop(camera_id, None)
+        with self._camera_start_lock(camera_id):
+            with self._lock:
+                runtime = self._runtimes.get(camera_id)
+                if runtime is None:
+                    return
+                self._stop_runtime_locked(runtime, timeout=timeout)
+                self._runtimes.pop(camera_id, None)
 
     def shutdown(self, *, timeout: float | None = None) -> None:
         """Stop every running camera runtime."""
@@ -351,6 +400,7 @@ class CameraRuntimeService:
             for camera_id in list(self._runtimes.keys()):
                 self._stop_runtime_locked(self._runtimes[camera_id], timeout=timeout)
             self._runtimes.clear()
+        self._process_manager.stop_all(timeout=timeout)
 
     def is_camera_running(self, camera_id: str) -> bool:
         with self._lock:
@@ -400,6 +450,25 @@ class CameraRuntimeService:
         from thermal_monitor.camera.tv46_gvcp import PACKET_DELAY_TICKS
 
         with self._lock:
+            runtime = self._require_running(camera_id)
+            if runtime.process_handle is not None:
+                started = time.perf_counter()
+                try:
+                    runtime.process_handle.request("perform_nuc")
+                    stream_config = runtime.process_handle.request(
+                        "verify_stream_config", PACKET_DELAY_TICKS
+                    )
+                    status = runtime.process_handle.request("get_status")
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"NUC failed for camera {camera_id}: {exc}"
+                    ) from exc
+                return {
+                    "camera_id": camera_id,
+                    "nuc_duration_s": time.perf_counter() - started,
+                    "stream_config": dict(stream_config),
+                    "status": dict(status),
+                }
             source = self._require_custom_source(camera_id)
         started = time.perf_counter()
         try:
@@ -439,6 +508,14 @@ class CameraRuntimeService:
         """Hardware-reported focus range in mm for a running camera."""
         op_id = op_id or new_focus_op_id("FOCUS-READ")
         with self._lock:
+            runtime = self._require_running(camera_id)
+            if runtime.process_handle is not None:
+                try:
+                    return tuple(runtime.process_handle.request("get_focus_limits", op_id=op_id))
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"Focus limits failed for camera {camera_id}: {exc}"
+                    ) from exc
             source = self._require_custom_source(camera_id)
             camera_ip = source.camera_ip
         logger.debug(
@@ -455,6 +532,14 @@ class CameraRuntimeService:
         """Current focus distance readback in mm for a running camera."""
         op_id = op_id or new_focus_op_id("FOCUS-READ")
         with self._lock:
+            runtime = self._require_running(camera_id)
+            if runtime.process_handle is not None:
+                try:
+                    return int(runtime.process_handle.request("get_focus_mm", op_id=op_id))
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"Focus readback failed for camera {camera_id}: {exc}"
+                    ) from exc
             source = self._require_custom_source(camera_id)
             camera_ip = source.camera_ip
         logger.debug(
@@ -477,6 +562,18 @@ class CameraRuntimeService:
         """
         op_id = op_id or new_focus_op_id("FOCUS-WRITE")
         with self._lock:
+            runtime = self._require_running(camera_id)
+            if runtime.process_handle is not None:
+                try:
+                    return int(
+                        runtime.process_handle.request(
+                            "set_focus_mm", value_mm, op_id=op_id
+                        )
+                    )
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"Focus failed for camera {camera_id}: {exc}"
+                    ) from exc
             source = self._require_custom_source(camera_id)
             camera_ip = source.camera_ip
         logger.debug(
@@ -513,6 +610,28 @@ class CameraRuntimeService:
         t_start = time.perf_counter()
         logger.info("%s diagnose start cam=%s", op_id, camera_id)
         with self._lock:
+            runtime = self._require_running(camera_id)
+            if runtime.process_handle is not None:
+                try:
+                    limits = runtime.process_handle.request(
+                        "get_focus_limits", op_id=new_focus_op_id("FOCUS-DIAG")
+                    )
+                    current = runtime.process_handle.request(
+                        "get_focus_mm", op_id=new_focus_op_id("FOCUS-DIAG")
+                    )
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"Focus diagnosis failed for camera {camera_id}: {exc}"
+                    ) from exc
+                return {
+                    "op_id": op_id,
+                    "camera_id": camera_id,
+                    "camera_ip": runtime.driver_config.ip_address,
+                    "min": limits[0],
+                    "max": limits[1],
+                    "current": current,
+                    "elapsed_s": time.perf_counter() - t_start,
+                }
             source = self._require_custom_source(camera_id)
             camera_ip = source.camera_ip
         limits = source.get_focus_limits(op_id=op_id)
@@ -542,6 +661,14 @@ class CameraRuntimeService:
     def get_driver_status(self, camera_id: str) -> dict:
         """Receiver counters + stream state for a running custom camera."""
         with self._lock:
+            runtime = self._require_running(camera_id)
+            if runtime.process_handle is not None:
+                try:
+                    return dict(runtime.process_handle.request("get_status"))
+                except Exception as exc:
+                    raise CameraRuntimeError(
+                        f"Driver status failed for camera {camera_id}: {exc}"
+                    ) from exc
             source = self._require_custom_source(camera_id)
         return source.get_status()
 
@@ -553,6 +680,7 @@ class CameraRuntimeService:
         analysis_config: AnalysisConfig | None,
         *,
         calibration_provider: CalibrationProvider | None = None,
+        latest_wins: bool = False,
     ) -> ObserverService:
         """Attach an ObserverService to a running camera's ring.
 
@@ -583,6 +711,7 @@ class CameraRuntimeService:
                     visible_width=vis_w,
                     visible_height=vis_h,
                     visible_dtype=vis_d,
+                    latest_wins=latest_wins,
                 )
             except Exception as exc:
                 raise CameraRuntimeError(
@@ -798,7 +927,10 @@ class CameraRuntimeService:
         self._stop_observer_locked(runtime)
         self._stop_recording_locked(runtime)
         try:
-            runtime.worker.stop(timeout=timeout)
+            if runtime.process_handle is not None:
+                self._process_manager.stop_camera(runtime.camera_id, timeout=timeout)
+            else:
+                runtime.worker.stop(timeout=timeout)
         except Exception:
             logger.exception("Camera %s: error stopping acquisition worker", runtime.camera_id)
         try:

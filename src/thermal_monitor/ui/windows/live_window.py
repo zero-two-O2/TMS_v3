@@ -159,6 +159,7 @@ class LiveCameraTile(QWidget):
     """
 
     hover_changed = pyqtSignal(object, object)
+    cursor_temperature_changed = pyqtSignal(float)
 
     def __init__(
         self,
@@ -173,6 +174,7 @@ class LiveCameraTile(QWidget):
         self._camera_id = camera_id
         self._name = name or (f"CAM {slot_index + 1:02d}" if camera_id else "")
         self._serial = serial
+        self._ip_address = ""
         self._theme = theme_manager
         set_role(self, "tile")
         # Expanding tile: the grid gives every tile an equal share of the
@@ -186,6 +188,7 @@ class LiveCameraTile(QWidget):
         self._last_age_ms: float | None = None
         self._last_fps: float | None = None
         self._last_temp: float | None = None
+        self._cursor_temp: float | None = None
         self._last_temp_unit: str = "C"
         self._ir_live = False
         self._vl_live = False
@@ -293,6 +296,9 @@ class LiveCameraTile(QWidget):
         # can tell IR apart from VL. Events are never consumed here.
         self._image_widget.installEventFilter(self)
         self._vl_widget.installEventFilter(self)
+        self._image_widget.cursor_temperature_changed.connect(
+            self._on_cursor_temperature
+        )
 
     def eventFilter(self, watched, event) -> bool:
         """Map feed enter/leave events onto hover_changed (never consumed)."""
@@ -324,7 +330,7 @@ class LiveCameraTile(QWidget):
         return {
             "slot": self._slot_index,
             "number": number,
-            "name": self._name if self._name else "Not configured",
+            "name": self._ip_address or self._name or "Not configured",
             "pos": number,
             "feed": feed,
             "state_text": _STATE_TEXT[self._state],
@@ -337,9 +343,17 @@ class LiveCameraTile(QWidget):
 
     def temp_text(self) -> str:
         """Last measured temperature readout, or a placeholder."""
-        if self._last_temp is None:
+        temperature = self._cursor_temp if self._cursor_temp is not None else self._last_temp
+        if temperature is None:
             return "--"
-        return f"{self._last_temp:.1f} {self._last_temp_unit}"
+        return f"{temperature:.1f} {self._last_temp_unit}"
+
+    @pyqtSlot(float)
+    def _on_cursor_temperature(self, temperature: float) -> None:
+        """Keep the hovered-camera statistics page in sync with the cursor."""
+        self._cursor_temp = float(temperature) if np.isfinite(temperature) else None
+        self._temp_label.setText(self.temp_text())
+        self.cursor_temperature_changed.emit(temperature)
 
     def _apply_state_style(self) -> None:
         """Reflect the tile state through semantic properties (no QSS here)."""
@@ -389,10 +403,12 @@ class LiveCameraTile(QWidget):
 
     def _refresh_identity(self) -> None:
         """Update the compact identity row without touching feed geometry."""
-        display_name = self._name if self._name else "Not configured"
+        display_name = self._ip_address or self._name or "Not configured"
         self._name_label.setText(display_name)
         if self._camera_id:
-            detail = self._camera_id
+            detail = self._ip_address or self._camera_id
+            if self._ip_address and self._camera_id != self._ip_address:
+                detail = detail + " / " + self._camera_id
             if self._serial:
                 detail = detail + " / " + self._serial
             self._name_label.setToolTip(detail)
@@ -496,9 +512,16 @@ class LiveCameraTile(QWidget):
             self._sequence_label.setToolTip(message)
 
         if state == LiveTileState.ERROR:
-            # Keep the last images and the camera identity visible; the
-            # reason travels in tooltips so the fixed row never grows.
-            pass
+            # Failed cameras keep their fixed identity but never show stale data.
+            self._image_widget.clear()
+            self._vl_widget.clear()
+            self._ir_live = False
+            self._vl_live = False
+            self._cursor_temp = None
+            self._fps_label.setText("-- fps")
+            self._sequence_label.setText("--")
+            self._temp_label.setText("--")
+            self._age_label.setText("-- ms")
         elif state == LiveTileState.RECONNECTING:
             # Driver-level reconnect: keep the last images and identity
             # visible; the next result flips the tile back to LIVE.
@@ -542,6 +565,7 @@ class LiveCameraTile(QWidget):
         self._last_age_ms = None
         self._last_fps = None
         self._last_temp = None
+        self._cursor_temp = None
         self._ir_live = False
         self._vl_live = False
         self._error_message = None
@@ -567,11 +591,18 @@ class LiveCameraTile(QWidget):
         """Always both feeds; retained for backward compatibility."""
         return "both"
 
-    def set_camera(self, camera_id: str, name: str, serial: str) -> None:
+    def set_camera(
+        self,
+        camera_id: str,
+        name: str,
+        serial: str,
+        ip_address: str = "",
+    ) -> None:
         """Assign a camera to this fixed position slot (READY, not started)."""
         self._camera_id = camera_id
         self._name = name
         self._serial = serial
+        self._ip_address = ip_address
         self._refresh_identity()
         self.set_state(LiveTileState.READY)
 
@@ -580,6 +611,7 @@ class LiveCameraTile(QWidget):
         self._camera_id = None
         self._name = ""
         self._serial = ""
+        self._ip_address = ""
         self._refresh_identity()
         self.set_state(LiveTileState.NOT_AVAILABLE)
         self.clear()
@@ -770,6 +802,7 @@ class _StartupWorker(QThread):
 
     camera_started = pyqtSignal(str)
     camera_failed = pyqtSignal(str, str)
+    _LIVE_START_TIMEOUT_S = 3.0
 
     def __init__(self, runtime_service, configs: list, abort: threading.Event, parent=None) -> None:
         super().__init__(parent)
@@ -784,7 +817,13 @@ class _StartupWorker(QThread):
             camera_id = config.identity.camera_id
             try:
                 if not self._runtime_service.is_camera_running(camera_id):
-                    self._runtime_service.start_camera(config)
+                    if isinstance(self._runtime_service, CameraRuntimeService):
+                        self._runtime_service.start_camera(
+                            config,
+                            timeout=self._LIVE_START_TIMEOUT_S,
+                        )
+                    else:
+                        self._runtime_service.start_camera(config)
                 self.camera_started.emit(camera_id)
             except Exception as exc:
                 self.camera_failed.emit(camera_id, str(exc))
@@ -898,6 +937,11 @@ class LiveModeWidget(QWidget):
         for slot in range(FIXED_CAMERA_SLOTS):
             tile = LiveCameraTile(slot, theme_manager=self._theme)
             tile.hover_changed.connect(self._on_tile_hover)
+            tile.cursor_temperature_changed.connect(
+                lambda temperature, slot=slot: self._on_tile_cursor_temperature(
+                    slot, temperature
+                )
+            )
             self._tiles.append(tile)
             row, col = self.slot_position(slot)
             self._grid_layout.addWidget(tile, row, col)
@@ -1029,6 +1073,14 @@ class LiveModeWidget(QWidget):
             return
         self._hovered = (slot, feed)
         self._stats_panel.show_camera(self._tiles[slot].hover_info(feed))
+
+    def _on_tile_cursor_temperature(self, slot: int, temperature: float) -> None:
+        """Refresh hovered-camera statistics without waiting for the poll timer."""
+        if self._stats_panel is None or self._hovered is None:
+            return
+        hovered_slot, feed = self._hovered
+        if hovered_slot == slot:
+            self._stats_panel.show_camera(self._tiles[slot].hover_info(feed))
 
     def _system_snapshot(self) -> dict:
         """Aggregate wall state from existing tile data (text-ready)."""
@@ -1235,7 +1287,13 @@ class LiveModeWidget(QWidget):
         for slot_index, config in enumerate(enabled_cameras[:FIXED_CAMERA_SLOTS]):
             camera_id = config.identity.camera_id
             tile = self._tiles[slot_index]
-            tile.set_camera(camera_id, config.name or camera_id, config.identity.serial_number)
+            metadata = dict(config.metadata or {})
+            tile.set_camera(
+                camera_id,
+                config.name or camera_id,
+                config.identity.serial_number,
+                str(metadata.get("ip_address") or ""),
+            )
             self._camera_to_slot[camera_id] = slot_index
         # Log post-assignment tile states
         try:
@@ -1373,21 +1431,50 @@ class LiveModeWidget(QWidget):
         if analysis is None:
             analysis = AnalysisConfig(camera_id=camera_id)
         try:
-            observer = self._runtime_service.start_observer(
-                camera_id, analysis_config=analysis
-            )
+            if isinstance(self._runtime_service, CameraRuntimeService):
+                observer = self._runtime_service.start_observer(
+                    camera_id, analysis_config=analysis, latest_wins=True
+                )
+            else:
+                observer = self._runtime_service.start_observer(
+                    camera_id, analysis_config=analysis
+                )
         except Exception as exc:
             self._tiles[self._camera_to_slot[camera_id]].set_error(str(exc))
             self._refresh_header_and_panel()
             self._update_button_state()
             return
         tile = self._tiles[self._camera_to_slot[camera_id]]
-        observer.result_ready.connect(tile.on_result, Qt.ConnectionType.QueuedConnection)
+        if hasattr(observer, "latest_result_ready") and hasattr(
+            observer, "take_latest_result"
+        ):
+            observer.latest_result_ready.connect(
+                lambda camera_id=camera_id: self._on_latest_result_available(
+                    camera_id
+                ),
+                Qt.ConnectionType.QueuedConnection,
+            )
+        else:
+            observer.result_ready.connect(
+                tile.on_result, Qt.ConnectionType.QueuedConnection
+            )
         observer.error_occurred.connect(tile.on_error, Qt.ConnectionType.QueuedConnection)
         self._connected_observers.add(camera_id)
         if tile.state is not LiveTileState.ERROR:
             tile.set_state(LiveTileState.STARTING)
         self._refresh_header_and_panel()
+
+    @pyqtSlot()
+    def _on_latest_result_available(self, camera_id: str) -> None:
+        """Render only the newest result waiting for a Live camera."""
+        if camera_id not in self._camera_to_slot or self._runtime_service is None:
+            return
+        observer = self._runtime_service.observer_service(camera_id)
+        if observer is None or not hasattr(observer, "take_latest_result"):
+            return
+        result = observer.take_latest_result()
+        if result is not None:
+            self._tiles[self._camera_to_slot[camera_id]].on_result(result)
 
     @pyqtSlot(str, str)
     def _on_startup_camera_failed(self, camera_id: str, message: str, token: int) -> None:
@@ -1494,6 +1581,11 @@ class LiveModeWidget(QWidget):
                 observer = self._runtime_service.observer_service(camera_id)
                 if observer is not None:
                     tile = self._tiles[slot]
+                    if hasattr(observer, "latest_result_ready"):
+                        try:
+                            observer.latest_result_ready.disconnect()
+                        except (TypeError, RuntimeError):
+                            pass
                     self._safe_disconnect(observer.result_ready, tile.on_result)
                     self._safe_disconnect(observer.error_occurred, tile.on_error)
         elif self._legacy_observer is not None:

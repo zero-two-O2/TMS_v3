@@ -50,6 +50,7 @@ class ThermalRenderWorker(QThread):
     """Persistent renderer with at most one in-flight and one pending frame."""
 
     rendered = pyqtSignal(object, object, float, float, int, object, object)
+    latest_ready = pyqtSignal()
     render_error = pyqtSignal(str)
 
     def __init__(self, palette: str = "temperature", max_fps: float = 20.0, parent=None) -> None:
@@ -64,6 +65,8 @@ class ThermalRenderWorker(QThread):
         self._interval = 1.0 / max_fps
         self._condition = threading.Condition()
         self._pending: RenderRequest | None = None
+        self._latest_output = None
+        self._latest_notification_pending = False
         self._stopping = False
         self._last_sequence = -1
         self._last_hw_sequence: int | None = None
@@ -93,8 +96,18 @@ class ThermalRenderWorker(QThread):
         with self._condition:
             self._stopping = True
             self._pending = None
+            self._latest_output = None
+            self._latest_notification_pending = False
             self._condition.notify()
         self.wait()
+
+    def take_latest_output(self):
+        """Take the newest completed render without queuing old images."""
+        with self._condition:
+            output = self._latest_output
+            self._latest_output = None
+            self._latest_notification_pending = False
+            return output
 
     def run(self) -> None:
         logger.info("Thermal renderer started")
@@ -135,7 +148,29 @@ class ThermalRenderWorker(QThread):
                         self.rendered_frames,
                         self.dropped_frames,
                     )
-                self.rendered.emit(image, temperature, minimum, maximum, request.sequence, thumbnail, rgb)
+                with self._condition:
+                    self._latest_output = (
+                        image,
+                        temperature,
+                        minimum,
+                        maximum,
+                        request.sequence,
+                        thumbnail,
+                        rgb,
+                    )
+                    notify = not self._latest_notification_pending
+                    self._latest_notification_pending = True
+                if notify:
+                    self.latest_ready.emit()
+                self.rendered.emit(
+                    image,
+                    temperature,
+                    minimum,
+                    maximum,
+                    request.sequence,
+                    thumbnail,
+                    rgb,
+                )
             except Exception as exc:  # Rendering must not affect acquisition.
                 logger.exception("Thermal renderer failed")
                 self.render_error.emit(str(exc))

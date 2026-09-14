@@ -40,6 +40,7 @@ class VlRenderWorker(QThread):
     """Persistent VL renderer with latest-wins semantics."""
 
     rendered = pyqtSignal(object, int, object)  # QImage, sequence, hw_sequence
+    latest_ready = pyqtSignal()  # QImage, sequence, hw_sequence
     render_error = pyqtSignal(str)
 
     def __init__(self, max_fps: float = 20.0, parent=None) -> None:
@@ -52,6 +53,8 @@ class VlRenderWorker(QThread):
         self._interval = 1.0 / max_fps
         self._condition = threading.Condition()
         self._pending: VlRenderRequest | None = None
+        self._latest_output = None
+        self._latest_notification_pending = False
         self._stopping = False
         self._last_sequence = -1
         self.dropped_frames = 0
@@ -71,8 +74,18 @@ class VlRenderWorker(QThread):
         with self._condition:
             self._stopping = True
             self._pending = None
+            self._latest_output = None
+            self._latest_notification_pending = False
             self._condition.notify()
         self.wait()
+
+    def take_latest_output(self):
+        """Take the newest completed render without queuing old images."""
+        with self._condition:
+            output = self._latest_output
+            self._latest_output = None
+            self._latest_notification_pending = False
+            return output
 
     def run(self) -> None:
         logger.info("VL renderer started")
@@ -101,6 +114,12 @@ class VlRenderWorker(QThread):
                     _latency_tracker().note_stage(
                         request.camera_id + "#vl", request.sequence, "render_done", time.perf_counter_ns()
                     )
+                with self._condition:
+                    self._latest_output = (image, request.sequence, request.hw_sequence)
+                    notify = not self._latest_notification_pending
+                    self._latest_notification_pending = True
+                if notify:
+                    self.latest_ready.emit()
                 self.rendered.emit(image, request.sequence, request.hw_sequence)
             except Exception as exc:  # Rendering must not affect acquisition.
                 logger.exception("VL renderer failed")
