@@ -23,6 +23,7 @@ never resizes, rebuilds, recreates or restyles anything.
 from __future__ import annotations
 
 import time
+import threading
 from enum import Enum
 from typing import Optional
 
@@ -727,6 +728,9 @@ class LiveModeWidget(QWidget):
     N is always tile N; disconnects never remove, reorder or resize.
     """
 
+    _camera_ready = pyqtSignal(str, object)
+    _camera_failed = pyqtSignal(str, str)
+
     def __init__(
         self,
         mode_service: ModeService,
@@ -751,9 +755,13 @@ class LiveModeWidget(QWidget):
         self._hovered: tuple[int | None, str | None] | None = None
         self._stats_timer: QTimer | None = None
         self._last_poll: dict[str, tuple[int, float]] = {}
+        self._activation_generation = 0
+        self._startup_thread: threading.Thread | None = None
 
         self._setup_ui()
         self._create_fixed_tiles()
+        self._camera_ready.connect(self._on_camera_ready, Qt.ConnectionType.QueuedConnection)
+        self._camera_failed.connect(self._on_camera_failed, Qt.ConnectionType.QueuedConnection)
 
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -961,6 +969,7 @@ class LiveModeWidget(QWidget):
 
     def on_mode_activated(self) -> None:
         """Start live monitoring when Live mode becomes active."""
+        self._activation_generation += 1
         self._assign_cameras_to_slots()
         if self._runtime_service is not None:
             self._start_via_runtime()
@@ -972,6 +981,7 @@ class LiveModeWidget(QWidget):
 
     def on_mode_deactivated(self) -> None:
         """Stop live monitoring and tear down when leaving Live mode."""
+        self._activation_generation += 1
         self._stop_stats_timer()
         self._disconnect_all_tiles()
         if self._runtime_service is not None:
@@ -1019,47 +1029,85 @@ class LiveModeWidget(QWidget):
         return result
 
     def _start_via_runtime(self) -> None:
-        """Start every enabled camera through the lifecycle service."""
+        """Start every enabled camera without blocking the Qt event loop."""
         enabled = self._enabled_cameras()
         if not enabled:
             self._set_summary("Cameras: 0  Running: 0  Failed: 0")
             return
 
-        failed: list[str] = []
-        for config in enabled[:FIXED_CAMERA_SLOTS]:
+        cameras = enabled[:FIXED_CAMERA_SLOTS]
+        for config in cameras:
             camera_id = config.identity.camera_id
             slot = self._camera_to_slot.get(camera_id)
             if slot is None:
                 continue
+            self._tiles[slot].set_state(LiveTileState.STARTING)
 
-            tile = self._tiles[slot]
+        generation = self._activation_generation
+        self._set_summary(f"Starting cameras: 0/{len(cameras)}")
+        self._startup_thread = threading.Thread(
+            target=self._start_runtime_cameras,
+            args=(generation, cameras),
+            name="LiveCameraStartup",
+            daemon=True,
+        )
+        self._startup_thread.start()
 
+    def _start_runtime_cameras(self, generation: int, cameras: list) -> None:
+        """Start cameras sequentially off the GUI thread."""
+        for config in cameras:
+            camera_id = config.identity.camera_id
+            if generation != self._activation_generation:
+                return
+            started_here = False
             try:
                 if not self._runtime_service.is_camera_running(camera_id):
                     self._runtime_service.start_camera(config)
-            except Exception as exc:
-                tile.set_error(str(exc))
-                failed.append(camera_id)
-                continue
+                    started_here = True
 
-            analysis = self._config_service.get_analysis_config(camera_id)
-            if analysis is None:
-                analysis = AnalysisConfig(camera_id=camera_id)
-
-            try:
+                analysis = self._config_service.get_analysis_config(camera_id)
+                if analysis is None:
+                    analysis = AnalysisConfig(camera_id=camera_id)
                 observer = self._runtime_service.start_observer(
                     camera_id, analysis_config=analysis
                 )
             except Exception as exc:
-                tile.set_error(str(exc))
-                failed.append(camera_id)
+                if started_here:
+                    self._runtime_service.stop_camera(camera_id)
+                self._camera_failed.emit(camera_id, str(exc))
                 continue
 
-            tile.set_state(LiveTileState.STARTING)
-            observer.result_ready.connect(tile.on_result, Qt.ConnectionType.QueuedConnection)
-            observer.error_occurred.connect(tile.on_error, Qt.ConnectionType.QueuedConnection)
+            if generation != self._activation_generation:
+                observer.stop()
+                self._runtime_service.stop_camera(camera_id)
+                return
+            self._camera_ready.emit(camera_id, observer)
 
-        self._update_summary(failed)
+        self._camera_ready.emit("__startup_complete__", None)
+
+    @pyqtSlot(str, object)
+    def _on_camera_ready(self, camera_id: str, observer: object) -> None:
+        """Attach a newly started observer on the GUI thread."""
+        if camera_id == "__startup_complete__":
+            self._update_summary([])
+            return
+        slot = self._camera_to_slot.get(camera_id)
+        if slot is None:
+            return
+        tile = self._tiles[slot]
+        tile.set_state(LiveTileState.STARTING)
+        observer.result_ready.connect(tile.on_result, Qt.ConnectionType.QueuedConnection)
+        observer.error_occurred.connect(tile.on_error, Qt.ConnectionType.QueuedConnection)
+        self._update_summary([])
+
+    @pyqtSlot(str, str)
+    def _on_camera_failed(self, camera_id: str, message: str) -> None:
+        """Show one camera's startup error without stopping other cameras."""
+        slot = self._camera_to_slot.get(camera_id)
+        if slot is None:
+            return
+        self._tiles[slot].set_error(message)
+        self._update_summary([camera_id])
 
     def _start_via_legacy(self) -> None:
         """Start the legacy injected ObserverService (display-only tests)."""
