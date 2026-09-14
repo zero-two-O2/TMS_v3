@@ -48,8 +48,14 @@ class LiveThermalWidget(QWidget):
     range_changed = pyqtSignal(float, float)  # min, max
     # Signal emitted when the zoom mode changes (e.g. via mouse wheel)
     zoom_changed = pyqtSignal(str)  # zoom mode text
+    # Signal emitted on any zoom/pan/fit/resize view change (finder sync).
+    view_changed = pyqtSignal()
     rendered_frame = pyqtSignal(object, object)  # QImage, thumbnail QImage
     render_error = pyqtSignal(str)
+
+    # View-only zoom bounds (never touch source data or calibration).
+    _ZOOM_MAX = 8.0  # relative to 1:1 native pixels
+    _WHEEL_STEP = 1.25
 
     def __init__(self) -> None:
         super().__init__()
@@ -66,6 +72,12 @@ class LiveThermalWidget(QWidget):
         self._last_hw_sequence: int | None = None
         self._last_camera_id: str | None = None
         self._last_acq_mono_ns: int | None = None
+        # Camera-session gate: when set, set_frame() drops frames whose
+        # descriptor camera_id differs, so a previous camera's queued
+        # results can never reach the renderer after a switch. Widgets
+        # that never set a session (Live wall, Offline) keep the
+        # previous accept-everything behavior.
+        self._session_camera_id: str | None = None
         # seq -> (camera_id, hw_sequence, acq_mono_ns) for display-age
         # correlation at render completion; bounded by pruning on render.
         self._pending_meta: dict[int, tuple[str | None, int | None, int | None]] = {}
@@ -75,7 +87,12 @@ class LiveThermalWidget(QWidget):
         self._auto_range = True
         self._manual_min = 20.0
         self._manual_max = 80.0
-        self._zoom_mode = "Fit to Window"  # "Fit to Window", "50%", "100%", "200%", "400%"
+        # View-only zoom: None = fit-to-window (the minimum); otherwise an
+        # absolute scale relative to 1:1 native pixels. The transform is
+        # applied at paint time — the source thermal frame, conversion and
+        # calibration are never altered, and wheel events copy nothing.
+        self._zoom: float | None = None
+        self._zoom_mode = "Fit to Window"  # compat text: Fit or "NN%"
 
         # ROI overlays
         self._roi_overlays: list[ROIOverlay] = []
@@ -102,8 +119,30 @@ class LiveThermalWidget(QWidget):
     def temperature_image(self) -> np.ndarray | None:
         return self._temperature_image
 
+    def set_session(self, camera_id: str | None) -> None:
+        """Begin a new camera session on this widget.
+
+        Clears the displayed image, resets the accepted-sequence baseline
+        (the new camera numbers its frames from 0) and tells the render
+        worker to drop any late request from the old camera. State owned
+        by the panels (ROI, alarms, scale) is untouched.
+        """
+        self._session_camera_id = camera_id
+        self._last_submitted_sequence = -1
+        self._last_hw_sequence = None
+        self._last_camera_id = camera_id
+        self._last_acq_mono_ns = None
+        self._pending_meta.clear()
+        self._render_worker.set_session(camera_id)
+        self.clear()
+
     def set_frame(self, temperature_image: np.ndarray | None, frame, minimum: float | None = None, maximum: float | None = None) -> None:
         """Submit an immutable frame snapshot; rendering is never synchronous."""
+        if self._session_camera_id is not None and frame is not None:
+            descriptor = getattr(frame, "descriptor", None)
+            frame_camera = getattr(descriptor, "camera_id", None)
+            if frame_camera is not None and frame_camera != self._session_camera_id:
+                return  # stale frame from a previous camera session
         self._temperature_image = np.asarray(temperature_image) if temperature_image is not None else None
         self._raw_thermal = frame.payload.thermal if frame is not None else None
         source = self._temperature_image
@@ -147,6 +186,12 @@ class LiveThermalWidget(QWidget):
         self._display_array = None
         self._roi_overlays = []
         self._selected_roi_id = None
+        # Reset the accepted-sequence baseline so a reconnect (which
+        # renumbers frames from 0) is accepted. Stale cross-camera data
+        # is still rejected by the session camera_id gate in set_frame()
+        # and by the generation check at the result slot.
+        self._last_submitted_sequence = -1
+        self._pending_meta.clear()
         self.update()
 
     def set_palette(self, palette: str) -> None:
@@ -168,11 +213,123 @@ class LiveThermalWidget(QWidget):
             self.update()
 
     def set_zoom(self, zoom_text: str) -> None:
-        """Set zoom mode."""
-        self._zoom_mode = zoom_text
-        if zoom_text != "Fit to Window":
-            self._pan_offset = QPointF(0, 0)  # Reset pan on fixed zoom
+        """Set zoom from a mode string (compat: "Fit to Window" or "NN%")."""
+        text = (zoom_text or "").strip()
+        if text.lower().startswith("fit"):
+            self.zoom_fit()
+            return
+        try:
+            percent = float(text.rstrip("%"))
+        except (TypeError, ValueError):
+            return
+        self.set_zoom_factor(percent / 100.0)
+
+    def zoom_fit(self) -> None:
+        """Reset to fit-to-window (the minimum zoom)."""
+        self._zoom = None
+        self._pan_offset = QPointF(0, 0)
+        self._sync_zoom_mode()
+        self.view_changed.emit()
         self.update()
+
+    def zoom_one_to_one(self) -> None:
+        """Show native pixels (1 image px = 1 screen px), centered."""
+        self.set_zoom_factor(1.0)
+
+    def zoom_in(self, center: QPointF | None = None) -> None:
+        """Zoom in one step around ``center`` (default: widget center)."""
+        if center is not None and not hasattr(center, "x"):
+            center = None  # defensive: never trust a signal payload here
+        self.zoom_at(center if center is not None else QPointF(self.width() / 2, self.height() / 2), self._WHEEL_STEP)
+
+    def zoom_out(self, center: QPointF | None = None) -> None:
+        """Zoom out one step around ``center`` (floors at fit-to-window)."""
+        if center is not None and not hasattr(center, "x"):
+            center = None  # defensive: never trust a signal payload here
+        self.zoom_at(center if center is not None else QPointF(self.width() / 2, self.height() / 2), 1.0 / self._WHEEL_STEP)
+
+    def zoom_at(self, pos, factor: float) -> None:
+        """Smooth bounded zoom around a widget point (wheel/buttons).
+
+        Zooming out past the fit scale snaps back to fit-to-window.
+        The image point under ``pos`` stays under it (cursor-anchored).
+        """
+        current = self._view_transform()
+        if current is None:
+            return
+        s_old, dx_old, dy_old, _, _ = current
+        fit = self._fit_scale()
+        if fit is None:
+            return
+        s_new = s_old * factor
+        if s_new <= fit * 1.001:
+            self.zoom_fit()
+            return
+        s_new = min(s_new, self._ZOOM_MAX)
+        image = self._display_image
+        pixel_x = (float(pos.x()) - dx_old) / s_old
+        pixel_y = (float(pos.y()) - dy_old) / s_old
+        self._zoom = s_new
+        scaled_w = max(1, int(round(image.width() * s_new)))
+        scaled_h = max(1, int(round(image.height() * s_new)))
+        dx_new = float(pos.x()) - pixel_x * s_new
+        dy_new = float(pos.y()) - pixel_y * s_new
+        self._pan_offset = QPointF(
+            dx_new - (self.width() - scaled_w) / 2.0,
+            dy_new - (self.height() - scaled_h) / 2.0,
+        )
+        self._clamp_pan(scaled_w, scaled_h)
+        self._sync_zoom_mode()
+        self.view_changed.emit()
+        self.update()
+
+    def set_zoom_factor(self, zoom: float | None) -> None:
+        """Set an absolute zoom scale (None = fit); clamped to [>0, max].
+
+        Explicit requests (1:1, "NN%", persisted values) are honored
+        exactly — even below the fit scale on large windows. The
+        fit-to-window floor applies only to zoom_out()/wheel-out, so an
+        explicit native-pixels request is never forced up to the max.
+        """
+        if zoom is None:
+            self.zoom_fit()
+            return
+        try:
+            value = float(zoom)
+        except (TypeError, ValueError):
+            return
+        self._zoom = min(max(value, 1e-6), self._ZOOM_MAX)
+        self._clamp_pan()
+        self._sync_zoom_mode()
+        self.view_changed.emit()
+        self.update()
+
+    def set_pan_offset(self, x: float, y: float) -> None:
+        """Restore a persisted pan offset (clamped to the current view)."""
+        self._pan_offset = QPointF(float(x), float(y))
+        self._clamp_pan()
+        self.view_changed.emit()
+        self.update()
+
+    def zoom_percent(self) -> str:
+        """Human-readable zoom state for toolbars ("Fit" or "NN%")."""
+        if self._zoom is None:
+            return "Fit"
+        return f"{int(round(self._zoom * 100))}%"
+
+    def is_fit(self) -> bool:
+        """True while the view shows the whole image fitted."""
+        return self._zoom is None
+
+    def _sync_zoom_mode(self) -> None:
+        """Keep the compat mode text aligned with the absolute zoom."""
+        if self._zoom is None:
+            mode = "Fit to Window"
+        else:
+            mode = f"{int(round(self._zoom * 100))}%"
+        if mode != self._zoom_mode:
+            self._zoom_mode = mode
+            self.zoom_changed.emit(mode)
 
     def set_roi_overlays(self, overlays: list[ROIOverlay]) -> None:
         """Set ROI overlays for drawing."""
@@ -263,47 +420,145 @@ class LiveThermalWidget(QWidget):
         # Dark background
         painter.fillRect(self.rect(), QColor(20, 20, 20))
 
-        if self._display_image is not None:
-            # Calculate zoom
-            zoom_factor = self._get_zoom_factor()
-
-            if self._zoom_mode == "Fit to Window":
-                scaled = self._display_image.scaled(
-                    self.size(),
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                x = (self.width() - scaled.width()) // 2
-                y = (self.height() - scaled.height()) // 2
-            else:
-                w = int(self._display_image.width() * zoom_factor)
-                h = int(self._display_image.height() * zoom_factor)
-                scaled = self._display_image.scaled(
-                    w, h,
-                    Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation,
-                )
-                x = int((self.width() - scaled.width()) // 2 + self._pan_offset.x())
-                y = int((self.height() - scaled.height()) // 2 + self._pan_offset.y())
-
-            # Store image rect for coordinate mapping
-            self._image_rect = QRect(x, y, scaled.width(), scaled.height())
-
-            painter.drawImage(x, y, scaled)
-
-            # Draw ROI overlays
-            self._draw_roi_overlays(painter, x, y, scaled.width(), scaled.height())
-
-        else:
+        transform = self._view_transform()
+        if transform is None:
             painter.setPen(QColor(150, 150, 150))
             painter.setFont(QFont("Segoe UI", 14))
             painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No live data\n\nConnect a camera and press Start")
+            if hasattr(self, '_image_rect'):
+                del self._image_rect
+            return
 
-    def _get_zoom_factor(self) -> float:
-        if self._zoom_mode == "Fit to Window":
-            return 1.0
-        zoom_map = {"50%": 0.5, "100%": 1.0, "200%": 2.0, "400%": 4.0}
-        return zoom_map.get(self._zoom_mode, 1.0)
+        scale, draw_x, draw_y, scaled_w, scaled_h = transform
+        # Uniform scale only (same factor both axes): 4:3 geometry preserved.
+        scaled = self._display_image.scaled(
+            scaled_w, scaled_h,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        int_x, int_y = int(draw_x), int(draw_y)
+        painter.drawImage(int_x, int_y, scaled)
+
+        # Draw ROI overlays
+        self._draw_roi_overlays(painter, int_x, int_y, scaled.width(), scaled.height())
+
+    def _fit_scale(self) -> float | None:
+        """Scale that fits the whole image (None without image/geometry)."""
+        image = self._display_image
+        width, height = self.width(), self.height()
+        if image is None or image.width() <= 0 or image.height() <= 0:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        return min(width / image.width(), height / image.height())
+
+    def _clamp_pan(self, scaled_w: int | None = None, scaled_h: int | None = None) -> None:
+        """Constrain the pan offset so the view stays usable.
+
+        When the scaled image is smaller than the viewport the offset is
+        zeroed (paint centers it); when larger, panning stops at the
+        image edges so no oversized empty areas appear.
+        """
+        image = self._display_image
+        width, height = self.width(), self.height()
+        if image is None or width <= 0 or height <= 0:
+            return
+        scale = self._ZOOM_MAX if self._zoom is None else self._zoom
+        if self._zoom is None:
+            fit = self._fit_scale()
+            scale = fit if fit is not None else 1.0
+        if scaled_w is None:
+            scaled_w = max(1, int(round(image.width() * scale)))
+        if scaled_h is None:
+            scaled_h = max(1, int(round(image.height() * scale)))
+        pan_x, pan_y = self._pan_offset.x(), self._pan_offset.y()
+        if scaled_w <= width:
+            pan_x = 0.0
+        else:
+            lower, upper = (width - scaled_w) / 2.0, (scaled_w - width) / 2.0
+            pan_x = min(upper, max(lower, pan_x))
+        if scaled_h <= height:
+            pan_y = 0.0
+        else:
+            lower, upper = (height - scaled_h) / 2.0, (scaled_h - height) / 2.0
+            pan_y = min(upper, max(lower, pan_y))
+        self._pan_offset = QPointF(pan_x, pan_y)
+
+    def _view_transform(self):
+        """Single source for the image->widget mapping.
+
+        Returns ``(scale, draw_x, draw_y, scaled_w, scaled_h)`` with a
+        uniform scale (never distorted; 4:3 geometry preserved) and keeps
+        ``self._image_rect`` aligned for hit-testing. None without image.
+        """
+        image = self._display_image
+        width, height = self.width(), self.height()
+        if image is None or image.width() <= 0 or image.height() <= 0:
+            return None
+        if width <= 0 or height <= 0:
+            return None
+        fit = min(width / image.width(), height / image.height())
+        scale = fit if self._zoom is None else min(self._zoom, self._ZOOM_MAX)
+        scaled_w = max(1, int(round(image.width() * scale)))
+        scaled_h = max(1, int(round(image.height() * scale)))
+        self._clamp_pan(scaled_w, scaled_h)
+        draw_x = (width - scaled_w) / 2.0 + self._pan_offset.x()
+        draw_y = (height - scaled_h) / 2.0 + self._pan_offset.y()
+        if scaled_w <= width:
+            draw_x = (width - scaled_w) / 2.0
+        if scaled_h <= height:
+            draw_y = (height - scaled_h) / 2.0
+        self._image_rect = QRect(int(draw_x), int(draw_y), scaled_w, scaled_h)
+        return (scale, draw_x, draw_y, scaled_w, scaled_h)
+
+    def viewport_rect_normalized(self):
+        """Visible image region as normalized (x0, y0, x1, y1), 0..1.
+
+        Drives the View Finder rectangle. None when the whole image is
+        fitted (or no image): the finder then shows the full frame.
+        """
+        image = self._display_image
+        if image is None or self._zoom is None:
+            return None
+        transform = self._view_transform()
+        if transform is None:
+            return None
+        scale, draw_x, draw_y, _, _ = transform
+        width, height = self.width(), self.height()
+        image_w, image_h = image.width(), image.height()
+        x0 = max(0.0, min(1.0, (-draw_x / scale) / image_w))
+        y0 = max(0.0, min(1.0, (-draw_y / scale) / image_h))
+        x1 = max(0.0, min(1.0, ((width - draw_x) / scale) / image_w))
+        y1 = max(0.0, min(1.0, ((height - draw_y) / scale) / image_h))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return (x0, y0, x1, y1)
+
+    def pan_to_normalized(self, center_x: float, center_y: float) -> None:
+        """Center the view on a normalized image point (finder drag).
+
+        When fitted (whole image visible) the view first zooms to 2x so
+        the drag target is meaningful, then pans to it.
+        """
+        image = self._display_image
+        if image is None:
+            return
+        if self._zoom is None:
+            self._zoom = min(2.0, self._ZOOM_MAX)
+        scale = min(self._zoom, self._ZOOM_MAX)
+        width, height = self.width(), self.height()
+        scaled_w = max(1, int(round(image.width() * scale)))
+        scaled_h = max(1, int(round(image.height() * scale)))
+        center_x = max(0.0, min(1.0, center_x))
+        center_y = max(0.0, min(1.0, center_y))
+        self._pan_offset = QPointF(
+            width / 2.0 - center_x * image.width() * scale - (width - scaled_w) / 2.0,
+            height / 2.0 - center_y * image.height() * scale - (height - scaled_h) / 2.0,
+        )
+        self._clamp_pan(scaled_w, scaled_h)
+        self._sync_zoom_mode()
+        self.view_changed.emit()
+        self.update()
 
     def _draw_roi_overlays(self, painter: QPainter, img_x: int, img_y: int, img_w: int, img_h: int) -> None:
         """Draw ROI overlays on the thermal image."""
@@ -408,7 +663,17 @@ class LiveThermalWidget(QWidget):
                 painter.drawText(int(label_x + 2), int(label_y), overlay.roi_id)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
-        """Track mouse position for cursor temperature readout."""
+        """Track mouse position for cursor temperature readout (and panning)."""
+        if self._is_panning:
+            delta = event.pos() - self._pan_start_pos
+            self._pan_start_pos = event.pos()
+            self._pan_offset = QPointF(
+                self._pan_offset.x() + delta.x(),
+                self._pan_offset.y() + delta.y(),
+            )
+            self._clamp_pan()
+            self.view_changed.emit()
+            self.update()
         if self._temperature_image is not None and self._display_image is not None:
             if hasattr(self, '_image_rect') and self._image_rect.contains(event.pos()):
                 img_x, img_y = self._widget_to_image_coords(event.position().x(), event.position().y())
@@ -424,22 +689,69 @@ class LiveThermalWidget(QWidget):
         super().leaveEvent(event)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
-        """Handle mouse wheel for zoom."""
-        if self._zoom_mode != "Fit to Window" and self._display_image is not None:
-            delta = event.angleDelta().y()
-            zoom_levels = ["50%", "100%", "200%", "400%"]
-            current_idx = zoom_levels.index(self._zoom_mode) if self._zoom_mode in zoom_levels else 1
-            if delta > 0 and current_idx < len(zoom_levels) - 1:
-                self.set_zoom(zoom_levels[current_idx + 1])
-                self.zoom_changed.emit(zoom_levels[current_idx + 1])
-            elif delta < 0 and current_idx > 0:
-                self.set_zoom(zoom_levels[current_idx - 1])
-                self.zoom_changed.emit(zoom_levels[current_idx - 1])
+        """Mouse wheel over the IR image: up zooms in, down zooms out.
+
+        Smooth, bounded, cursor-anchored; operates on the displayed view
+        only (no source copies, no calibration impact).
+        """
+        if self._display_image is not None:
+            if not hasattr(self, '_image_rect') or self._image_rect.contains(event.position().toPoint()):
+                delta = event.angleDelta().y()
+                if delta > 0:
+                    self.zoom_at(event.position(), self._WHEEL_STEP)
+                    event.accept()
+                    return
+                elif delta < 0:
+                    self.zoom_at(event.position(), 1.0 / self._WHEEL_STEP)
+                    event.accept()
+                    return
         super().wheelEvent(event)
 
+    def keyPressEvent(self, event) -> None:
+        """Keyboard zoom: + / - steps, 0 = Fit, 1 = 1:1."""
+        if self._display_image is not None:
+            text = event.text()
+            key = event.key()
+            if text in ("+", "=") or key in (Qt.Key.Key_Plus, Qt.Key.Key_Equal):
+                self.zoom_in()
+                event.accept()
+                return
+            if text in ("-", "_") or key == Qt.Key.Key_Minus:
+                self.zoom_out()
+                event.accept()
+                return
+            if text == "0":
+                self.zoom_fit()
+                event.accept()
+                return
+            if text == "1":
+                self.zoom_one_to_one()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def resizeEvent(self, event) -> None:
+        """Viewport geometry changed: re-clamp pan, notify the finder."""
+        super().resizeEvent(event)
+        if self._zoom is not None:
+            self._clamp_pan()
+            self.view_changed.emit()
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Handle mouse press for panning."""
-        if event.button() == Qt.MouseButton.MiddleButton or (event.button() == Qt.MouseButton.LeftButton and event.modifiers() & Qt.KeyboardModifier.AltModifier):
+        """Handle mouse press for panning.
+
+        Middle button (or Alt+left) always pans; plain left-drag pans
+        while zoomed. ROI editing here is panel-driven, so left-drag is
+        free for navigation.
+        """
+        begin_pan = event.button() == Qt.MouseButton.MiddleButton or (
+            event.button() == Qt.MouseButton.LeftButton
+            and (
+                bool(event.modifiers() & Qt.KeyboardModifier.AltModifier)
+                or self._zoom is not None
+            )
+        )
+        if begin_pan:
             if hasattr(self, '_image_rect') and self._image_rect.contains(event.pos()):
                 self._is_panning = True
                 self._pan_start_pos = event.pos()
@@ -448,40 +760,24 @@ class LiveThermalWidget(QWidget):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         """Handle mouse release for panning."""
-        if event.button() == Qt.MouseButton.MiddleButton or (event.button() == Qt.MouseButton.LeftButton and event.modifiers() & Qt.KeyboardModifier.AltModifier):
+        if self._is_panning and event.button() in (
+            Qt.MouseButton.MiddleButton,
+            Qt.MouseButton.LeftButton,
+        ):
             self._is_panning = False
             self.setCursor(Qt.CursorShape.ArrowCursor)
         super().mouseReleaseEvent(event)
 
     def _widget_to_image_coords(self, widget_x: float, widget_y: float) -> tuple[int, int]:
         """Convert widget coordinates to image array indices."""
-        if self._display_image is None or not hasattr(self, '_image_rect'):
+        if self._display_image is None:
             return (0, 0)
-
-        img_rect = self._image_rect
-        zoom_factor = self._get_zoom_factor()
-
-        if self._zoom_mode == "Fit to Window":
-            img_w = self._display_image.width()
-            img_h = self._display_image.height()
-            scale_w = img_rect.width() / img_w
-            scale_h = img_rect.height() / img_h
-            scale = min(scale_w, scale_h)
-            display_w = img_w * scale
-            display_h = img_h * scale
-            offset_x = img_rect.x() + (img_rect.width() - display_w) / 2
-            offset_y = img_rect.y() + (img_rect.height() - display_h) / 2
-            img_x = int((widget_x - offset_x) / scale)
-            img_y = int((widget_y - offset_y) / scale)
-        else:
-            img_w = self._display_image.width()
-            img_h = self._display_image.height()
-            display_w = img_w * zoom_factor
-            display_h = img_h * zoom_factor
-            offset_x = img_rect.x()
-            offset_y = img_rect.y()
-            img_x = int((widget_x - offset_x) / zoom_factor)
-            img_y = int((widget_y - offset_y) / zoom_factor)
+        transform = self._view_transform()
+        if transform is None:
+            return (0, 0)
+        scale, draw_x, draw_y, _, _ = transform
+        img_x = int((widget_x - draw_x) / scale)
+        img_y = int((widget_y - draw_y) / scale)
 
         # Clamp to image bounds
         if self._temperature_image is not None:

@@ -36,7 +36,10 @@ _CONNECTION_STATUS_MAP = {
     CameraConnectionState.DISCONNECTED: "disconnected",
     CameraConnectionState.CONNECTING: "connecting",
     CameraConnectionState.CONNECTED: "connected",
+    CameraConnectionState.STARTING: "connecting",
     CameraConnectionState.ACQUIRING: "acquiring",
+    CameraConnectionState.STOPPING: "connecting",
+    CameraConnectionState.DISCONNECTING: "connecting",
     CameraConnectionState.DEGRADED: "degraded",
     CameraConnectionState.RECONNECTING: "connecting",
     CameraConnectionState.ERROR: "error",
@@ -171,26 +174,50 @@ class ConfigCameraHeader(QWidget):
     # Public API
 
     def set_cameras(self, cameras: list[tuple[str, str, CameraIdentity | None, bool]]) -> None:
-        """Update camera list. Each entry: (camera_id, display_name, identity, enabled)."""
-        current_id = self._camera_combo.currentData()
-        self._camera_combo.clear()
-        self._cameras = cameras
+        """Update camera list. Each entry: (camera_id, display_name, identity, enabled).
 
-        for camera_id, display_name, identity, enabled in cameras:
-            display = display_name
-            if not enabled:
-                display = f"[Disabled] {display}"
-            self._camera_combo.addItem(display, camera_id)
+        The rebuild is silent: repopulating a QComboBox auto-selects
+        index 0 mid-rebuild and would otherwise emit a phantom
+        ``camera_selected`` for the wrong camera — which previously
+        hijacked the widget selection synchronously inside unrelated
+        operations (fps edits, Start's own metadata update, dialog
+        flow), making Start use a stale camera ID. Exactly one
+        deliberate emit happens, and only when the effective selection
+        genuinely changed (previous selection vanished -> fallback 0).
+        All legitimate selections flow through ``select_camera_by_id``
+        or direct user interaction, which emit as before.
+        """
+        combo = self._camera_combo
+        current_id = combo.currentData()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            self._cameras = cameras
 
-        # Restore selection
-        if current_id:
-            idx = self._camera_combo.findData(current_id)
-            if idx >= 0:
-                self._camera_combo.setCurrentIndex(idx)
-        elif cameras:
-            self._camera_combo.setCurrentIndex(0)
+            for camera_id, display_name, identity, enabled in cameras:
+                display = display_name
+                if not enabled:
+                    display = f"[Disabled] {display}"
+                combo.addItem(display, camera_id)
+
+            # Restore selection silently.
+            restored_idx = -1
+            if current_id:
+                restored_idx = combo.findData(current_id)
+            if restored_idx < 0 and cameras:
+                restored_idx = 0
+            if restored_idx >= 0:
+                combo.setCurrentIndex(restored_idx)
+        finally:
+            combo.blockSignals(False)
 
         self._update_navigation()
+
+        # Deliberate single emit only when the rebuild changed the
+        # effective selection (e.g. the selected camera was removed).
+        new_id = combo.currentData()
+        if new_id != current_id:
+            self._on_combo_changed(combo.currentIndex())
 
     def set_connection_state(self, state: CameraConnectionState) -> None:
         """Update connection state indicator."""

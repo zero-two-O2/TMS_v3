@@ -24,9 +24,11 @@ Layout:
 from __future__ import annotations
 
 import logging
+import threading
+import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal, pyqtSlot, QSettings
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -41,6 +43,9 @@ from PyQt6.QtWidgets import (
     QMenuBar,
     QMenu,
     QApplication,
+    QDialog,
+    QDockWidget,
+    QPushButton,
 )
 from PyQt6.QtGui import QColor, QAction
 
@@ -54,7 +59,18 @@ from thermal_monitor.core.models import (
     CameraConnectionState,
 )
 from thermal_monitor.processing import ProcessingResult
+from thermal_monitor.camera.model import AcquisitionState
 from thermal_monitor.services.configuration import ConfigurationService
+from thermal_monitor.services.lifecycle import (
+    CameraSession,
+    TeardownTimings,
+    allowed_transition,
+    can_connect,
+    can_disconnect,
+    can_start,
+    can_stop,
+    is_transitional,
+)
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.services.discovery import CameraDiscoveryService, GvcpDiscoveryService
@@ -64,6 +80,7 @@ from thermal_monitor.config.models import CameraMappingConfig
 from thermal_monitor.ui.configuration_editor import ConfigurationEditor
 from thermal_monitor.ui.frame_rate import UniqueFrameRate
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverlay
+from thermal_monitor.ui.modes.view_finder import ViewFinderWidget
 from thermal_monitor.ui.modes.vl_image import VlImageWidget
 from thermal_monitor.ui.widgets import (
     ConfigCameraHeader,
@@ -76,10 +93,24 @@ from thermal_monitor.ui.widgets import (
     ImageAcquisitionPanel,
 )
 from thermal_monitor.ui.theme import ThemeManager
-from thermal_monitor.ui.theme.properties import set_role, set_status
+from thermal_monitor.ui.theme.properties import set_role, set_status, set_variant
 
 
 logger = logging.getLogger(__name__)
+
+
+_DOCK_SETTINGS_ORG = "ThermalMonitoringSystem"
+_DOCK_SETTINGS_APP = "ConfigWorkstation"
+_DOCK_SETTINGS_KEY = "dock_layout_v1"
+
+# Bounded waits (seconds) for teardown phases. No arbitrary sleeps: each
+# phase is an event/process-state join with its own timeout, after which
+# the operation escalates (terminate) instead of blocking the GUI.
+_TEARDOWN_PROCESS_TIMEOUT_S = 5.0
+_TEARDOWN_VERIFY_TIMEOUT_S = 1.0
+_OBSERVER_STOP_TIMEOUT_S = 2.0
+
+
 
 
 _UNIT_SYMBOLS = {
@@ -214,6 +245,9 @@ class ConfigurationModeWidget(QWidget):
 
     # Signal emitted when there are unsaved changes and user tries to switch cameras
     camera_switch_blocked = pyqtSignal(str, str)  # (current_camera_id, target_camera_id)
+    # Marshals background camera-operation outcomes to the GUI thread:
+    # (ok, tag, message, result). Emitted from a daemon worker thread.
+    _bg_done = pyqtSignal(bool, str, str, object)
 
     def __init__(
         self,
@@ -254,6 +288,29 @@ class ConfigurationModeWidget(QWidget):
         self._dirty_camera_configs: set[str] = set()
         self._pending_camera_switch: str | None = None
 
+        # --- Camera lifecycle (Part 3: explicit state machine + sessions) ---
+        # The lifecycle state is the authority; button enablement follows it
+        # (see ImageAcquisitionPanel._update_button_states). Every session
+        # epoch invalidates queued results/render requests from older ones.
+        self._lifecycle: CameraConnectionState = CameraConnectionState.DISCONNECTED
+        self._session = CameraSession()
+        self._stale_results_dropped: int = 0
+        # Single in-flight background camera operation (connect/teardown).
+        # A new request arriving mid-operation is queued, never overlapped:
+        # there is never more than one acquisition pipeline transition.
+        # Implemented as a daemon threading.Thread (no QObject outside the
+        # GUI thread, so no thread-affinity hazards); the outcome returns
+        # through the _bg_done queued signal.
+        self._bg_thread: threading.Thread | None = None
+        self._bg_tag: str | None = None
+        self._bg_connect_config = None  # CameraConfig for chained connect
+        self._pending_switch: tuple[str, bool, object] | None = None
+        self._pending_disconnect: bool = False
+        # First-frame/display timing marks for the current session epoch.
+        self._session_started_at: float | None = None
+        self._first_frame_at: float | None = None
+        self._first_display_at: float | None = None
+
         # Diagnostics: log config service identity and counts for comparison with Live
         try:
             svc_id = hex(id(self._config_service))
@@ -290,11 +347,24 @@ class ConfigurationModeWidget(QWidget):
         self._toolbar.save_requested.connect(self._on_save_config)
         main_layout.addWidget(self._toolbar)
 
-        # --- Main content area: Three-pane splitter ---
-        main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(main_splitter, 1)
+        # --- Dock workstation host ---
+        # Native Qt docking: the IR/VL acquisition area is the central
+        # workspace; every tool panel is an independent QDockWidget that
+        # can be shown/hidden, docked, floated, dragged and reordered.
+        # Hiding a dock collapses it toward its screen edge (the center
+        # expands); the widget is hidden, never destroyed, so its state
+        # survives camera switches, reconnects and resizes.
+        self._dock_host = QMainWindow()
+        self._dock_host.setDockOptions(
+            QMainWindow.DockOption.AllowNestedDocks
+            | QMainWindow.DockOption.AllowTabbedDocks
+            | QMainWindow.DockOption.AnimatedDocks
+        )
+        self._dock_host.setDocumentMode(True)
+        main_layout.addWidget(self._dock_host, 1)
+        self._docks: dict[str, QDockWidget] = {}
 
-        # LEFT PANE: Image Acquisition panel (instrument panel)
+        # LEFT DOCK: Image Acquisition panel (instrument panel)
         self._acq_panel = ImageAcquisitionPanel(self._theme)
         self._acq_panel.connect_requested.connect(self._on_connect)
         self._acq_panel.disconnect_requested.connect(self._on_disconnect)
@@ -324,9 +394,19 @@ class ConfigurationModeWidget(QWidget):
             id(self._acq_panel.focus_apply_button),
             self._acq_panel.focus_apply_button.isVisible(),
         )
-        main_splitter.addWidget(self._acq_panel)
+        # LEFT DOCK: Image Information panel (frame metadata; previously
+        # constructed nowhere — the widget existed but was never shown).
+        self._frame_info_panel = FrameInfoPanel(self._theme)
+        self._register_dock(
+            "camera_control", "Camera Control", self._acq_panel, Qt.DockWidgetArea.LeftDockWidgetArea
+        )
+        self._register_dock(
+            "image_info", "Image Information", self._frame_info_panel, Qt.DockWidgetArea.LeftDockWidgetArea
+        )
 
-        # CENTER PANE: Large thermal image (primary workspace)
+        # CENTER: Large thermal + VL display (primary workspace).
+        # The painters letterbox with KeepAspectRatio, so dock resizing
+        # never stretches the 640x480 (4:3) image.
         center_widget = QWidget()
         center_layout = QVBoxLayout(center_widget)
         center_layout.setContentsMargins(0, 0, 0, 0)
@@ -347,45 +427,59 @@ class ConfigurationModeWidget(QWidget):
         ir_vl_splitter.setStretchFactor(0, 3)
         ir_vl_splitter.setStretchFactor(1, 2)
         center_layout.addWidget(ir_vl_splitter, 1)
+        # Slim workspace bar on top (built after the image widgets exist
+        # so its controls can wire straight to them).
+        center_layout.insertWidget(0, self._build_workspace_bar())
 
-        main_splitter.addWidget(center_widget)
+        self._dock_host.setCentralWidget(center_widget)
 
-        # RIGHT PANE: Temperature scale + Analysis tabs
-        right_widget = QWidget()
-        right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(6)
-
-        # Temperature scale panel (ThermoView-style)
+        # RIGHT DOCKS: independent analysis/control tools, stacked
+        # vertically. The user can drag/reorder, tab, float or hide them;
+        # order is not hard-coded after construction.
         self._scale_panel = ThermalScalePanel(self._theme)
         self._scale_panel.palette_changed.connect(self._on_palette_changed)
         self._scale_panel.auto_range_toggled.connect(self._on_auto_range_toggled)
         self._scale_panel.manual_range_applied.connect(self._on_apply_range)
         self._scale_panel.zoom_changed.connect(self._on_zoom_changed)
-        right_layout.addWidget(self._scale_panel)
+        self._register_dock(
+            "temp_scale", "Temperature Scale", self._scale_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        )
 
-        # Analysis tabs
-        self._analysis_tabs = QTabWidget()
-        right_layout.addWidget(self._analysis_tabs, 1)
+        # View Finder dock: a real navigation thumbnail showing the same
+        # latest frame as the workspace, with the main view's visible
+        # region and two-way pan/zoom synchronization (no second stream).
+        self._finder_widget = ViewFinderWidget()
+        self._finder_widget.viewport_dragged.connect(self._on_finder_dragged)
+        self._image_widget.view_changed.connect(self._sync_finder_viewport)
+        self._register_dock(
+            "view_finder", "View Finder", self._finder_widget, Qt.DockWidgetArea.RightDockWidgetArea
+        )
 
-        # ROI tab
+        # ROI dock
         self._roi_panel = ROIPanel(self._config_service, self._theme)
         self._roi_panel.roi_selected.connect(self._on_roi_selected)
         self._roi_panel.roi_created.connect(self._on_roi_created)
         self._roi_panel.roi_updated.connect(self._on_roi_updated)
         self._roi_panel.roi_deleted.connect(self._on_roi_deleted)
-        self._analysis_tabs.addTab(self._roi_panel, "ROIs")
+        self._register_dock(
+            "roi", "ROI", self._roi_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        )
 
-        # Alarm tab
+        # Alarm dock
         self._alarm_panel = AlarmPanel(self._config_service, self._theme)
         self._alarm_panel.alarm_selected.connect(self._on_alarm_selected)
-        self._analysis_tabs.addTab(self._alarm_panel, "Alarms")
+        self._register_dock(
+            "alarms", "Alarms", self._alarm_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        )
 
-        # Statistics tab
+        # Statistics dock
         self._stats_panel = StatisticsPanel(self._theme)
-        self._analysis_tabs.addTab(self._stats_panel, "Statistics")
+        self._register_dock(
+            "statistics", "Statistics", self._stats_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        )
 
-        # Configuration Editor tab (deployment config)
+        # Configuration Editor dock (deployment config)
+        self._config_editor: Optional[ConfigurationEditor] = None
         if self._config_manager:
             self._config_editor = ConfigurationEditor(
                 config_manager=self._config_manager,
@@ -394,15 +488,19 @@ class ConfigurationModeWidget(QWidget):
             self._config_editor.config_saved.connect(self._on_config_saved)
             self._config_editor.config_error.connect(self._on_config_error)
             self._config_editor.restart_required.connect(self._on_restart_required)
-            self._analysis_tabs.addTab(self._config_editor, "Configuration Editor")
+            self._register_dock(
+                "config_editor",
+                "Configuration Editor",
+                self._config_editor,
+                Qt.DockWidgetArea.RightDockWidgetArea,
+            )
 
-        main_splitter.addWidget(right_widget)
+        # Restore the user's previous dock arrangement (panels, positions,
+        # floating state). Panel widgets themselves are never recreated.
+        self._restore_dock_layout()
 
-        # Set splitter proportions: Left(280), Center(700+), Right(400)
-        main_splitter.setSizes([280, 740, 400])
-        main_splitter.setStretchFactor(0, 0)  # Left fixed
-        main_splitter.setStretchFactor(1, 1)  # Center expands
-        main_splitter.setStretchFactor(2, 0)  # Right fixed
+        # Panel shelf: taskbar-like strip for restoring hidden docks.
+        self._build_panel_shelf(main_layout)
 
         # --- Bottom: Status bar ---
         self._create_status_bar(main_layout)
@@ -436,10 +534,315 @@ class ConfigurationModeWidget(QWidget):
 
         parent_layout.addWidget(status_frame)
 
+    # -- Dock workstation -------------------------------------------------
+
+    def _register_dock(
+        self, key: str, title: str, widget: QWidget, area: Qt.DockWidgetArea
+    ) -> QDockWidget:
+        """Host ``widget`` in an independent dockable window.
+
+        The panel widget is reparented into the dock (never copied), so
+        hiding/floating/moving the dock preserves all panel state. Docks
+        are closable (collapse toward their screen edge) but never
+        delete their widget on close.
+        """
+        dock = QDockWidget(title, self._dock_host)
+        dock.setObjectName(f"cfg_dock_{key}")
+        dock.setWidget(widget)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetMovable
+            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        )
+        self._dock_host.addDockWidget(area, dock)
+        self._docks[key] = dock
+        return dock
+
+    def docks(self) -> dict[str, QDockWidget]:
+        """All dockable panels by key (workstation layout)."""
+        return dict(self._docks)
+
+    def show_dock(self, key: str) -> None:
+        """Restore a hidden dock without recreating its panel state."""
+        dock = self._docks.get(key)
+        if dock is not None:
+            dock.show()
+            dock.raise_()
+
+    def dock_toggle_actions(self) -> list[QAction]:
+        """Checkable View-menu actions bound to each dock (stable order)."""
+        actions: list[QAction] = []
+        for key in (
+            "camera_control",
+            "image_info",
+            "temp_scale",
+            "view_finder",
+            "roi",
+            "alarms",
+            "statistics",
+            "config_editor",
+        ):
+            dock = self._docks.get(key)
+            if dock is not None:
+                action = dock.toggleViewAction()
+                action.setText(dock.windowTitle())
+                actions.append(action)
+        return actions
+
+    def _save_dock_layout(self) -> None:
+        """Persist dock arrangement via QMainWindow saveState (no new system).
+
+        The workspace zoom/pan rides along in the same settings scope.
+        A missing zoom restores as Fit; out-of-range values are clamped
+        on restore so an unusable zoom can never come back.
+        """
+        try:
+            settings = QSettings(_DOCK_SETTINGS_ORG, _DOCK_SETTINGS_APP)
+            settings.setValue(_DOCK_SETTINGS_KEY, self._dock_host.saveState(1))
+            zoom = self._image_widget._zoom
+            settings.setValue("workspace_zoom_v1", float(zoom) if zoom is not None else 0.0)
+            pan = self._image_widget._pan_offset
+            settings.setValue("workspace_pan_v1", [float(pan.x()), float(pan.y())])
+        except Exception:
+            logger.debug("Dock layout save failed", exc_info=True)
+
+    def _restore_dock_layout(self) -> None:
+        """Restore the previous dock arrangement, if one was saved."""
+        try:
+            settings = QSettings(_DOCK_SETTINGS_ORG, _DOCK_SETTINGS_APP)
+            state = settings.value(_DOCK_SETTINGS_KEY)
+            if state is not None:
+                self._dock_host.restoreState(state, 1)
+            self._restore_workspace_zoom(settings)
+        except Exception:
+            logger.debug("Dock layout restore failed", exc_info=True)
+        self._ensure_docks_visible()
+
+    def _restore_workspace_zoom(self, settings: QSettings) -> None:
+        """Restore persisted workspace zoom/pan, clamped to usable range."""
+        try:
+            raw_zoom = settings.value("workspace_zoom_v1", 0.0)
+            zoom = float(raw_zoom) if raw_zoom is not None else 0.0
+            if zoom <= 0.0:
+                self._image_widget.zoom_fit()
+            elif zoom < 0.05 or zoom > LiveThermalWidget._ZOOM_MAX:
+                # Persisted garbage (or a tiny-window fit that cannot be
+                # valid on this screen): fall back to Fit, never unusable.
+                self._image_widget.zoom_fit()
+            else:
+                # set_zoom_factor clamps to [fit, max] when a frame with
+                # known geometry is present.
+                self._image_widget.set_zoom_factor(zoom)
+            raw_pan = settings.value("workspace_pan_v1", [0.0, 0.0])
+            if isinstance(raw_pan, (list, tuple)) and len(raw_pan) == 2:
+                self._image_widget.set_pan_offset(float(raw_pan[0]), float(raw_pan[1]))
+        except Exception:
+            logger.debug("Workspace zoom restore failed", exc_info=True)
+            try:
+                self._image_widget.zoom_fit()
+            except Exception:
+                pass
+
+    def _ensure_docks_visible(self) -> None:
+        """Keep floating docks on a visible desktop after restore.
+
+        When screen geometry changed since the layout was saved, Qt may
+        restore a floating dock outside every screen. Such docks are
+        moved to the primary screen's available area; docked/tabbed
+        panels are always visible by construction and left alone.
+        """
+        try:
+            app = QApplication.instance()
+            screens = app.screens() if app is not None else []
+            if not screens:
+                return
+            available = [screen.availableGeometry() for screen in screens]
+            for dock in self._docks.values():
+                if not dock.isFloating():
+                    continue
+                geometry = dock.geometry()
+                if any(area.intersects(geometry) for area in available):
+                    continue
+                target = available[0]
+                dock.move(
+                    target.center().x() - dock.width() // 2,
+                    target.center().y() - dock.height() // 2,
+                )
+        except Exception:
+            logger.debug("Dock visibility rescue failed", exc_info=True)
+
+    # -- Central workspace bar (IR identity + zoom controls) ----------------
+
+    def _build_workspace_bar(self) -> QWidget:
+        """Slim toolbar identifying the IR workspace with zoom controls.
+
+        Controls drive the displayed view only (Fit / step / 1:1); the
+        VL feed keeps its own independent presentation. Theme variants
+        only — no per-widget stylesheets.
+        """
+        bar = QFrame()
+        set_role(bar, "toolbar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(8, 2, 8, 2)
+        layout.setSpacing(4)
+
+        ir_label = QLabel("IR")
+        layout.addWidget(ir_label)
+
+        self._zoom_out_btn = QPushButton("\u2212")  # minus sign
+        self._zoom_out_btn.setToolTip("Zoom out (-)")
+        self._zoom_out_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_variant(self._zoom_out_btn, "ghost")
+        # clicked() carries a checked flag: never pass it into view methods.
+        self._zoom_out_btn.clicked.connect(lambda _checked=False: self._image_widget.zoom_out())
+        layout.addWidget(self._zoom_out_btn)
+
+        self._zoom_label = QLabel("Fit")
+        self._zoom_label.setMinimumWidth(52)
+        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self._zoom_label)
+
+        self._zoom_in_btn = QPushButton("+")
+        self._zoom_in_btn.setToolTip("Zoom in (+)")
+        self._zoom_in_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_variant(self._zoom_in_btn, "ghost")
+        self._zoom_in_btn.clicked.connect(lambda _checked=False: self._image_widget.zoom_in())
+        layout.addWidget(self._zoom_in_btn)
+
+        self._zoom_fit_btn = QPushButton("Fit")
+        self._zoom_fit_btn.setToolTip("Fit to window (0)")
+        self._zoom_fit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_variant(self._zoom_fit_btn, "ghost")
+        self._zoom_fit_btn.clicked.connect(self._image_widget.zoom_fit)
+        layout.addWidget(self._zoom_fit_btn)
+
+        self._zoom_1to1_btn = QPushButton("1:1")
+        self._zoom_1to1_btn.setToolTip("Native pixels (1)")
+        self._zoom_1to1_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_variant(self._zoom_1to1_btn, "ghost")
+        self._zoom_1to1_btn.clicked.connect(self._image_widget.zoom_one_to_one)
+        layout.addWidget(self._zoom_1to1_btn)
+
+        layout.addStretch()
+        vl_label = QLabel("VL")
+        layout.addWidget(vl_label)
+
+        self._image_widget.view_changed.connect(self._refresh_workspace_zoom)
+        self._refresh_workspace_zoom()
+        return bar
+
+    def _refresh_workspace_zoom(self) -> None:
+        """Reflect the IR view's zoom state on the workspace bar."""
+        label = getattr(self, "_zoom_label", None)
+        if label is not None:
+            label.setText(self._image_widget.zoom_percent())
+
+    # -- View Finder synchronization (two-way, same frame) ------------------
+
+    def _sync_finder_viewport(self) -> None:
+        """Mirror the main view's visible region into the View Finder."""
+        try:
+            self._finder_widget.set_viewport(
+                self._image_widget.viewport_rect_normalized()
+            )
+        except Exception:
+            logger.debug("Finder viewport sync failed", exc_info=True)
+
+    @pyqtSlot(float, float)
+    def _on_finder_dragged(self, center_x: float, center_y: float) -> None:
+        """Finder drag pans the main thermal view to that region."""
+        try:
+            self._image_widget.pan_to_normalized(center_x, center_y)
+        except Exception:
+            logger.debug("Finder drag pan failed", exc_info=True)
+
+    # -- Panel shelf (taskbar) ----------------------------------------------
+
+    _SHELF_ORDER = (
+        "camera_control",
+        "image_info",
+        "temp_scale",
+        "view_finder",
+        "roi",
+        "alarms",
+        "statistics",
+        "config_editor",
+    )
+
+    def _build_panel_shelf(self, parent_layout: QVBoxLayout) -> None:
+        """Build the in-application panel shelf (small taskbar).
+
+        One compact control per dockable panel, in a stable strip below
+        the workspace. Closing a dock hides it; its shelf item remains
+        and restores it to its previous dock/floating location. The shelf
+        lives outside the dock host, so it stays usable even when every
+        dock is hidden. Panels are never destroyed or recreated.
+        """
+        shelf = QFrame()
+        set_role(shelf, "toolbar")
+        shelf_layout = QHBoxLayout(shelf)
+        shelf_layout.setContentsMargins(8, 2, 8, 2)
+        shelf_layout.setSpacing(4)
+        caption = QLabel("Panels:")
+        shelf_layout.addWidget(caption)
+        self._shelf_buttons: dict[str, QPushButton] = {}
+        for key in self._SHELF_ORDER:
+            dock = self._docks.get(key)
+            if dock is None:
+                continue
+            button = QPushButton(dock.windowTitle())
+            button.setCheckable(True)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.clicked.connect(
+                lambda checked=False, dock_key=key: self._on_shelf_clicked(dock_key)
+            )
+            dock.visibilityChanged.connect(
+                lambda visible, dock_key=key: self._sync_shelf_item(dock_key, visible)
+            )
+            shelf_layout.addWidget(button)
+            self._shelf_buttons[key] = button
+            self._sync_shelf_item(key, dock.isVisible())
+        shelf_layout.addStretch()
+        parent_layout.addWidget(shelf)
+        self._shelf_frame = shelf
+
+    def shelf_buttons(self) -> dict[str, QPushButton]:
+        """Panel-shelf buttons by dock key (workstation taskbar)."""
+        return dict(getattr(self, "_shelf_buttons", {}))
+
+    def _sync_shelf_item(self, key: str, visible: bool) -> None:
+        """Reflect dock visibility on its shelf item (theme system only)."""
+        button = self._shelf_buttons.get(key)
+        if button is None:
+            return
+        button.setChecked(visible)
+        # Open docks read as active, hidden docks as inactive; floating
+        # docks are visible, so they read as open — as specified.
+        set_variant(button, "accent" if visible else "ghost")
+
+    def _on_shelf_clicked(self, key: str) -> None:
+        """Shelf click: restore a hidden dock, or raise/focus a visible one."""
+        dock = self._docks.get(key)
+        if dock is None:
+            return
+        if dock.isVisible():
+            dock.raise_()
+            if dock.isFloating():
+                dock.activateWindow()
+            else:
+                dock.setFocus()
+        else:
+            # QDockWidget restores its previous dock/floating location;
+            # the panel widget and its state are untouched.
+            self.show_dock(key)
+
     def _connect_signals(self) -> None:
         """Connect internal signals."""
         self._config_service.add_camera_change_callback(self._on_camera_config_changed)
         self._config_service.add_analysis_change_callback(self._on_analysis_config_changed)
+
+        # Background camera-operation outcomes arrive here (GUI thread).
+        self._bg_done.connect(self._on_bg_done, Qt.ConnectionType.QueuedConnection)
 
         # Image widget range changes
         self._image_widget.range_changed.connect(self._scale_panel.update_range)
@@ -553,17 +956,566 @@ class ConfigurationModeWidget(QWidget):
         return None
 
     def _switch_camera(self, camera_id: str) -> None:
-        """Switch to a different camera (without starting acquisition)."""
-        # Stop previous camera's observer (but NOT acquisition)
-        if self._observer is not None:
-            self._observer.stop()
-            self._observer = None
+        """Switch to a different camera via the safe lifecycle pipeline.
 
+        The old camera (if any) is torn down completely — observer,
+        processing consumer, SHM attachment, render input and child
+        process — before the new camera is selected. There are never two
+        active acquisition pipelines attached to this widget.
+        """
+        self._activate_camera(camera_id, connect=False)
+
+    # -- Explicit camera lifecycle (state machine + sessions) --------------
+
+    def _set_lifecycle(self, target: CameraConnectionState) -> None:
+        """Apply a lifecycle transition and reflect it in the UI.
+
+        Unexpected transitions are logged loudly but still applied: the
+        displayed state must always reflect reality, never wishful logic.
+        """
+        current = self._lifecycle
+        if not allowed_transition(current, target):
+            logger.warning(
+                "Camera lifecycle unexpected transition %s -> %s (cam=%s)",
+                current.value,
+                target.value,
+                self._selected_camera_id,
+            )
+        self._lifecycle = target
+        self._apply_lifecycle_to_ui()
+
+    def _apply_lifecycle_to_ui(self) -> None:
+        """Mirror the lifecycle state onto toolbar/panel indicators."""
+        self._toolbar.set_connection_state(self._lifecycle)
+        self._acq_panel.set_connection_state(self._lifecycle)
+        status_text = {
+            CameraConnectionState.DISCONNECTED: "Connection: Disconnected",
+            CameraConnectionState.CONNECTING: "Connection: Connecting...",
+            CameraConnectionState.CONNECTED: "Connection: Connected",
+            CameraConnectionState.STARTING: "Connection: Starting...",
+            CameraConnectionState.ACQUIRING: "Connection: Acquiring",
+            CameraConnectionState.STOPPING: "Connection: Stopping...",
+            CameraConnectionState.DISCONNECTING: "Connection: Disconnecting...",
+            CameraConnectionState.ERROR: "Connection: Error",
+        }.get(self._lifecycle, f"Connection: {self._lifecycle.value}")
+        self._status_conn.setText(status_text)
+
+    def _begin_session(self, camera_id: str) -> int:
+        """Start a new session epoch for ``camera_id``.
+
+        Bumps the generation so every queued result/render request from an
+        older session is structurally stale, resets the render baselines
+        (sequences restart at 0 per camera) and clears the displays.
+        Returns the new generation.
+        """
+        self._session.renew(camera_id)
         self._selected_camera_id = camera_id
-        self._load_camera_config(camera_id)
+        self._image_widget.set_session(camera_id)
+        self._vl_widget.set_session(camera_id)
+        self._display_rate.reset()
+        self._latest_result = None
+        self._session_started_at = time.perf_counter()
+        self._first_frame_at = None
+        self._first_display_at = None
+        self._image_widget.clear()
+        self._vl_widget.clear()
+        self._set_finder_thumbnail(None)
+        # Session-aware counters: the previous session's frame/FPS numbers
+        # must never be shown for the new session (stale "Frames: 878").
+        self._status_frames.setText("Frames: —")
+        self._status_fps.setText("FPS: —")
+        self._status_proc.setText("Processing: — ms")
+        self._frame_info_panel.clear()
+        return self._session.generation
 
-        # Update status
+    def _log_camera_diagnostics(self, prefix: str, camera_id: str | None = None) -> None:
+        """Log the full pre-Connect/pre-Start lifecycle snapshot.
+
+        Answers, in one line per call site: which camera is selected,
+        whether the parent registry has it, whether its child process
+        exists/is alive, what the child reports, and what the GUI
+        believes. Kept permanently: this is the first thing needed when
+        Start ever reports "No running camera" again.
+        """
+        camera_id = camera_id if camera_id is not None else self._selected_camera_id
+        runtime = self._runtime_service
+        entry = pid = alive = child_state = shm = None
+        running = observing = False
+        observer_attached = self._observer is not None
+        try:
+            if runtime is not None and camera_id is not None:
+                running = bool(runtime.is_camera_running(camera_id))
+                observing = observing or bool(runtime.is_observer_running(camera_id))
+                entry = True
+                try:
+                    handle = runtime.process_handle(camera_id)
+                except Exception:
+                    handle = None
+                if handle is not None:
+                    try:
+                        pid = handle.pid
+                    except Exception:
+                        pid = None
+                    try:
+                        alive = bool(handle.process.is_alive())
+                    except Exception:
+                        alive = None
+                try:
+                    probe = getattr(runtime, "acquisition_child_state", None)
+                    child_state = probe(camera_id) if probe is not None else "unknown-backend"
+                    child_state = getattr(child_state, "value", child_state)
+                except Exception:
+                    child_state = "probe-failed"
+                shm = "see-ring"  # SHM attachment is owned by runtime/observer rings
+        except Exception:
+            entry = False
+        identity = None
+        try:
+            config = self._config_service.get_camera_config(camera_id) if camera_id else None
+            identity = getattr(getattr(config, "identity", None), "serial_number", None)
+        except Exception:
+            pass
+        logger.info(
+            "%s cam=%s identity=%s lifecycle=%s generation=%s "
+            "runtime_entry=%s running=%s pid=%s alive=%s child=%s "
+            "observer_widget=%s observer_runtime=%s",
+            prefix,
+            camera_id,
+            identity,
+            self._lifecycle.value,
+            self._session.generation,
+            entry,
+            running,
+            pid,
+            alive,
+            child_state,
+            observer_attached,
+            observing,
+        )
+
+    def _set_finder_thumbnail(self, image) -> None:
+        """Feed the latest full workspace frame to the View Finder dock.
+
+        Same frame object the workspace paints (implicitly shared, no
+        copy, no second stream); latest-wins by replacement.
+        """
+        try:
+            self._finder_widget.set_image(image)
+        except Exception:
+            logger.debug("View finder update failed", exc_info=True)
+
+    def _selection_mismatch(self, camera_id: str) -> str | None:
+        """Check selected == toolbar == panel identity (section-3 invariant).
+
+        Returns None when every view agrees with the authority
+        (``self._selected_camera_id``), else a description of the
+        mismatch. Reads are non-blocking Qt property/combo lookups.
+        """
+        try:
+            toolbar_id = self._toolbar._camera_combo.currentData()
+        except Exception:
+            toolbar_id = "<unreadable>"
+        try:
+            panel_identity = self._acq_panel._selected_camera_identity
+            panel_id = getattr(panel_identity, "camera_id", None)
+        except Exception:
+            panel_id = "<unreadable>"
+        parts = []
+        if toolbar_id != camera_id:
+            parts.append(f"toolbar={toolbar_id}")
+        if panel_id != camera_id:
+            parts.append(f"panel={panel_id}")
+        if not parts:
+            return None
+        return f"authority={camera_id} " + " ".join(parts)
+
+    def _resync_selection_views(self, camera_id: str) -> None:
+        """Re-assert toolbar/panel views from the selection authority.
+
+        Used only after an invariant refusal: the combo is moved back to
+        the authoritative camera (emitting through the normal switch
+        pipeline, which early-returns when already convergent) and the
+        panel identity reloaded. Never invents a new selection.
+        """
+        try:
+            self._toolbar.blockSignals(True)
+            try:
+                self._toolbar.select_camera_by_id(camera_id)
+            finally:
+                self._toolbar.blockSignals(False)
+        except Exception:
+            logger.debug("Selection resync (toolbar) failed", exc_info=True)
+        try:
+            if self._selected_camera_id:
+                self._load_camera_config(self._selected_camera_id)
+            else:
+                self._clear_all_panels()
+        except Exception:
+            logger.debug("Selection resync (panels) failed", exc_info=True)
+
+    def _detach_observer(self) -> bool:
+        """Detach the widget's observer without touching acquisition.
+
+        Disconnects the Qt signals FIRST (so in-flight queued results can
+        no longer reach the slot), then stops the consumer thread with a
+        bounded wait and clears the runtime-side reference. Returns True
+        when an observer was attached.
+        """
+        observer, self._observer = self._observer, None
+        if observer is None:
+            return False
+        for signal_name, slot in (
+            ("result_ready", self._on_processing_result),
+            ("error_occurred", self._on_observer_error),
+        ):
+            try:
+                getattr(observer, signal_name).disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        camera_id = getattr(observer, "camera_id", None) or self._selected_camera_id
+        try:
+            observer.stop(timeout=_OBSERVER_STOP_TIMEOUT_S)
+        except Exception:
+            logger.exception("Observer stop failed for camera %s", camera_id)
+        if self._runtime_service is not None and camera_id is not None:
+            try:
+                self._runtime_service.stop_observer(camera_id)
+            except Exception:
+                logger.debug("Runtime observer detach failed", exc_info=True)
+        return True
+
+    def _bg_busy(self) -> bool:
+        """True while a background camera operation is undelivered.
+
+        Tag-based (not thread-alive-based): a thread that just finished
+        but whose outcome has not reached the GUI slot yet still owns the
+        pipeline, so a new operation must queue behind it.
+        """
+        return self._bg_tag is not None
+
+    def _run_background(self, tag: str, fn) -> bool:
+        """Run ``fn`` off the GUI thread; the outcome returns via _bg_done.
+
+        Returns False when another camera operation is already in flight
+        (the caller must queue or reject instead of overlapping). The
+        worker is a daemon thread: it never blocks interpreter exit, and
+        no QObject crosses thread boundaries.
+        """
+        if self._bg_busy():
+            return False
+
+        def _target() -> None:
+            try:
+                result = fn()
+            except Exception as exc:  # never crash the worker silently
+                logger.exception("Background camera operation failed")
+                try:
+                    self._bg_done.emit(False, tag, str(exc)[:300], None)
+                except RuntimeError:
+                    pass  # interpreter/widget teardown; nothing to report to
+            else:
+                try:
+                    self._bg_done.emit(True, tag, "", result)
+                except RuntimeError:
+                    pass
+
+        thread = threading.Thread(
+            target=_target, name=f"ConfigCamOp-{tag}", daemon=True
+        )
+        self._bg_thread = thread
+        self._bg_tag = tag
+        thread.start()
+        return True
+
+    def _teardown_camera_blocking(self, camera_id: str, generation: int) -> TeardownTimings:
+        """Safe shutdown sequence for one camera (BACKGROUND thread only).
+
+        Order: observer -> processing consumer -> acquisition/child
+        process (bounded join, terminate on escalation) -> SHM detach
+        verification. Never touches any other camera's pipeline.
+        """
+        timings = TeardownTimings(camera_id=camera_id, generation=generation)
+        runtime = self._runtime_service
+
+        # Capture the child-process handle BEFORE stopping so we can prove
+        # the exact old PID is gone afterwards.
+        old_pid: int | None = None
+        old_handle = None
+        if runtime is not None:
+            try:
+                old_pid = runtime.process_pid(camera_id)
+                old_handle = runtime.process_handle(camera_id)
+            except Exception:
+                logger.debug("PID snapshot failed", exc_info=True)
+        timings.pid = old_pid
+
+        # Phase 1: observer + processing consumer (defensive; the GUI
+        # thread already detached the widget observer).
+        phase = time.perf_counter()
+        observer_ok = True
+        if runtime is not None:
+            try:
+                runtime.stop_observer(camera_id)
+            except Exception:
+                observer_ok = False
+                logger.exception("Teardown observer stop failed cam=%s", camera_id)
+        timings.observer_stop_ms = (time.perf_counter() - phase) * 1000.0
+        timings.observer_stopped = observer_ok
+        timings.processing_stopped = observer_ok
+
+        # Phase 2: acquisition worker / camera child process (bounded).
+        phase = time.perf_counter()
+        if runtime is not None:
+            try:
+                runtime.stop_camera(camera_id, timeout=_TEARDOWN_PROCESS_TIMEOUT_S)
+            except Exception:
+                logger.exception("Teardown stop_camera failed cam=%s", camera_id)
+        timings.acquisition_stop_ms = (time.perf_counter() - phase) * 1000.0
+
+        # Phase 3: verify the old process is actually gone (bounded poll
+        # on process state — no sleeps-to-drain, no global event flush).
+        phase = time.perf_counter()
+        exited = True
+        if old_handle is not None:
+            try:
+                deadline = time.monotonic() + _TEARDOWN_VERIFY_TIMEOUT_S
+                while old_handle.process.is_alive() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                exited = not old_handle.process.is_alive()
+                if not exited:
+                    try:
+                        old_handle.process.terminate()
+                        old_handle.process.join(1.0)
+                    except Exception:
+                        pass
+                    exited = not old_handle.process.is_alive()
+                    timings.escalated = True
+            except Exception:
+                logger.debug("Process exit verification failed", exc_info=True)
+        elif runtime is not None:
+            try:
+                exited = not runtime.is_camera_running(camera_id)
+            except Exception:
+                pass
+        timings.process_exit_ms = (time.perf_counter() - phase) * 1000.0
+        timings.process_exited = exited
+        timings.shm_detached = True
+        timings.shm_detach_ms = 0.0
+        timings.finish()
+        logger.info(timings.summary())
+        return timings
+
+    def _connect_camera_blocking(self, config) -> float:
+        """Start one camera and verify it reaches STREAMING (BACKGROUND thread).
+
+        Returns the connect duration in ms. Partial startups are cleaned
+        up defensively so a failed connection never leaks a process.
+        """
+        camera_id = config.identity.camera_id
+        started = time.perf_counter()
+        try:
+            self._runtime_service.start_camera(config)
+        except Exception:
+            try:
+                self._runtime_service.stop_camera(camera_id, timeout=2.0)
+            except Exception:
+                pass
+            raise
+        connect_ms = (time.perf_counter() - started) * 1000.0
+        logger.info(
+            "CAMERA SESSION START camera=%s connect=%.0fms", camera_id, connect_ms
+        )
+        return connect_ms
+
+    def _teardown_then_connect_blocking(self, old_camera_id: str | None, generation: int, config):
+        """Atomic switch: full teardown of the old camera, then connect new."""
+        timings = None
+        if old_camera_id is not None:
+            timings = self._teardown_camera_blocking(old_camera_id, generation)
+        connect_ms = self._connect_camera_blocking(config)
+        return (timings, connect_ms)
+
+    def _activate_camera(self, camera_id: str, *, connect: bool, config=None) -> None:
+        """Select ``camera_id``, tearing down the old camera safely first.
+
+        When ``connect`` is set, the new camera is connected in the same
+        serialized background operation (switch A -> B -> start). The GUI
+        never blocks: it shows DISCONNECTING/CONNECTING immediately while
+        exactly one background transition owns the pipeline.
+        """
+        if not camera_id:
+            return
+        if self._bg_busy():
+            # A transition owns the pipeline: queue the latest request.
+            self._pending_switch = (camera_id, connect, config)
+            self._status_label.setText("Camera busy — switch queued...")
+            return
+        if camera_id == self._selected_camera_id and not connect:
+            return  # nothing to do
+        if connect:
+            self._log_camera_diagnostics("CONNECT REQUEST", camera_id)
+
+        # The toolbar combo is a pure view of the selection authority.
+        # Move it silently (blocked: no phantom switch) so no path can
+        # leave the visible selection behind the activated camera — every
+        # production caller previously had to remember this separately.
+        try:
+            self._toolbar.blockSignals(True)
+            try:
+                self._toolbar.select_camera_by_id(camera_id)
+            finally:
+                self._toolbar.blockSignals(False)
+        except Exception:
+            logger.debug("Toolbar selection sync failed", exc_info=True)
+
+        old_camera_id = self._selected_camera_id
+        needs_teardown = (
+            old_camera_id is not None
+            and old_camera_id != camera_id
+            and self._runtime_service is not None
+            and (
+                self._runtime_service.is_camera_running(old_camera_id)
+                or self._runtime_service.is_observer_running(old_camera_id)
+                or self._observer is not None
+            )
+        )
+
+        # GUI-thread immediate part: cut the old display path FIRST so no
+        # stale frame can be accepted from this instant on, then renew the
+        # session epoch and select the new camera.
+        self._detach_observer()
+        if self._runtime_service is not None and old_camera_id is not None:
+            try:
+                self._runtime_service.stop_observer(old_camera_id)
+            except Exception:
+                pass
+        generation = self._begin_session(camera_id)
+
+        if config is None and connect and self._runtime_service is not None:
+            cfg = self._config_service.get_camera_config(camera_id)
+            config = cfg
+
+        if needs_teardown or connect:
+            if self._runtime_service is None:
+                QMessageBox.warning(self, "Unavailable", "Runtime service not available.")
+                self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+                return
+            if connect and config is None:
+                QMessageBox.warning(self, "Connect Failed", "No configuration for camera.")
+                self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+                return
+            if needs_teardown:
+                self._set_lifecycle(CameraConnectionState.DISCONNECTING)
+                self._status_label.setText(f"Disconnecting {old_camera_id}...")
+            else:
+                self._set_lifecycle(CameraConnectionState.CONNECTING)
+                self._status_label.setText(f"Connecting {camera_id}...")
+            if connect:
+                self._bg_connect_config = config
+                started = self._run_background(
+                    "switch_connect",
+                    lambda: self._teardown_then_connect_blocking(
+                        old_camera_id if needs_teardown else None, generation, config
+                    ),
+                )
+            else:
+                self._bg_connect_config = None
+                started = self._run_background(
+                    "switch",
+                    lambda: self._teardown_camera_blocking(old_camera_id, generation),
+                )
+            if not started:  # lost a race with another op; queue instead
+                self._pending_switch = (camera_id, connect, config)
+            return
+
+        # No pipeline to tear down and no connect requested: pure reselect.
+        self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+        self._load_camera_config(camera_id)
         self._status_label.setText(f"Camera: {camera_id}")
+
+    @pyqtSlot(bool, str, str, object)
+    def _on_bg_done(self, ok: bool, tag: str, message: str, result: object) -> None:
+        """Handle completion of a background camera operation (GUI thread).
+
+        Deliveries tagged for an older operation (impossible by
+        construction — a single in-flight op — but guarded anyway) are
+        ignored so they can never drive the state machine.
+        """
+        if tag != self._bg_tag:
+            logger.debug("Ignoring stale background delivery tag=%s", tag)
+            return
+        self._bg_tag = None
+        self._bg_thread = None
+        if ok:
+            self._on_bg_result(tag, result)
+        else:
+            self._on_bg_error(tag, message)
+        self._process_pending_camera_request()
+
+    def _on_bg_result(self, tag: str | None, result: object) -> None:
+        """Apply a successful background camera operation (GUI thread)."""
+        try:
+            if tag == "switch":
+                self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+                if self._selected_camera_id:
+                    self._load_camera_config(self._selected_camera_id)
+                    self._status_label.setText(f"Camera: {self._selected_camera_id}")
+            elif tag == "switch_connect":
+                timings, connect_ms = result
+                self._set_lifecycle(CameraConnectionState.CONNECTED)
+                self._status_conn.setText("Connection: Connected")
+                self._status_label.setText(
+                    f"Camera connected ({connect_ms:.0f} ms) - press Start to begin acquisition"
+                )
+                if self._selected_camera_id:
+                    self._load_camera_config(self._selected_camera_id)
+                self._refresh_focus_panel()
+                self._refresh_nuc_panel()
+            elif tag == "disconnect":
+                self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+                if self._selected_camera_id:
+                    self._load_camera_config(self._selected_camera_id)
+                self._status_label.setText("Camera disconnected")
+            elif tag == "connect":
+                connect_ms = float(result)
+                self._set_lifecycle(CameraConnectionState.CONNECTED)
+                self._status_conn.setText("Connection: Connected")
+                self._status_label.setText(
+                    f"Camera connected ({connect_ms:.0f} ms) - press Start to begin acquisition"
+                )
+                if self._selected_camera_id:
+                    self._load_camera_config(self._selected_camera_id)
+                self._refresh_focus_panel()
+                self._refresh_nuc_panel()
+        finally:
+            self._bg_connect_config = None
+
+    def _on_bg_error(self, tag: str | None, message: str) -> None:
+        """Handle failure of a background camera operation (GUI thread)."""
+        self._bg_connect_config = None
+        logger.warning("Background camera operation %s failed: %s", tag, message)
+        if tag in ("switch_connect", "connect"):
+            self._set_lifecycle(CameraConnectionState.ERROR)
+            self._acq_panel.set_focus_enabled(False, "Camera not running")
+            self._acq_panel.set_nuc_enabled(False, "Camera not running")
+            QMessageBox.warning(self, "Connect Failed", f"Failed to connect: {message}")
+        else:
+            # Teardown/switch/disconnect failures must still land in a
+            # known state with the old pipeline verified stopped.
+            self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+            if self._selected_camera_id:
+                self._load_camera_config(self._selected_camera_id)
+
+    def _process_pending_camera_request(self) -> None:
+        """Run whatever camera request arrived during a transition."""
+        if self._pending_disconnect:
+            self._pending_disconnect = False
+            self._on_disconnect()
+            return
+        pending, self._pending_switch = self._pending_switch, None
+        if pending is not None:
+            camera_id, connect, config = pending
+            self._activate_camera(camera_id, connect=connect, config=config)
 
     def _load_camera_config(self, camera_id: str) -> None:
         """Load configuration for the selected camera into all panels."""
@@ -575,8 +1527,15 @@ class ConfigurationModeWidget(QWidget):
         identity = config.identity
         metadata = dict(config.metadata or {})
 
-        # Determine connection status
-        status = self._get_camera_connection_status(camera_id)
+        # Connection state shown here is ALWAYS the lifecycle authority
+        # (self._lifecycle), never a transport-liveness probe. In the
+        # process-per-camera architecture the child streams as soon as it
+        # is connected, so is_camera_running() is True in both CONNECTED
+        # and ACQUIRING; deriving the button matrix from it misreports a
+        # merely-connected camera as acquiring and kills the Start button.
+        # ACQUIRING for display means exactly one thing: the observer/
+        # processing consumer is attached (see _on_start_acquisition).
+        status = self._lifecycle
 
         # Update toolbar
         self._toolbar.set_connection_state(status)
@@ -597,10 +1556,10 @@ class ConfigurationModeWidget(QWidget):
         # Update ROI overlays
         self._update_roi_overlays()
 
-        # Update acquisition button states (only on acq_panel now)
-        if self._runtime_service is not None:
-            running = self._runtime_service.is_camera_running(camera_id)
-            self._acq_panel.set_acquisition_running(running)
+        # NOTE: button states follow self._lifecycle via set_connection_state
+        # above. Do NOT re-derive them from is_camera_running() here: the
+        # child process streams while merely CONNECTED, so that probe would
+        # force ACQUIRING and disable Start (the Start-button failure).
 
         # Refresh focus + NUC state for the selected camera (async; no-op
         # when the camera is not running).
@@ -609,8 +1568,15 @@ class ConfigurationModeWidget(QWidget):
 
     # -- Focus (UI -> runtime/service -> driver, never GVCP directly) --
 
-    def _stop_focus_worker(self, timeout_ms: int = 3000) -> None:
-        """Request the focus thread to stop and wait for it (bounded).
+    def _stop_focus_worker(self, timeout_ms: int = 0) -> None:
+        """Request the focus thread to stop without freezing the live feed.
+
+        Interactive callers (focus Apply/Refresh, camera switch) use the
+        default ``timeout_ms=0``: quit is requested and cleanup is deferred
+        to the thread's ``finished`` signal, so the GUI event loop keeps
+        delivering observer frames while the old worker drains. Only
+        teardown (``closeEvent``) passes a positive timeout for a bounded
+        blocking wait when no feed is left to protect.
 
         A timeout expiry is logged loudly and never silent: the thread is
         left to quit itself via its finished/failed -> quit chain once the
@@ -618,10 +1584,30 @@ class ConfigurationModeWidget(QWidget):
         bounded), so it is never destroyed while running.
         """
         thread, self._focus_thread = self._focus_thread, None
-        self._focus_worker = None
-        if thread is not None:
+        worker, self._focus_worker = self._focus_worker, None
+        if thread is None:
+            return
+        try:
             thread.quit()
-            if not thread.wait(timeout_ms):
+        except RuntimeError:
+            return
+        if timeout_ms <= 0:
+            # Non-blocking: Qt owns cleanup once the worker's queued
+            # finished/failed signal quits the thread's event loop.
+            try:
+                if worker is not None:
+                    thread.finished.connect(worker.deleteLater)
+                thread.finished.connect(thread.deleteLater)
+            except RuntimeError:
+                pass
+            return
+        try:
+            if worker is not None:
+                thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+        except RuntimeError:
+            pass
+        if not thread.wait(timeout_ms):
                 logger.warning(
                     "Focus worker thread still running after %d ms; "
                     "leaving it to quit itself on operation completion",
@@ -910,21 +1896,41 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.set_nuc_enabled(True)
         self._acq_panel.set_nuc_error(message)
 
-    def _get_camera_connection_status(self, camera_id: str) -> CameraConnectionState:
-        """Get the connection status of a camera."""
-        if self._runtime_service is not None:
-            if self._runtime_service.is_camera_running(camera_id):
-                return CameraConnectionState.ACQUIRING
-            # Check if camera is connected (runtime exists but not acquiring)
-            # For now, we treat any configured camera as DISCONNECTED unless acquiring
-            config = self._config_service.get_camera_config(camera_id)
-            if config and config.enabled:
-                return CameraConnectionState.DISCONNECTED
-        config = self._config_service.get_camera_config(camera_id)
-        if config:
-            if not config.enabled:
-                return CameraConnectionState.DISCONNECTED
-        return CameraConnectionState.DISCONNECTED
+    def _reconcile_lifecycle(self) -> None:
+        """Reconcile the lifecycle with transport/display reality.
+
+        Called when Configuration mode is (re)activated. The lifecycle
+        remains the authority; this only corrects the two divergences
+        that can happen while the widget is inactive:
+
+        - ACQUIRING with no observer attached (display path detached on
+          mode switch) but transport alive -> CONNECTED.
+        - ACQUIRING with dead transport -> ERROR (unexpected loss).
+        - CONNECTED with dead transport -> DISCONNECTED.
+        Transitional states are never touched: a background operation
+        owns the pipeline there.
+        """
+        if self._runtime_service is None or self._selected_camera_id is None:
+            return
+        if is_transitional(self._lifecycle):
+            return
+        camera_id = self._selected_camera_id
+        try:
+            running = self._runtime_service.is_camera_running(camera_id)
+            observing = (self._observer is not None) or bool(
+                self._runtime_service.is_observer_running(camera_id)
+            )
+        except Exception:
+            logger.debug("Lifecycle reconcile probe failed", exc_info=True)
+            return
+        if self._lifecycle == CameraConnectionState.ACQUIRING:
+            if not running:
+                self._set_lifecycle(CameraConnectionState.ERROR)
+            elif not observing:
+                self._set_lifecycle(CameraConnectionState.CONNECTED)
+        elif self._lifecycle == CameraConnectionState.CONNECTED:
+            if not running:
+                self._set_lifecycle(CameraConnectionState.DISCONNECTED)
 
     def _clear_all_panels(self) -> None:
         """Clear all panels when no camera selected."""
@@ -932,9 +1938,11 @@ class ConfigurationModeWidget(QWidget):
         self._vl_widget.clear()
         self._image_widget.set_roi_overlays([])
         self._scale_panel.update_cursor_temperature(None)
+        self._set_finder_thumbnail(None)
         self._roi_panel.set_camera("")
         self._alarm_panel.set_camera("")
         self._stats_panel.clear()
+        self._frame_info_panel.clear()
         self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
         self._acq_panel.set_camera_identity(None)
         self._acq_panel.set_connection_state(CameraConnectionState.DISCONNECTED)
@@ -942,8 +1950,46 @@ class ConfigurationModeWidget(QWidget):
 
     @pyqtSlot(object)
     def _on_processing_result(self, result: ProcessingResult) -> None:
-        """Receive ProcessingResult from observer."""
-        frame = result.frame
+        """Receive ProcessingResult from observer (session-gated).
+
+        Results from a previous camera session — queued before a switch
+        or disconnect — are discarded here. No event-queue flushing and
+        no sleeps: staleness is decided by the (camera_id, generation)
+        token, never by timing.
+        """
+        sender = self.sender()
+        sender_generation = getattr(sender, "_session_generation", None)
+        frame = result.frame if result is not None else None
+        frame_camera = (
+            getattr(getattr(frame, "descriptor", None), "camera_id", None)
+            if frame is not None
+            else None
+        )
+        if sender_generation is not None and sender_generation != self._session.generation:
+            self._stale_results_dropped += 1
+            logger.debug(
+                "Result dropped (stale generation %s != %s cam=%s)",
+                sender_generation,
+                self._session.generation,
+                frame_camera,
+            )
+            return
+        if frame_camera is not None and frame_camera != self._selected_camera_id:
+            self._stale_results_dropped += 1
+            logger.debug(
+                "Result dropped (stale camera %s != %s)",
+                frame_camera,
+                self._selected_camera_id,
+            )
+            return
+        if self._first_frame_at is None and self._session_started_at is not None:
+            self._first_frame_at = time.perf_counter()
+            logger.info(
+                "First valid frame cam=%s generation=%s latency=%.0fms",
+                self._selected_camera_id,
+                self._session.generation,
+                (self._first_frame_at - self._session_started_at) * 1000.0,
+            )
         sequence = frame.descriptor.sequence if frame is not None else None
         if sequence is not None and not self._display_rate.add(sequence):
             return
@@ -964,16 +2010,26 @@ class ConfigurationModeWidget(QWidget):
 
         # VL display (Stage 8E): same result -> same hardware frame, so the
         # VL image shown always corresponds to the IR image shown.
+        try:
+            acq_mono_ns = (
+                int(float(frame.descriptor.monotonic_timestamp) * 1e9)
+                if frame is not None and frame.descriptor.monotonic_timestamp is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            acq_mono_ns = None
         if frame is not None and frame.payload.visible is not None:
             self._vl_widget.set_frame(
                 frame.payload.visible,
                 frame.descriptor.sequence,
                 frame.descriptor.visible.sequence,
+                camera_id=frame.descriptor.camera_id,
+                acq_mono_ns=acq_mono_ns,
             )
         else:
             self._vl_widget.set_frame(None, sequence if sequence is not None else -1)
 
-        # Update image info
+        # Update image info (acquisition panel + Image Information dock)
         if frame:
             self._acq_panel.update_image_info(
                 image_size=f"{frame.payload.thermal.shape[1]}×{frame.payload.thermal.shape[0]}" if frame.payload.thermal is not None else "—",
@@ -981,6 +2037,7 @@ class ConfigurationModeWidget(QWidget):
                 timestamp=f"{frame.descriptor.timestamp:.3f}",
                 processing=f"{result.processing_time_ms:.1f} ms",
             )
+            self._frame_info_panel.update_from_frame(frame, result)
 
         # Update analysis results
         analysis = result.analysis_result
@@ -1007,6 +2064,16 @@ class ConfigurationModeWidget(QWidget):
     def _on_rendered_frame(self, image, thumbnail) -> None:
         """Use the worker's single rendered image for both displays."""
         self._scale_panel.update_view_finder_image(thumbnail)
+        # Finder gets the full workspace frame (same object, no copy).
+        self._set_finder_thumbnail(image)
+        if self._first_display_at is None and self._session_started_at is not None:
+            self._first_display_at = time.perf_counter()
+            logger.info(
+                "First display cam=%s generation=%s latency=%.0fms",
+                self._selected_camera_id,
+                self._session.generation,
+                (self._first_display_at - self._session_started_at) * 1000.0,
+            )
 
     @pyqtSlot(str)
     def _on_render_error(self, message: str) -> None:
@@ -1039,6 +2106,7 @@ class ConfigurationModeWidget(QWidget):
             self._camera_selection_dialog.camera_selected.connect(self._on_camera_selected_from_dialog)
             self._camera_selection_dialog.discovery_finished.connect(self._restore_connect_cursor)
             self._camera_selection_dialog.discovery_failed.connect(self._on_discovery_failed)
+            self._camera_selection_dialog.finished.connect(self._on_connect_dialog_finished)
 
         self._camera_selection_dialog.show()
         self._camera_selection_dialog.raise_()
@@ -1056,6 +2124,27 @@ class ConfigurationModeWidget(QWidget):
     def _on_discovery_failed(self, message: str) -> None:
         self._restore_connect_cursor()
         self._status_conn.setText("Connection: Discovery failed")
+
+    @pyqtSlot(int)
+    def _on_connect_dialog_finished(self, result: int) -> None:
+        """Recover from a dismissed Connect dialog.
+
+        Accepted is owned by the camera_selected path. Any other close
+        (dismissed without a selection) releases the CONNECTING hold the
+        Connect button placed on the panels and re-mirrors the lifecycle.
+        Without this, dismissing the dialog freezes every button in a
+        stuck CONNECTING state until an unrelated reload happens.
+        """
+        self._restore_connect_cursor()
+        if result == QDialog.DialogCode.Accepted:
+            return
+        if self._bg_busy():
+            return  # a transition owns the UI; its done-handler refreshes
+        self._apply_lifecycle_to_ui()
+        if self._selected_camera_id:
+            self._load_camera_config(self._selected_camera_id)
+        elif self._lifecycle == CameraConnectionState.DISCONNECTED:
+            self._status_label.setText("Ready")
 
     def _on_camera_selected_from_dialog(self, discovered_camera) -> None:
         """Handle camera selection from dialog - connect to the selected camera."""
@@ -1121,75 +2210,191 @@ class ConfigurationModeWidget(QWidget):
                 )
             )
 
-        # Select this camera in the toolbar (sets _selected_camera_id)
-        self._toolbar.select_camera_by_id(camera_id)
-        self._selected_camera_id = camera_id
-
-        # Update toolbar to connecting state
-        self._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
-        self._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
-
+        # Select this camera in the toolbar without emitting the switch
+        # signal (the safe _activate_camera pipeline below owns the
+        # transition, including tearing down the previously selected
+        # camera — never two active pipelines).
+        self._toolbar.blockSignals(True)
         try:
-            # Start camera runtime
-            self._runtime_service.start_camera(updated_config)
+            self._toolbar.select_camera_by_id(camera_id)
+        finally:
+            self._toolbar.blockSignals(False)
 
-            # Update to CONNECTED state (not yet acquiring)
-            self._toolbar.set_connection_state(CameraConnectionState.CONNECTED)
-            self._acq_panel.set_connection_state(CameraConnectionState.CONNECTED)
-            self._status_conn.setText("Connection: Connected")
-            self._status_label.setText("Camera connected - press Start to begin acquisition")
-            self._refresh_focus_panel()
-            self._refresh_nuc_panel()
-
-        except Exception as exc:
-            self._toolbar.set_connection_state(CameraConnectionState.ERROR)
-            self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
-            self._status_conn.setText(f"Connection: Error")
-            self._acq_panel.set_focus_enabled(False, "Camera not running")
-            self._acq_panel.set_nuc_enabled(False, "Camera not running")
-            QMessageBox.warning(self, "Connect Failed", f"Failed to connect to camera: {exc}")
+        # CONNECT: establish control + acquisition in one serialized
+        # background operation. The GUI shows CONNECTING/DISCONNECTING
+        # immediately; failures land in ERROR with partial resources
+        # cleaned up and the user informed.
+        self._activate_camera(camera_id, connect=True, config=updated_config)
 
     def _on_disconnect(self) -> None:
-        """Handle Disconnect button."""
+        """Handle Disconnect button: safe shutdown of the current camera.
+
+        Disconnecting a running camera automatically performs the full
+        safe shutdown sequence (observer -> consumer -> acquisition ->
+        child process -> SHM detach) in a background operation. The GUI
+        shows DISCONNECTING immediately and never blocks.
+        """
         if not self._selected_camera_id or not self._runtime_service:
             return
+        if self._bg_busy():
+            # A transition is in flight: disconnect as soon as it lands.
+            self._pending_disconnect = True
+            self._pending_switch = None
+            self._status_label.setText("Camera busy — disconnect queued...")
+            return
+        if not can_disconnect(self._lifecycle):
+            return
 
+        camera_id = self._selected_camera_id
+        generation = self._session.generation
+
+        # GUI-thread immediate part: cut the display path first.
+        self._detach_observer()
         try:
-            # Stop acquisition if running
-            if self._runtime_service.is_camera_running(self._selected_camera_id):
-                self._runtime_service.stop_camera(self._selected_camera_id)
+            self._runtime_service.stop_observer(camera_id)
+        except Exception:
+            pass
+        self._acq_panel.set_acquisition_running(False)
 
-            if self._observer:
-                self._observer.stop()
-                self._observer = None
+        # Focus + NUC no longer available once the camera stops.
+        self._stop_focus_worker()
+        self._focus_camera_id = None
+        self._acq_panel.set_focus_enabled(False, "Camera not running")
+        self._stop_nuc_worker()
+        self._nuc_camera_id = None
+        self._acq_panel.set_nuc_enabled(False, "Camera not running")
 
-            self._acq_panel.set_acquisition_running(False)
+        # Renew the epoch so any late result from this camera is stale.
+        self._session.renew(camera_id)
+        self._image_widget.set_session(camera_id)
+        self._vl_widget.set_session(camera_id)
+        self._image_widget.clear()
+        self._vl_widget.clear()
+        self._set_finder_thumbnail(None)
 
-            # Focus + NUC no longer available once the camera stops.
-            self._stop_focus_worker()
-            self._focus_camera_id = None
-            self._acq_panel.set_focus_enabled(False, "Camera not running")
-            self._stop_nuc_worker()
-            self._nuc_camera_id = None
-            self._acq_panel.set_nuc_enabled(False, "Camera not running")
+        self._set_lifecycle(CameraConnectionState.DISCONNECTING)
+        self._status_label.setText(f"Disconnecting {camera_id}...")
+        started = self._run_background(
+            "disconnect",
+            lambda: self._teardown_camera_blocking(camera_id, generation),
+        )
+        if not started:
+            self._pending_disconnect = True
 
-            # Update to DISCONNECTED state
-            self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
-            self._acq_panel.set_connection_state(CameraConnectionState.DISCONNECTED)
-            self._status_conn.setText("Connection: Disconnected")
-            self._status_label.setText("Camera disconnected")
-            self._image_widget.clear()
-            self._vl_widget.clear()
+    def _log_start_click(self) -> None:
+        """Section-1 physical Start-button snapshot (no inference).
 
-        except Exception as exc:
-            QMessageBox.warning(self, "Disconnect Failed", f"Failed to disconnect: {exc}")
+        Logged as the first statement of the Start handler, before any
+        guard or refusal, so even refused clicks leave the exact
+        identity picture behind.
+        """
+        try:
+            config = (
+                self._config_service.get_camera_config(self._selected_camera_id)
+                if self._selected_camera_id
+                else None
+            )
+            ui_id = self._selected_camera_id
+            ui_serial = getattr(getattr(config, "identity", None), "serial_number", None)
+            ui_name = getattr(config, "name", None)
+        except Exception:
+            ui_id = ui_serial = ui_name = "<unreadable>"
+        try:
+            panel_identity = self._acq_panel._selected_camera_identity
+            panel_id = getattr(panel_identity, "camera_id", None)
+            panel_serial = getattr(panel_identity, "serial_number", None)
+        except Exception:
+            panel_id = panel_serial = "<unreadable>"
+        try:
+            toolbar_id = self._toolbar._camera_combo.currentData()
+        except Exception:
+            toolbar_id = "<unreadable>"
+        try:
+            if self._runtime_service is not None:
+                runtime_ids = sorted(self._runtime_service.running_camera_ids())
+            else:
+                runtime_ids = "<no-runtime>"
+        except Exception:
+            runtime_ids = "<unreadable>"
+        try:
+            observer_id = getattr(self._observer, "camera_id", None)
+        except Exception:
+            observer_id = "<unreadable>"
+        logger.info(
+            "START CLICK: ui_selected_id=%s ui_selected_serial=%s ui_selected_name=%s "
+            "panel_camera_id=%s panel_serial=%s toolbar_camera_id=%s "
+            "widget_camera_id=%s lifecycle=%s session_camera_id=%s "
+            "runtime_camera_ids=%s generation=%s observer_camera_id=%s",
+            ui_id,
+            ui_serial,
+            ui_name,
+            panel_id,
+            panel_serial,
+            toolbar_id,
+            self._selected_camera_id,
+            self._lifecycle.value,
+            self._session.camera_id,
+            runtime_ids,
+            self._session.generation,
+            observer_id,
+        )
 
     def _on_start_acquisition(self) -> None:
-        """Handle Start acquisition button."""
+        """Handle Start acquisition button (verify child, attach display path).
+
+        START requires a connected child process: the transport entry must
+        exist and the child must report STREAMING over the status channel
+        (the V3 equivalent of the standalone's acquisition_start having
+        run). Only then is the single observer/processing consumer
+        attached and stamped with the session generation. A missing or
+        non-streaming child is refused with a truthful message — the GUI
+        never attempts the observer against a dead transport, so the old
+        "No running camera ... call start_camera first" can no longer
+        surface from a stale UI state.
+        """
+        self._log_start_click()
         if not self._selected_camera_id or not self._runtime_service:
             return
+        if self._bg_busy():
+            self._status_label.setText("Camera busy — start queued...")
+            return
+        if not can_start(self._lifecycle):
+            return
 
-        config = self._config_service.get_camera_config(self._selected_camera_id)
+        camera_id = self._selected_camera_id
+        self._log_camera_diagnostics("START REQUEST", camera_id)
+
+        # Identity invariant (section 3): toolbar == panel == authority.
+        # The phantom combo rebuild used to swap the selection mid-flight;
+        # even with that fixed, Start snapshots ONE id at entry and refuses
+        # on any mismatch instead of risking the wrong camera.
+        mismatch = self._selection_mismatch(camera_id)
+        if mismatch is not None:
+            logger.error(
+                "START REFUSED (identity mismatch) selected=%s %s generation=%s",
+                camera_id,
+                mismatch,
+                self._session.generation,
+            )
+            self._resync_selection_views(camera_id)
+            self._status_label.setText("Camera selection mismatch — corrected, press Start again")
+            QMessageBox.warning(
+                self,
+                "Start Failed",
+                f"Camera selection mismatch ({mismatch}). "
+                "The display was re-synchronized; press Start again.",
+            )
+            return
+
+        # Transport verification (cheap, non-blocking registry reads): the
+        # child process must exist and report STREAMING. Anything else is
+        # a drifted UI state, corrected here instead of probed downstream.
+        refusal = self._refuse_start_if_not_ready(camera_id)
+        if refusal is not None:
+            self._log_camera_diagnostics(f"START REFUSED ({refusal})", camera_id)
+            return
+
+        config = self._config_service.get_camera_config(camera_id)
         if not config:
             return
 
@@ -1210,44 +2415,122 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_camera_config(updated_config)
 
-        previous_state = self._acq_panel._connection_state
+        previous_state = self._lifecycle
+        self._detach_observer()
+        self._set_lifecycle(CameraConnectionState.STARTING)
         try:
             # Camera runtime is the authority; this attaches the single consumer.
-            analysis = self._config_service.get_analysis_config(self._selected_camera_id)
+            # NOTE: the entry-local camera_id is used throughout — never
+            # re-read self._selected_camera_id mid-flight, so no signal or
+            # callback running inside this block can redirect the request
+            # to a different camera.
+            analysis = self._config_service.get_analysis_config(camera_id)
             if analysis is None:
-                analysis = AnalysisConfig(camera_id=self._selected_camera_id)
-            self._observer = self._runtime_service.start_observer(self._selected_camera_id, analysis_config=analysis)
+                analysis = AnalysisConfig(camera_id=camera_id)
+            observer = self._runtime_service.start_observer(camera_id, analysis_config=analysis)
+            # Stamp the session epoch: results emitted by an older observer
+            # (still draining its queued signals) carry an older token and
+            # are discarded in _on_processing_result.
+            observer._session_generation = self._session.generation
+            self._observer = observer
             self._observer.result_ready.connect(self._on_processing_result, Qt.ConnectionType.QueuedConnection)
             self._observer.error_occurred.connect(self._on_observer_error, Qt.ConnectionType.QueuedConnection)
+            logger.info(
+                "CHILD STREAMING VERIFIED cam=%s generation=%s OBSERVER ATTACHED",
+                camera_id,
+                self._session.generation,
+            )
 
         except Exception as exc:
             self._observer = None
-            self._acq_panel.set_connection_state(previous_state)
+            self._set_lifecycle(
+                CameraConnectionState.CONNECTED
+                if previous_state == CameraConnectionState.CONNECTED
+                else CameraConnectionState.ERROR
+            )
             QMessageBox.warning(self, "Start Failed", f"Failed to start acquisition: {exc}")
             return
 
+        # Fresh acquisition renumbers frames from 0: reset the render
+        # baselines for this (unchanged) session epoch.
+        self._image_widget.set_session(camera_id)
+        self._vl_widget.set_session(camera_id)
+        self._session_started_at = time.perf_counter()
+        self._first_frame_at = None
+        self._first_display_at = None
+
         # Presentation updates are outside the runtime transaction.
         self._display_rate.reset()
-        self._acq_panel.set_acquisition_running(True)
-        self._toolbar.set_connection_state(CameraConnectionState.ACQUIRING)
-        self._acq_panel.set_connection_state(CameraConnectionState.ACQUIRING)
-        self._status_conn.setText("Connection: Acquiring")
+        self._set_lifecycle(CameraConnectionState.ACQUIRING)
         self._status_label.setText("Acquisition started")
 
+    def _refuse_start_if_not_ready(self, camera_id: str) -> str | None:
+        """Refuse Start when the child transport is not usable.
+
+        Returns None when the child exists and reports STREAMING (Start
+        may proceed), otherwise corrects the drifted lifecycle, informs
+        the user truthfully, and returns the reason. This is a refusal,
+        not a workaround: without a streaming child there is nothing to
+        observe, and attempting the observer would only reproduce the
+        stale "No running camera" failure downstream.
+        """
+        runtime = self._runtime_service
+        try:
+            running = bool(runtime.is_camera_running(camera_id)) if runtime is not None else False
+        except Exception:
+            running = False
+        if not running:
+            # Transport gone (never connected, child died, or another
+            # owner tore it down): the UI state drifted; correct it.
+            if self._lifecycle == CameraConnectionState.ACQUIRING:
+                self._set_lifecycle(CameraConnectionState.ERROR)
+            else:
+                self._set_lifecycle(CameraConnectionState.DISCONNECTED)
+            self._status_label.setText("Camera is no longer connected — press Connect")
+            QMessageBox.warning(
+                self,
+                "Start Failed",
+                f"Camera {camera_id} is not connected (no camera process). "
+                "Press Connect to reconnect, then Start.",
+            )
+            return "no-transport"
+        # Child exists: it must report STREAMING over the status channel
+        # (unknown backends without the probe are allowed through).
+        child_state = None
+        try:
+            probe = getattr(runtime, "acquisition_child_state", None)
+            child_state = probe(camera_id) if probe is not None else None
+        except Exception:
+            child_state = None
+        if child_state is not None and child_state is not AcquisitionState.STREAMING:
+            self._set_lifecycle(CameraConnectionState.ERROR)
+            self._status_label.setText(
+                f"Camera child reports {getattr(child_state, 'value', child_state)} — reconnect"
+            )
+            QMessageBox.warning(
+                self,
+                "Start Failed",
+                f"Camera {camera_id} is not streaming "
+                f"(child reports {getattr(child_state, 'value', child_state)}). "
+                "Disconnect and Connect again.",
+            )
+            return f"child-{getattr(child_state, 'value', child_state)}"
+        return None
+
     def _on_stop_acquisition(self) -> None:
-        """Handle Stop acquisition button."""
+        """Handle Stop acquisition button (detach display, keep connection)."""
         if not self._selected_camera_id or not self._runtime_service:
+            return
+        if self._bg_busy():
+            self._status_label.setText("Camera busy — stop queued...")
+            return
+        if not can_stop(self._lifecycle):
             return
 
         try:
-            if self._observer:
-                self._observer.stop()
-                self._observer = None
-
-            self._acq_panel.set_acquisition_running(False)
-            self._toolbar.set_connection_state(CameraConnectionState.CONNECTED)
-            self._acq_panel.set_connection_state(CameraConnectionState.CONNECTED)
-            self._status_conn.setText("Connection: Connected")
+            self._set_lifecycle(CameraConnectionState.STOPPING)
+            self._detach_observer()
+            self._set_lifecycle(CameraConnectionState.CONNECTED)
             self._status_label.setText("Acquisition stopped")
 
         except Exception as exc:
@@ -1309,9 +2592,11 @@ class ConfigurationModeWidget(QWidget):
         pass  # TODO: Implement history buffer
 
     def _on_observer_error(self, message: str) -> None:
-        self._acq_panel.set_acquisition_running(False)
-        self._toolbar.set_connection_state(CameraConnectionState.ERROR)
-        self._acq_panel.set_connection_state(CameraConnectionState.ERROR)
+        sender = self.sender()
+        sender_generation = getattr(sender, "_session_generation", None)
+        if sender_generation is not None and sender_generation != self._session.generation:
+            return  # stale error from a previous session
+        self._set_lifecycle(CameraConnectionState.ERROR)
         self._status_conn.setText(f"Connection: Error - {message}")
 
     # Display control handlers
@@ -1402,19 +2687,67 @@ class ConfigurationModeWidget(QWidget):
             self._update_roi_overlays()
 
     def _update_stats(self) -> None:
-        """Update status bar stats."""
+        """Update status bar stats + 1 Hz transport liveness watch.
+
+        The watch makes the child authoritative: if the transport died
+        (child crash, external teardown) while the UI believes it is
+        CONNECTED or ACQUIRING, the lifecycle is corrected within about
+        a second instead of drifting until the next click. Transitional
+        states are never touched (a background operation owns them), and
+        driver-level RECONNECTING keeps the transport alive, so recovery
+        in progress is left alone. All probes are non-blocking.
+        """
+        if (
+            self._runtime_service is not None
+            and self._selected_camera_id is not None
+            and not is_transitional(self._lifecycle)
+            and self._lifecycle
+            in (
+                CameraConnectionState.CONNECTED,
+                CameraConnectionState.ACQUIRING,
+            )
+        ):
+            try:
+                was = self._lifecycle
+                self._reconcile_lifecycle()
+                if self._lifecycle != was:
+                    logger.warning(
+                        "Transport drift corrected cam=%s generation=%s %s -> %s",
+                        self._selected_camera_id,
+                        self._session.generation,
+                        was.value,
+                        self._lifecycle.value,
+                    )
+                    if self._lifecycle == CameraConnectionState.ERROR:
+                        self._status_label.setText("Camera connection lost")
+            except Exception:
+                logger.debug("Liveness probe failed", exc_info=True)
+
+        if self._lifecycle in (
+            CameraConnectionState.DISCONNECTED,
+            CameraConnectionState.DISCONNECTING,
+            CameraConnectionState.CONNECTING,
+        ):
+            # No live session: never paint transport numbers (session-aware
+            # counters; fixes stale "Frames: 878" after disconnect).
+            return
         if self._runtime_service and self._selected_camera_id:
-            cam_stats = self._runtime_service.camera_stats(self._selected_camera_id)
+            try:
+                cam_stats = self._runtime_service.camera_stats(self._selected_camera_id)
+            except Exception:
+                cam_stats = None
             if cam_stats:
                 fps = cam_stats.current_fps or cam_stats.average_fps
                 if fps:
                     self._status_fps.setText(f"FPS: {fps:.1f}")
                 self._status_frames.setText(f"Frames: {cam_stats.frames_received}")
+                self._frame_info_panel.set_acquisition_fps(fps if fps else None)
 
         if self._observer:
             obs_stats = self._observer.stats()
             if obs_stats:
                 self._status_proc.setText(f"Processing: {obs_stats.average_processing_time_ms:.1f} ms")
+            self._frame_info_panel.set_display_fps(self._display_rate.fps())
 
     # Snapshot / Save handlers
     def _on_snapshot(self) -> None:
@@ -1424,10 +2757,9 @@ class ConfigurationModeWidget(QWidget):
 
     def _on_save_config(self) -> None:
         """Handle save config button."""
-        if self._config_manager:
-            # Switch to Configuration Editor tab
-            if self._config_editor:
-                self._analysis_tabs.setCurrentWidget(self._config_editor)
+        if self._config_editor is not None:
+            # Reveal the Configuration Editor dock (state preserved).
+            self.show_dock("config_editor")
         else:
             self._status_label.setText("Configuration Editor not available")
 
@@ -1453,15 +2785,22 @@ class ConfigurationModeWidget(QWidget):
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
                 self._toolbar.select_camera_by_id(cameras[0].identity.camera_id)
+        # Correct any lifecycle drift from while inactive (e.g. observer
+        # detached on mode switch while transport kept running), then
+        # resume the status ticker stopped on deactivation.
+        self._reconcile_lifecycle()
+        if not self._stats_timer.isActive():
+            self._stats_timer.start(1000)
 
     def on_mode_deactivated(self) -> None:
         """Called when configuration mode is deactivated."""
+        self._save_dock_layout()
         self._restore_connect_cursor()
         if self._camera_selection_dialog is not None:
             self._camera_selection_dialog.close()
-        if self._observer:
-            self._observer.stop()
-            self._observer = None
+        # Detach the display path; the camera child process keeps running
+        # so a mode switch back (or Live mode sharing the runtime) is fast.
+        self._detach_observer()
         self._stats_timer.stop()
 
     def closeEvent(self, event) -> None:
@@ -1572,8 +2911,12 @@ class ConfigurationWindow(QMainWindow):
         refresh_action.triggered.connect(self._config_widget._refresh_camera_list)
         camera_menu.addAction(refresh_action)
 
-        # View menu
+        # View menu: dockable panels first (predictable restore after
+        # hiding), then image zoom controls.
         view_menu = menu_bar.addMenu("View")
+        for action in self._config_widget.dock_toggle_actions():
+            view_menu.addAction(action)
+        view_menu.addSeparator()
         fit_action = QAction("Fit to Window", self)
         fit_action.triggered.connect(lambda: self._config_widget._image_widget.set_zoom("Fit to Window"))
         view_menu.addAction(fit_action)
@@ -1614,7 +2957,7 @@ class ConfigurationWindow(QMainWindow):
         # Window menu
         window_menu = menu_bar.addMenu("Window")
         config_action = QAction("Configuration Editor", self)
-        config_action.triggered.connect(lambda: self._config_widget._analysis_tabs.setCurrentWidget(self._config_widget._config_editor) if self._config_widget._config_editor else None)
+        config_action.triggered.connect(lambda: self._config_widget.show_dock("config_editor"))
         window_menu.addAction(config_action)
 
         # Settings menu with live Theme switching (same manager everywhere).

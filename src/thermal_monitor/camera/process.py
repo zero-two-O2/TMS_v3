@@ -132,10 +132,16 @@ class CameraProcessHandle:
         self._request_lock = mp.RLock()
         self.ring = None
         self.consumer = None
+        self._stopped = False
 
     @property
     def process(self) -> mp.Process:
         return self._process
+
+    @property
+    def pid(self) -> int | None:
+        """OS PID of the camera child process (None before start)."""
+        return self._process.pid
 
     @property
     def state(self) -> AcquisitionState:
@@ -240,17 +246,42 @@ class CameraProcessHandle:
             raise TimeoutError(f"camera process request timed out: {method_name}")
 
     def stop(self, timeout: float = 5.0) -> None:
-        self.send("stop")
-        self._process.join(timeout)
-        if self._process.is_alive():
-            self._process.terminate()
-            self._process.join(1.0)
+        """Bounded shutdown: polite stop, then escalate to terminate.
+
+        Idempotent: safe to call twice (switch paths and teardown paths
+        may both request it). Every wait is bounded; a process that
+        ignores the stop command is terminated, never joined forever.
+        Must be called off the Qt GUI thread (see CameraRuntimeService).
+        """
+        if self._stopped:
+            return
+        self._stopped = True
+        try:
+            self.send("stop")
+        except Exception:
+            pass
+        try:
+            self._process.join(timeout)
+        except Exception:
+            pass
+        try:
+            if self._process.is_alive():
+                self._process.terminate()
+                self._process.join(1.0)
+        except Exception:
+            pass
         if self.ring is not None:
-            self.ring.close()
+            try:
+                self.ring.close()
+            except Exception:
+                pass
             self.ring = None
             self.consumer = None
-        self._status_parent.close()
-        self._command_parent.close()
+        for pipe in (self._status_parent, self._command_parent):
+            try:
+                pipe.close()
+            except Exception:
+                pass
 
 
 class CameraProcessManager:

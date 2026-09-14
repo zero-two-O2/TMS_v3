@@ -50,7 +50,12 @@ class TestPanelConnectionButtons:
         CameraConnectionState.DISCONNECTED: (True, False, False, False),
         CameraConnectionState.CONNECTING: (False, False, False, False),
         CameraConnectionState.CONNECTED: (False, True, True, False),
-        CameraConnectionState.ACQUIRING: (False, False, False, True),
+        # Disconnect while acquiring performs the automatic safe shutdown
+        # sequence — the user is never forced through hidden Stop steps.
+        CameraConnectionState.ACQUIRING: (False, True, False, True),
+        CameraConnectionState.STARTING: (False, True, False, False),
+        CameraConnectionState.STOPPING: (False, True, False, False),
+        CameraConnectionState.DISCONNECTING: (False, False, False, False),
     }
 
     def test_states_without_theme(self, qapp):

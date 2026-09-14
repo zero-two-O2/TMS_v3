@@ -65,11 +65,22 @@ class ThermalRenderWorker(QThread):
         self._interval = 1.0 / max_fps
         self._condition = threading.Condition()
         self._pending: RenderRequest | None = None
+        self._pending_epoch: int = 0
         self._latest_output = None
         self._latest_notification_pending = False
         self._stopping = False
         self._last_sequence = -1
         self._last_hw_sequence: int | None = None
+        # Render epoch: bumped by set_session(). An in-flight render that
+        # started before the session change is discarded instead of
+        # emitted, so the old camera's last frame can never paint over
+        # the new camera.
+        self._epoch: int = 0
+        # Camera-session gate: only requests carrying the current session's
+        # camera_id are rendered. Reset on every camera switch so the new
+        # camera's sequence numbering (which restarts at 0) is accepted
+        # while any late request from the old camera is dropped.
+        self._session_camera_id: str | None = None
         self.dropped_frames = 0
         self.submitted_frames = 0
         self.rendered_frames = 0
@@ -77,15 +88,43 @@ class ThermalRenderWorker(QThread):
         self.last_palette_ms = 0.0
 
     def submit(self, request: RenderRequest) -> None:
-        """Replace obsolete pending work; producer owns immutable input arrays."""
+        """Replace obsolete pending work; producer owns immutable input arrays.
+
+        Requests from a previous camera session are dropped: a session
+        change resets the accepted sequence baseline, and any request that
+        still carries the old camera_id can never match the new session.
+        """
         with self._condition:
             if self._stopping or request.sequence <= self._last_sequence:
+                return
+            if (
+                self._session_camera_id is not None
+                and request.camera_id is not None
+                and request.camera_id != self._session_camera_id
+            ):
                 return
             if self._pending is not None:
                 self.dropped_frames += 1
             self._pending = request
+            self._pending_epoch = self._epoch
             self.submitted_frames += 1
             self._condition.notify()
+
+    def set_session(self, camera_id: str | None) -> None:
+        """Begin a new camera session: accept that camera's frames from sequence 0.
+
+        Pending work from the old session is discarded; in-flight rendering
+        finishes harmlessly because the widget applies outputs only for the
+        current session.
+        """
+        with self._condition:
+            self._session_camera_id = camera_id
+            self._epoch += 1
+            self._last_sequence = -1
+            self._last_hw_sequence = None
+            self._pending = None
+            self._latest_output = None
+            self._latest_notification_pending = False
 
     def set_palette(self, palette: str) -> None:
         with self._condition:
@@ -118,6 +157,7 @@ class ThermalRenderWorker(QThread):
                 if self._stopping:
                     break
                 request = self._pending
+                request_epoch = self._pending_epoch
                 self._pending = None
                 palette = self._palette
             started = time.perf_counter()
@@ -127,8 +167,28 @@ class ThermalRenderWorker(QThread):
                 )
             try:
                 image, temperature, minimum, maximum, thumbnail, rgb, palette_ms = self._render(request, palette)
-                self._last_sequence = request.sequence
-                self._last_hw_sequence = request.hw_sequence
+                # Single locked commit: re-check the epoch together with the
+                # output store so a session change racing the render tail
+                # cannot leave obsolete output behind.
+                with self._condition:
+                    if request_epoch != self._epoch or self._stopping:
+                        # Session changed (or shutdown) while rendering:
+                        # drop the obsolete output instead of emitting it.
+                        self.dropped_frames += 1
+                        continue
+                    self._last_sequence = request.sequence
+                    self._last_hw_sequence = request.hw_sequence
+                    self._latest_output = (
+                        image,
+                        temperature,
+                        minimum,
+                        maximum,
+                        request.sequence,
+                        thumbnail,
+                        rgb,
+                    )
+                    notify = not self._latest_notification_pending
+                    self._latest_notification_pending = True
                 self.rendered_frames += 1
                 if request.camera_id is not None and _latency_enabled():
                     _latency_tracker().note_stage(
@@ -148,18 +208,6 @@ class ThermalRenderWorker(QThread):
                         self.rendered_frames,
                         self.dropped_frames,
                     )
-                with self._condition:
-                    self._latest_output = (
-                        image,
-                        temperature,
-                        minimum,
-                        maximum,
-                        request.sequence,
-                        thumbnail,
-                        rgb,
-                    )
-                    notify = not self._latest_notification_pending
-                    self._latest_notification_pending = True
                 if notify:
                     self.latest_ready.emit()
                 self.rendered.emit(

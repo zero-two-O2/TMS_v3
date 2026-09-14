@@ -18,12 +18,21 @@ import numpy as np
 
 
 class CameraConnectionState(str, Enum):
-    """High-level camera connection state visible to the application."""
+    """High-level camera connection state visible to the application.
+
+    The transitional states (CONNECTING/STARTING/STOPPING/DISCONNECTING)
+    are owned by bounded background operations: the GUI shows them
+    immediately and never blocks waiting for them. See
+    ``services.lifecycle`` for the explicit transition table.
+    """
 
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
+    STARTING = "starting"
     ACQUIRING = "acquiring"
+    STOPPING = "stopping"
+    DISCONNECTING = "disconnecting"
     DEGRADED = "degraded"
     RECONNECTING = "reconnecting"
     ERROR = "error"

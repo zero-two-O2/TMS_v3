@@ -53,22 +53,48 @@ class VlRenderWorker(QThread):
         self._interval = 1.0 / max_fps
         self._condition = threading.Condition()
         self._pending: VlRenderRequest | None = None
+        self._pending_epoch: int = 0
         self._latest_output = None
         self._latest_notification_pending = False
         self._stopping = False
         self._last_sequence = -1
+        # Camera-session gate (same contract as ThermalRenderWorker).
+        self._session_camera_id: str | None = None
+        # Render epoch (same contract as ThermalRenderWorker).
+        self._epoch: int = 0
         self.dropped_frames = 0
         self.last_render_ms = 0.0
 
     def submit(self, request: VlRenderRequest) -> None:
-        """Replace obsolete pending work; caller must pass owned arrays."""
+        """Replace obsolete pending work; caller must pass owned arrays.
+
+        Requests from a previous camera session are dropped (see
+        ThermalRenderWorker.submit for the contract).
+        """
         with self._condition:
             if self._stopping or request.sequence <= self._last_sequence:
+                return
+            if (
+                self._session_camera_id is not None
+                and request.camera_id is not None
+                and request.camera_id != self._session_camera_id
+            ):
                 return
             if self._pending is not None:
                 self.dropped_frames += 1
             self._pending = request
+            self._pending_epoch = self._epoch
             self._condition.notify()
+
+    def set_session(self, camera_id: str | None) -> None:
+        """Begin a new camera session (see ThermalRenderWorker.set_session)."""
+        with self._condition:
+            self._session_camera_id = camera_id
+            self._epoch += 1
+            self._last_sequence = -1
+            self._pending = None
+            self._latest_output = None
+            self._latest_notification_pending = False
 
     def stop(self) -> None:
         with self._condition:
@@ -96,6 +122,7 @@ class VlRenderWorker(QThread):
                 if self._stopping:
                     break
                 request = self._pending
+                request_epoch = self._pending_epoch
                 self._pending = None
             started = time.perf_counter()
             if request.camera_id is not None and _latency_enabled():
@@ -108,16 +135,20 @@ class VlRenderWorker(QThread):
                     rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0],
                     QImage.Format.Format_RGB888,
                 ).copy()
-                self._last_sequence = request.sequence
+                # Single locked commit (same contract as ThermalRenderWorker).
+                with self._condition:
+                    if request_epoch != self._epoch or self._stopping:
+                        self.dropped_frames += 1
+                        continue
+                    self._last_sequence = request.sequence
+                    self._latest_output = (image, request.sequence, request.hw_sequence)
+                    notify = not self._latest_notification_pending
+                    self._latest_notification_pending = True
                 self.last_render_ms = (time.perf_counter() - started) * 1000.0
                 if request.camera_id is not None and _latency_enabled():
                     _latency_tracker().note_stage(
                         request.camera_id + "#vl", request.sequence, "render_done", time.perf_counter_ns()
                     )
-                with self._condition:
-                    self._latest_output = (image, request.sequence, request.hw_sequence)
-                    notify = not self._latest_notification_pending
-                    self._latest_notification_pending = True
                 if notify:
                     self.latest_ready.emit()
                 self.rendered.emit(image, request.sequence, request.hw_sequence)

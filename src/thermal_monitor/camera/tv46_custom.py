@@ -510,8 +510,14 @@ class CustomTV46LDriver:
         """Write the focus distance (mm) and verify via readback.
 
         Never clamps: non-integer / non-positive / out-of-range values raise.
-        A settle mismatch after the timeout is logged (motor positioning,
-        e.g. 4800 -> 4765) but not raised -- the hardware accepted the value.
+        Fire-and-forget like the official/HALCON path: a single write, one
+        short 0.2 s motor-kick wait (V2-proven ``_execute_focus``), then one
+        readback. A mismatch is logged (motor still moving, e.g. 4800 ->
+        4765) but not raised and never polled -- the hardware accepted the
+        value and keeps streaming while the lens settles, so the live feed
+        must not freeze for seconds. ``settle_timeout`` is accepted for API
+        compatibility (``0`` skips the kick wait); it no longer drives a
+        multi-second exact-match poll loop.
         Returns the readback in mm. Safe to call while streaming.
         """
         if self._gvcp is None:
@@ -532,11 +538,13 @@ class CustomTV46LDriver:
                 f"Camera {self._camera_ip} rejected focus value {value_mm} mm "
                 f"(see GVCP warning above for the transport reason)"
             )
-        deadline = time.monotonic() + max(0.0, settle_timeout)
+        # V2-proven settle: one short kick wait, one readback. The lens
+        # keeps moving in the background while GVSP streaming continues --
+        # never block the caller (camera-process command thread / FocusWorker)
+        # for seconds polling for an exact match the motor may never report.
+        if settle_timeout > 0:
+            time.sleep(min(0.2, max(0.0, settle_timeout)))
         readback = self.get_focus_mm(op_id=op_id)
-        while readback != value_mm and time.monotonic() < deadline:
-            time.sleep(0.2)
-            readback = self.get_focus_mm(op_id=op_id)
         if readback != value_mm:
             logger.warning(
                 "%sdriver focus settle mismatch cam=%s requested=%r readback=%r (continuing)",

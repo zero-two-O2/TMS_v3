@@ -41,7 +41,18 @@ class VlImageWidget(QWidget):
         self._worker.start()
         # seq -> (camera_id, hw_sequence, acq_mono_ns), bounded by pruning.
         self._pending_meta: dict[int, tuple[str | None, int | None, int | None]] = {}
+        self._last_sequence: int = -1
+        # Camera-session gate (same contract as LiveThermalWidget).
+        self._session_camera_id: str | None = None
         self.setMinimumSize(320, 240)
+
+    def set_session(self, camera_id: str | None) -> None:
+        """Begin a new camera session on this widget (see LiveThermalWidget)."""
+        self._session_camera_id = camera_id
+        self._last_sequence = -1
+        self._pending_meta.clear()
+        self._worker.set_session(camera_id)
+        self.clear()
 
     def set_frame(
         self,
@@ -60,6 +71,12 @@ class VlImageWidget(QWidget):
             self._has_vl = False
             self.update()
             return
+        if self._session_camera_id is not None and camera_id is not None:
+            if camera_id != self._session_camera_id:
+                return  # stale plane from a previous camera session
+            if sequence <= self._last_sequence:
+                return  # stale sequence within the current session
+        self._last_sequence = sequence
         self._has_vl = True
         owned = np.ascontiguousarray(yuyv, dtype=np.uint8).copy()
         if _latency_enabled():
@@ -92,6 +109,9 @@ class VlImageWidget(QWidget):
         self._sequence = None
         self._hw_sequence = None
         self._has_vl = False
+        # Same reconnect baseline reset as LiveThermalWidget.clear.
+        self._last_sequence = -1
+        self._pending_meta.clear()
         self.update()
 
     def close(self) -> None:

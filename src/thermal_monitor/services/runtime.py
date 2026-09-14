@@ -407,6 +407,65 @@ class CameraRuntimeService:
             runtime = self._runtimes.get(camera_id)
             return runtime is not None and runtime.is_alive()
 
+    def process_pid(self, camera_id: str) -> int | None:
+        """OS PID of the camera child process, or None when not applicable.
+
+        Used for session-end diagnostics (proving the old process is gone
+        after a switch). Never blocks.
+        """
+        handle = self.process_handle(camera_id)
+        if handle is None:
+            return None
+        try:
+            return handle.pid
+        except Exception:
+            return None
+
+    def process_handle(self, camera_id: str) -> CameraProcessHandle | None:
+        """Parent-side handle for the camera child process, or None.
+
+        Lets teardown paths snapshot the exact process object before
+        stopping so they can verify that PID is gone afterwards. The
+        handle must not be stopped directly; use stop_camera().
+        """
+        with self._lock:
+            runtime = self._runtimes.get(camera_id)
+            if runtime is not None and runtime.process_handle is not None:
+                return runtime.process_handle
+        try:
+            return self._process_manager.handle(camera_id)
+        except Exception:
+            return None
+
+    def is_process_alive(self, camera_id: str) -> bool | None:
+        """True/False when the camera uses a child process, else None."""
+        handle = self.process_handle(camera_id)
+        if handle is None:
+            return None
+        try:
+            return bool(handle.process.is_alive())
+        except Exception:
+            return None
+
+    def acquisition_child_state(self, camera_id: str) -> AcquisitionState | None:
+        """Latest known child acquisition state via the status channel.
+
+        For process cameras this drains the child's status pipe (never
+        blocking); for in-process workers it reads the worker state.
+        Returns None when the camera has no runtime entry. The child is
+        authoritative: callers must treat a missing/non-STREAMING state
+        as not-ready rather than inferring readiness from anything else.
+        """
+        with self._lock:
+            runtime = self._runtimes.get(camera_id)
+            if runtime is None:
+                return None
+            worker = runtime.worker
+        try:
+            return worker.state
+        except Exception:
+            return None
+
     def running_camera_ids(self) -> list[str]:
         with self._lock:
             return [cid for cid, rt in self._runtimes.items() if rt.is_alive()]

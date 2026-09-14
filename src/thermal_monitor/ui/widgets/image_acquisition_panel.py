@@ -46,7 +46,10 @@ _CONNECTION_STATUS_MAP = {
     CameraConnectionState.DISCONNECTED: "disconnected",
     CameraConnectionState.CONNECTING: "connecting",
     CameraConnectionState.CONNECTED: "connected",
+    CameraConnectionState.STARTING: "connecting",
     CameraConnectionState.ACQUIRING: "acquiring",
+    CameraConnectionState.STOPPING: "connecting",
+    CameraConnectionState.DISCONNECTING: "connecting",
     CameraConnectionState.DEGRADED: "degraded",
     CameraConnectionState.RECONNECTING: "connecting",
     CameraConnectionState.ERROR: "error",
@@ -354,17 +357,23 @@ class ImageAcquisitionPanel(QWidget):
         connecting = self._connection_state == CameraConnectionState.CONNECTING
 
         # DISCONNECTED: Connect=ENABLED, Disconnect=DISABLED, Start=DISABLED, Stop=DISABLED
-        # CONNECTING: Connect=DISABLED, Disconnect=DISABLED, Start=DISABLED, Stop=DISABLED
+        # CONNECTING: all DISABLED (bounded background connect owns the camera)
         # CONNECTED/IDLE: Connect=DISABLED, Disconnect=ENABLED, Start=ENABLED, Stop=DISABLED
-        # ACQUIRING: Connect=DISABLED, Disconnect=DISABLED, Start=DISABLED, Stop=ENABLED
-        # ERROR/DEGRADED/RECONNECTING: similar to DISCONNECTED but with error state
+        # STARTING: Connect/Start/Stop=DISABLED, Disconnect=ENABLED (cancels into safe shutdown)
+        # ACQUIRING: Connect=DISABLED, Disconnect=ENABLED (auto-stops), Start=DISABLED, Stop=ENABLED
+        # STOPPING: Connect/Start/Stop=DISABLED, Disconnect=ENABLED (queues after stop)
+        # DISCONNECTING: all DISABLED (bounded background teardown owns the camera)
+        # ERROR/DEGRADED/RECONNECTING: Disconnect=ENABLED (always a path back), Start per state
 
         if self._connection_state == CameraConnectionState.DISCONNECTED:
             self._connect_btn.setEnabled(True)
             self._disconnect_btn.setEnabled(False)
             self._start_btn.setEnabled(False)
             self._stop_btn.setEnabled(False)
-        elif self._connection_state == CameraConnectionState.CONNECTING:
+        elif self._connection_state in (
+            CameraConnectionState.CONNECTING,
+            CameraConnectionState.DISCONNECTING,
+        ):
             self._connect_btn.setEnabled(False)
             self._disconnect_btn.setEnabled(False)
             self._start_btn.setEnabled(False)
@@ -374,11 +383,21 @@ class ImageAcquisitionPanel(QWidget):
             self._disconnect_btn.setEnabled(True)
             self._start_btn.setEnabled(True)
             self._stop_btn.setEnabled(False)
+        elif self._connection_state == CameraConnectionState.STARTING:
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(True)
+            self._start_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
         elif self._connection_state == CameraConnectionState.ACQUIRING:
             self._connect_btn.setEnabled(False)
-            self._disconnect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(True)
             self._start_btn.setEnabled(False)
             self._stop_btn.setEnabled(True)
+        elif self._connection_state == CameraConnectionState.STOPPING:
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(True)
+            self._start_btn.setEnabled(False)
+            self._stop_btn.setEnabled(False)
         else:  # ERROR, DEGRADED, RECONNECTING
             self._connect_btn.setEnabled(False)
             self._disconnect_btn.setEnabled(True)
