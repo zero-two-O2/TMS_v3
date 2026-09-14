@@ -60,6 +60,7 @@ from thermal_monitor.services.runtime import CameraRuntimeService
 from thermal_monitor.services.discovery import CameraDiscoveryService, GvcpDiscoveryService
 from thermal_monitor.services.observer import ObserverService
 from thermal_monitor.config import ConfigurationManager
+from thermal_monitor.config.models import CameraMappingConfig
 from thermal_monitor.ui.configuration_editor import ConfigurationEditor
 from thermal_monitor.ui.frame_rate import UniqueFrameRate
 from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverlay
@@ -1107,6 +1108,18 @@ class ConfigurationModeWidget(QWidget):
             metadata=metadata,
         )
         self._config_service.set_camera_config(updated_config)
+        if self._config_manager is not None:
+            self._config_manager.save_camera_mapping(
+                CameraMappingConfig(
+                    camera_id=camera_id,
+                    serial_number=discovered_camera.serial_number,
+                    enabled=updated_config.enabled,
+                    name=updated_config.name or camera_id,
+                    target_fps=None,
+                    ip_address=discovered_camera.ip_address or "",
+                    device_identifier=discovered_camera.device_identifier or "",
+                )
+            )
 
         # Select this camera in the toolbar (sets _selected_camera_id)
         self._toolbar.select_camera_by_id(camera_id)

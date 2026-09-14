@@ -149,6 +149,8 @@ class CameraMappingConfig:
     enabled: bool = True
     name: str = ""
     target_fps: Optional[int] = None
+    ip_address: str = ""
+    device_identifier: str = ""
 
     def __post_init__(self) -> None:
         if not self.camera_id:

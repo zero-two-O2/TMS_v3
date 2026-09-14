@@ -209,6 +209,23 @@ class AppController(QObject):
                         thermal_enabled=True,
                         visible_enabled=False,
                     )
+                    metadata = dict(cfg.metadata or {})
+                    if getattr(entry, "ip_address", ""):
+                        metadata["ip_address"] = entry.ip_address
+                    if getattr(entry, "device_identifier", ""):
+                        metadata["device_identifier"] = entry.device_identifier
+                    if metadata:
+                        cfg = CameraConfig(
+                            identity=cfg.identity,
+                            name=cfg.name,
+                            description=cfg.description,
+                            enabled=cfg.enabled,
+                            thermal_enabled=cfg.thermal_enabled,
+                            visible_enabled=cfg.visible_enabled,
+                            ptz_config=cfg.ptz_config,
+                            tags=cfg.tags,
+                            metadata=metadata,
+                        )
                     # Respect enabled flag from mapping; CameraConfig.enabled defaults True
                     if not entry.enabled:
                         # Recreate with enabled=False (CameraConfig is frozen)

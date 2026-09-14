@@ -9,6 +9,7 @@ and path resolution for deployment scenarios.
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -526,6 +527,8 @@ class ConfigurationManager:
                     enabled=m.get("enabled", True),
                     name=m.get("name", ""),
                     target_fps=m.get("target_fps"),
+                    ip_address=m.get("ip_address", ""),
+                    device_identifier=m.get("device_identifier", ""),
                 ))
 
         cameras = CamerasConfig(
@@ -837,6 +840,56 @@ class ConfigurationManager:
         if self._config is None:
             raise ConfigurationError("Configuration not loaded")
         return self._config
+
+    def save_camera_mapping(self, mapping: CameraMappingConfig) -> None:
+        """Persist one discovered camera mapping and reload the validated config."""
+        if not self._config_path.exists():
+            raise ConfigurationError(f"Configuration file not found: {self._config_path}")
+
+        try:
+            with open(self._config_path, "r", encoding="utf-8") as handle:
+                raw_config = yaml.safe_load(handle) or {}
+            cameras = raw_config.setdefault("cameras", {})
+            mappings = cameras.setdefault("mapping", [])
+            serialized = {
+                "camera_id": mapping.camera_id,
+                "serial_number": mapping.serial_number,
+                "enabled": mapping.enabled,
+                "name": mapping.name,
+                "target_fps": mapping.target_fps,
+                "ip_address": mapping.ip_address,
+                "device_identifier": mapping.device_identifier,
+            }
+            for index, existing in enumerate(mappings):
+                if (
+                    existing.get("camera_id") == mapping.camera_id
+                    or existing.get("serial_number") == mapping.serial_number
+                ):
+                    mappings[index] = serialized
+                    break
+            else:
+                if len(mappings) >= self.get_config().system.max_cameras:
+                    raise ConfigurationError(
+                        f"Cannot persist more than {self.get_config().system.max_cameras} cameras"
+                    )
+                mappings.append(serialized)
+
+            temp_path = self._config_path.with_suffix(self._config_path.suffix + ".tmp")
+            backup_path = self._config_path.with_suffix(self._config_path.suffix + ".bak")
+            shutil.copy2(self._config_path, backup_path)
+            try:
+                with open(temp_path, "w", encoding="utf-8") as handle:
+                    yaml.safe_dump(raw_config, handle, default_flow_style=False, sort_keys=False)
+                temp_path.replace(self._config_path)
+            except Exception:
+                if temp_path.exists():
+                    temp_path.unlink()
+                raise
+            self._load_config(create_default=False)
+        except (OSError, AttributeError, TypeError, ValueError, yaml.YAMLError) as exc:
+            raise ConfigurationError(
+                f"Failed to persist camera mapping {mapping.camera_id!r}: {exc}"
+            ) from exc
 
     def get_database_password(self) -> str | None:
         """Get database password from environment variable."""
