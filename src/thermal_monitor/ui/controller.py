@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import QMessageBox
 from PyQt6.sip import isdeleted
 
 from thermal_monitor.core.modes import ApplicationMode, ModeState
+from thermal_monitor.core.models import CameraConfig
 from thermal_monitor.services.mode import ModeService
 from thermal_monitor.services.configuration import ConfigurationService
 from thermal_monitor.services.offline import OfflineService
@@ -158,6 +159,29 @@ class AppController(QObject):
             http_port=config.network.http_port,
         )
         self._config_service.update_system_config(system_config)
+        self._hydrate_camera_configs(config)
+
+    def _hydrate_camera_configs(self, config) -> None:
+        """Load persisted camera mappings into the shared runtime service."""
+        for mapping in getattr(config.cameras, "mapping", []) or []:
+            metadata = {}
+            if mapping.target_fps is not None:
+                metadata["frame_rate"] = mapping.target_fps
+
+            identity = self._config_service.create_camera_identity(
+                camera_id=mapping.camera_id,
+                serial_number=mapping.serial_number,
+                user_name=mapping.name,
+            )
+            camera_config = CameraConfig(
+                identity=identity,
+                name=mapping.name or mapping.camera_id,
+                enabled=mapping.enabled,
+                thermal_enabled=True,
+                visible_enabled=False,
+                metadata=metadata,
+            )
+            self._config_service.set_camera_config(camera_config)
 
     def _configure_database(self, db_config) -> None:
         """Configure Database with DatabaseConfig."""
