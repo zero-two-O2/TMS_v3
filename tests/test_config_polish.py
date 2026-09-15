@@ -278,7 +278,7 @@ def test_shelf_size_central_constants() -> None:
         "PANEL_TAB_MARGIN",
     ):
         assert hasattr(mod, name), f"missing shelf constant: {name}"
-    assert 25 <= mod.PANEL_SHELF_WIDTH <= 32
+    assert 36 <= mod.PANEL_SHELF_WIDTH <= 48
     source = open(mod.__file__, encoding="utf-8").read()
     assert "PANEL_SHELF_WIDTH" in source
 

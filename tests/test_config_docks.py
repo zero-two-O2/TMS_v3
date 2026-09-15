@@ -168,7 +168,7 @@ def test_left_shelf_exists(widget) -> None:
     rail = widget.findChild(QWidget, "cfg_left_shelf")
     assert rail is not None
     assert rail.isVisible()
-    assert rail.width() <= 40  # narrow vertical rail (~30 px)
+    assert rail.width() <= 40  # narrow vertical rail (PANEL_SHELF_WIDTH)
     tabs = [
         widget.findChild(QWidget, f"cfg_shelf_tab_{key}") for key in LEFT_KEYS
     ]

@@ -127,19 +127,29 @@ _OBSERVER_STOP_TIMEOUT_S = 2.0
 
 #: -- Side-shelf geometry (ThermoView-style narrow vertical tabs) ---------
 #: CENTRAL shelf-size constants: change these to resize the shelf rails.
-#: No other shelf dimension is hardcoded elsewhere. Base point sizes are
-#: scaled by the global font-size setting (see ui.theme.fonts) through
-#: ConfigurationModeWidget.refresh_font_metrics().
-PANEL_SHELF_WIDTH = 28  #: rail width in px (target 24-28 px)
-PANEL_TAB_WIDTH = 24  #: vertical tab width in px (rail minus margins)
-PANEL_TAB_MIN_HEIGHT = 84  #: shortest tab (e.g. "ROI") in px
-PANEL_TAB_MAX_HEIGHT = 176  #: longest tab (e.g. "Configuration Editor") in px
-PANEL_TAB_FONT_SIZE_PT = 8  #: small but readable tab font (at 100%)
-PANEL_TAB_SPACING = 2  #: vertical gap between tabs in px
-PANEL_TAB_MARGIN = 2  #: rail contents margin in px
-PANEL_PIN_SIZE = 18  #: pin button size in px (ThermoView-scale)
-PANEL_PIN_ICON_SIZE = 14  #: pin icon visual size in px
-PANEL_HEADER_FONT_SIZE_PT = 8  #: compact panel-title font (at 100%)
+#: No other shelf dimension is hardcoded elsewhere. The two point sizes
+#: live in ui.theme.fonts (SHELF_TAB_FONT_PT / PANEL_TITLE_FONT_PT —
+#: the central QSS rules must read them from there, since the
+#: stylesheet cannot import this module); the PANEL_* names below are
+#: aliases kept so this block stays the single documented place to look.
+#: To change a size, edit the fonts.py value.
+from thermal_monitor.ui.theme.fonts import (
+    PANEL_TITLE_FONT_PT as _PANEL_TITLE_FONT_PT,
+)
+from thermal_monitor.ui.theme.fonts import (
+    SHELF_TAB_FONT_PT as _SHELF_TAB_FONT_PT,
+)
+
+PANEL_SHELF_WIDTH = 40  #: rail width in px (ThermoView compact industrial)
+PANEL_TAB_WIDTH = 32  #: vertical tab width in px (rail minus 2 * margin)
+PANEL_TAB_MIN_HEIGHT = 84  #: shortest tab (e.g. "ROI") in px (clickable)
+PANEL_TAB_MAX_HEIGHT = 280  #: longest tab fits "Configuration Editor" at 150% scale
+PANEL_TAB_FONT_SIZE_PT = _SHELF_TAB_FONT_PT  #: small readable tab font (at 100%)
+PANEL_TAB_SPACING = 4  #: vertical gap between tabs in px
+PANEL_TAB_MARGIN = 4  #: rail/host contents margin in px (rail = tab + 2 * margin)
+PANEL_PIN_SIZE = 14  #: pin button size in px (ThermoView-scale)
+PANEL_PIN_ICON_SIZE = 10  #: pin icon visual size in px
+PANEL_HEADER_FONT_SIZE_PT = _PANEL_TITLE_FONT_PT  #: compact title font (at 100%)
 
 
 
@@ -197,16 +207,25 @@ def _make_pin_icon(pinned: bool):  # -> QIcon (import-deferred for headless test
 
 
 class _ShelfTab(QPushButton):
-    """One narrow VERTICAL tab on a side shelf rail (~26 px wide).
+    """One narrow VERTICAL tab on a side shelf rail (~40 px wide).
 
     Checkable: checked = its panel is open. The FULL panel name is drawn
-    vertically (rotated text over the standard button bevel — never
-    abbreviated); emphasis comes from the theme variant (accent = open,
-    ghost = collapsed) plus the palette text color. No custom docking
-    framework, no stylesheets.
+    as ONE rotated text string over the standard button bevel — never
+    abbreviated, never elided, never per-character stacked. The same
+    canonical title renders in every state (collapsed / open / pinned /
+    unpinned); only background/border/text-color change via the theme
+    variant (accent = open, outline = collapsed). No custom docking
+    framework.
 
-    Sizing is driven by the PANEL_* module constants above.
+    Sizing is driven by the PANEL_* module constants above. Tab height
+    (vertical room for the rotated title) is measured from the actual
+    rendered font advance + padding; tab width (horizontal thickness)
+    stays fixed so long names consume VERTICAL space, never horizontal.
     """
+
+    #: End margin (px) on each side of the rotated title inside the tab.
+    #: Height reservation = advance + 2 * _TEXT_MARGIN.
+    _TEXT_MARGIN = 12
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -214,32 +233,109 @@ class _ShelfTab(QPushButton):
         self.setCheckable(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setToolTip(title)
+        # Styled centrally (QPushButton[shelfTab="true"]): show()/repolish
+        # resets explicitly-set widget fonts to the stylesheet value, so
+        # the type size lives in the QSS rule, not in setFont().
+        self.setProperty("shelfTab", True)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setFixedWidth(PANEL_TAB_WIDTH)
         self.refresh_metrics()
 
-    def refresh_metrics(self) -> None:
-        """Recompute tab font + height from the global font scale."""
+    @property
+    def panel_name(self) -> str:
+        """Canonical full panel name (identical in every visual state)."""
+        return self._tab_title
+
+    @property
+    def full_name(self) -> str:
+        """Alias for :attr:`panel_name` (test-facing canonical title)."""
+        return self._tab_title
+
+    @property
+    def displayed_text(self) -> str:
+        """Text source used by paintEvent (always the canonical title)."""
+        return self._tab_title
+
+    @staticmethod
+    def _tab_font() -> "QFont":
+        """The rendered tab font, independent of widget polish state.
+
+        Pixel-size based so it matches the central
+        ``QPushButton[shelfTab="true"]`` QSS rule
+        (``scaled_font_px(SHELF_TAB_FONT_PT, scale)``): measuring in pt
+        while painting in px used to under/over-reserve height depending
+        on theme state. Weight is always normal — the selected state is
+        carried by background/border/text-color, never by bold (bold
+        would change the advance after selection and clip the tail).
+        """
+        from PyQt6.QtGui import QFont
+        from PyQt6.QtWidgets import QApplication
+
         from thermal_monitor.ui.theme.fonts import (
             current_font_scale,
-            scaled_point_size,
+            scaled_font_px,
         )
 
-        font = self.font()
-        font.setPointSize(
-            scaled_point_size(PANEL_TAB_FONT_SIZE_PT, current_font_scale())
-        )
-        self.setFont(font)
-        metrics = self.fontMetrics()
+        try:
+            font = QFont(QApplication.font())
+        except Exception:
+            font = QFont()
+        try:
+            font.setPixelSize(
+                scaled_font_px(PANEL_TAB_FONT_SIZE_PT, current_font_scale())
+            )
+        except Exception:
+            font.setPixelSize(-1)
+            from thermal_monitor.ui.theme.fonts import scaled_point_size
+
+            font.setPointSize(
+                scaled_point_size(PANEL_TAB_FONT_SIZE_PT, current_font_scale())
+            )
+        try:
+            font.setBold(False)
+            font.setWeight(QFont.Weight.Normal)
+        except Exception:
+            pass
+        return font
+
+    def refresh_metrics(self) -> None:
+        """Recompute tab height from the global font scale.
+
+        Measured with a deterministically constructed pixel font (never
+        the widget's own font: show()/repolish resets that to the
+        stylesheet value at unpredictable times, which used to produce
+        wrong tab heights depending on test order / theme state).
+        Reservation = advance + 2 * _TEXT_MARGIN, clamped to
+        [MIN, MAX] so the longest title ("Configuration Editor" at 150%
+        scale) still fits while short titles stay clickable.
+        """
+        from PyQt6.QtGui import QFontMetrics
+
+        try:
+            advance = QFontMetrics(self._tab_font()).horizontalAdvance(
+                self._tab_title
+            )
+        except Exception:
+            advance = self.fontMetrics().horizontalAdvance(self._tab_title)
         self.setFixedHeight(
             min(
                 PANEL_TAB_MAX_HEIGHT,
-                max(
-                    PANEL_TAB_MIN_HEIGHT,
-                    metrics.horizontalAdvance(self._tab_title) + 18,
-                ),
+                max(PANEL_TAB_MIN_HEIGHT, advance + 2 * self._TEXT_MARGIN),
             )
         )
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Re-assert the fixed height on show.
+
+        Showing a widget while a QSS theme is active clamps its explicit
+        minimum height down to the style minimum (verified empirically);
+        re-applying here keeps the compact tab height exact. Idempotent.
+        """
+        try:
+            self.refresh_metrics()
+        except Exception:
+            pass
+        super().showEvent(event)
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
         from PyQt6.QtGui import QPainter
@@ -252,6 +348,8 @@ class _ShelfTab(QPushButton):
         self.style().drawControl(
             QStyle.ControlElement.CE_PushButton, option, painter, self
         )
+        # ONE rotated string (never per-character, never elided): the
+        # canonical title renders identically collapsed/open/pinned.
         painter.save()
         try:
             palette = self.palette()
@@ -262,18 +360,19 @@ class _ShelfTab(QPushButton):
             else:
                 color = palette.color(palette.ColorRole.ButtonText)
             painter.setPen(color)
-            painter.setFont(self.font())
+            painter.setFont(self._tab_font())
             # Bottom-to-top vertical text, centered on the tab: after the
             # transform, +x runs up the widget and +y runs across it.
             painter.translate(0, self.height())
             painter.rotate(-90)
+            margin = self._TEXT_MARGIN
             painter.drawText(
-                8,
+                margin,
                 0,
-                max(0, self.height() - 16),
+                max(0, self.height() - 2 * margin),
                 PANEL_TAB_WIDTH,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                self._tab_title,
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+                self.displayed_text,
             )
         finally:
             painter.restore()
@@ -558,14 +657,14 @@ class ConfigurationModeWidget(QWidget):
         work_row.setSpacing(0)
         main_layout.addLayout(work_row, 1)
 
-        self._left_rail, self._left_rail_layout = self._build_shelf_rail()
+        self._left_rail, self._left_rail_layout = self._build_shelf_rail("left")
         self._left_rail.setObjectName("cfg_left_shelf")
         work_row.addWidget(self._left_rail)
         self._side_splitter = QSplitter(Qt.Orientation.Horizontal)
         self._side_splitter.setChildrenCollapsible(False)
         self._side_splitter.setObjectName("cfg_side_splitter")
         work_row.addWidget(self._side_splitter, 1)
-        self._right_rail, self._right_rail_layout = self._build_shelf_rail()
+        self._right_rail, self._right_rail_layout = self._build_shelf_rail("right")
         self._right_rail.setObjectName("cfg_right_shelf")
         work_row.addWidget(self._right_rail)
 
@@ -808,22 +907,47 @@ class ConfigurationModeWidget(QWidget):
         "config_editor",
     )
 
-    def _build_shelf_rail(self) -> tuple[QWidget, QVBoxLayout]:
+    def _build_shelf_rail(self, tag: str = "") -> tuple[QWidget, QVBoxLayout]:
         """Narrow vertical-tab rail (PANEL_SHELF_WIDTH px wide).
 
-        Holds one vertical tab per side panel; the camera workspace gains
+        Holds one vertical tab per side panel; the camera workspace keeps
         maximum width. Sizing comes from the PANEL_* module constants.
+
+        The TAB LIST scrolls inside an outer QScrollArea (vertical only,
+        as-needed): when many panels exist the rail scrolls instead of
+        compressing tabs until their names become unreadable. Scrolling
+        never alters tab content — the canonical title paints identically
+        in every state. The returned layout is the scrollable host layout
+        (tabs insert before its trailing stretch), not the rail layout.
         """
+        from PyQt6.QtWidgets import QScrollArea
+
         rail = QWidget()
         rail.setFixedWidth(PANEL_SHELF_WIDTH)
         set_role(rail, "toolbar")
-        layout = QVBoxLayout(rail)
-        layout.setContentsMargins(
+        outer = QVBoxLayout(rail)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea(rail)
+        scroll.setObjectName(
+            f"cfg_{tag}_shelf_scroll" if tag else "cfg_shelf_scroll"
+        )
+        scroll.setProperty("shelfScroll", True)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        host = QWidget()
+        host.setObjectName(f"cfg_{tag}_shelf_host" if tag else "cfg_shelf_host")
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(
             PANEL_TAB_MARGIN, PANEL_TAB_MARGIN, PANEL_TAB_MARGIN, PANEL_TAB_MARGIN
         )
-        layout.setSpacing(PANEL_TAB_SPACING)
-        layout.addStretch()
-        return rail, layout
+        host_layout.setSpacing(PANEL_TAB_SPACING)
+        host_layout.addStretch()
+        scroll.setWidget(host)
+        outer.addWidget(scroll, 1)
+        return rail, host_layout
 
     def _build_side_container(self) -> QWidget:
         """Host for one side's open panels, stacked vertically from the top.
@@ -895,13 +1019,17 @@ class ConfigurationModeWidget(QWidget):
         wrapper_layout.setSpacing(0)
         # Fixed header: never scrolls. Only the content below scrolls.
         # ThermoView-style: title left, one small pin right (only control).
+        # The muted blue-grey background comes from the central
+        # QWidget[panelHeader="true"] rule (theme surface_alt token).
         header = QWidget()
         header.setObjectName(f"cfg_panel_header_{key}")
+        header.setProperty("panelHeader", True)
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(6, 2, 2, 2)
         header_layout.setSpacing(2)
         title_label = QLabel(title)
         title_label.setObjectName(f"cfg_panel_title_{key}")
+        title_label.setProperty("panelTitle", True)
         title_label.setWordWrap(False)
         title_font = title_label.font()
         from thermal_monitor.ui.theme.fonts import (
@@ -911,6 +1039,7 @@ class ConfigurationModeWidget(QWidget):
             scaled_point_size as _scaled_pt,
         )
 
+        title_font.setPixelSize(-1)  # see _ShelfTab.refresh_metrics
         title_font.setPointSize(
             _scaled_pt(PANEL_HEADER_FONT_SIZE_PT, _current_scale())
         )
@@ -961,7 +1090,13 @@ class ConfigurationModeWidget(QWidget):
         tab.clicked.connect(
             lambda _checked=False, panel_key=key: self._on_shelf_tab(panel_key)
         )
-        rail_layout.insertWidget(rail_layout.count() - 1, tab)
+        # Centered in the scrollable host: when the vertical scrollbar is
+        # hidden the tab sits symmetric in the rail; when it shows, the
+        # symmetric 2 px overflow clips only tab border, never title text
+        # (text stays centered in the 32 px tab with ~10 px margins).
+        rail_layout.insertWidget(
+            rail_layout.count() - 1, tab, 0, Qt.AlignmentFlag.AlignHCenter
+        )
         record.tab = tab
         self._side_panels[key] = record
         self._sync_pin_button(record)
@@ -1024,12 +1159,21 @@ class ConfigurationModeWidget(QWidget):
         self.set_panel_open(key, not record.is_open())
 
     def _sync_shelf_tab(self, record: "_SidePanel") -> None:
-        """Reflect panel visibility on its rail tab (theme system only)."""
+        """Reflect panel visibility on its rail tab (theme system only).
+
+        Visual state only (background/border/text-color via variant +
+        checked flag): the canonical tab title string is never touched,
+        so collapsed/open/pinned all render the identical full name.
+        Collapsed uses ``outline`` (neutral grey surface + grey border +
+        dark text — ThermoView unselected) rather than ``ghost``
+        (transparent, too faint for a 32 px rail); open uses ``accent``
+        (compact blue/grey selected).
+        """
         if record.tab is None:
             return
         is_open = record.is_open()
         record.tab.setChecked(is_open)
-        set_variant(record.tab, "accent" if is_open else "ghost")
+        set_variant(record.tab, "accent" if is_open else "outline")
 
     def _sync_pin_button(self, record: "_SidePanel") -> None:
         """Reflect pinned state on the panel header pin control.
@@ -1087,6 +1231,7 @@ class ConfigurationModeWidget(QWidget):
                     )
                     if title is not None:
                         font = title.font()
+                        font.setPixelSize(-1)  # see _ShelfTab.refresh_metrics
                         font.setPointSize(header_pt)
                         font.setBold(True)
                         title.setFont(font)

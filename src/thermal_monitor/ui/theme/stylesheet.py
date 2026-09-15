@@ -50,7 +50,13 @@ def build_stylesheet(defn: ThemeDefinition, font_scale_pct: int = 100) -> str:
     fs_title = scaled_font_px(m.font_size_title, pct)
     fs_subtitle = scaled_font_px(m.font_size_subtitle, pct)
     fs_sm = scaled_font_px(m.font_size_sm, pct)
-    control_min_h = scaled_font_px(m.control_height - 6, pct)
+    from thermal_monitor.ui.theme.fonts import PANEL_TITLE_FONT_PT, SHELF_TAB_FONT_PT
+
+    fs_shelf_tab = scaled_font_px(SHELF_TAB_FONT_PT, pct)
+    fs_panel_title = scaled_font_px(PANEL_TITLE_FONT_PT, pct)
+    control_min_h = scaled_font_px(m.control_height - m.button_padding_v, pct)
+    btn_pad_v = scaled_font_px(m.button_padding_v, pct, floor=2)
+    inp_pad_v = scaled_font_px(m.input_padding_v, pct, floor=2)
     return f"""
 /* ===== TMS V3 theme: {defn.name} ({defn.display_name}) ===== */
 /* Generated centrally -- do not scatter QSS across widgets. */
@@ -174,13 +180,43 @@ QWidget[role="toolbar"] {{
     border-bottom: {bw}px solid {defn.border};
 }}
 
+/* ----- side-panel headers (Configuration shelves) ----- */
+QWidget[panelHeader="true"] {{
+    background-color: {defn.surface_alt};
+    border-bottom: {bw}px solid {defn.border};
+}}
+QLabel[panelTitle="true"] {{
+    font-size: {fs_panel_title}px;
+    font-weight: bold;
+}}
+
+/* ----- side-shelf vertical tabs (Configuration shelves) ----- */
+/* ThermoView-style: light neutral grey, thin grey border, small dark
+   text, minimal padding, near-rectangular (2 px) corners. Selected
+   emphasis comes from the variant rules below (accent = open,
+   outline/ghost = collapsed); weight stays normal in every state so
+   the advance never changes after selection. min-height/min-width 0
+   so the fixed tab geometry (PANEL_* constants) is never clamped by
+   the generic button rule. */
+QPushButton[shelfTab="true"] {{
+    font-size: {fs_shelf_tab}px;
+    font-weight: normal;
+    background-color: {defn.surface};
+    color: {defn.text};
+    border: {bw}px solid {defn.border};
+    border-radius: 2px;
+    padding: 2px;
+    min-height: 0px;
+    min-width: 0px;
+}}
+
 /* ----- buttons ----- */
 QPushButton {{
     background-color: {defn.surface};
     color: {defn.text};
     border: {bw}px solid {defn.border};
     border-radius: {m.radius_md}px;
-    padding: 6px {m.spacing_md}px;
+    padding: {btn_pad_v}px {m.spacing_md}px;
     min-height: {control_min_h}px;
 }}
 QPushButton:hover {{
@@ -296,12 +332,58 @@ QPushButton[dirty="true"]:hover {{
     border: {bw}px solid {defn.border_strong};
 }}
 
+/* ----- side-shelf selected/collapsed (higher specificity wins) ----- */
+/* Open: compact blue/grey fill + light text. Collapsed (outline/ghost):
+   neutral grey surface + grey border + dark text (ThermoView). Weight
+   stays normal in both so selecting a tab never changes its advance
+   (the previous "..." clipping came from accent-bold widening the text
+   beyond the fixed tab height). */
+QPushButton[shelfTab="true"][variant="accent"] {{
+    background-color: {defn.accent};
+    color: {defn.text_on_filled};
+    border: {bw}px solid {defn.accent};
+    font-weight: normal;
+}}
+QPushButton[shelfTab="true"][variant="accent"]:hover {{
+    background-color: {defn.accent_hover};
+    border-color: {defn.accent_hover};
+}}
+QPushButton[shelfTab="true"][variant="outline"] {{
+    background-color: {defn.surface};
+    color: {defn.text};
+    border: {bw}px solid {defn.border};
+    font-weight: normal;
+}}
+QPushButton[shelfTab="true"][variant="outline"]:hover {{
+    background-color: {defn.surface_alt};
+    border-color: {defn.focus_ring};
+}}
+QPushButton[shelfTab="true"][variant="ghost"] {{
+    background-color: {defn.surface};
+    color: {defn.text};
+    border: {bw}px solid {defn.border};
+    font-weight: normal;
+}}
+QPushButton[shelfTab="true"][variant="ghost"]:hover {{
+    background-color: {defn.surface_alt};
+    border-color: {defn.focus_ring};
+    color: {defn.text};
+}}
+QPushButton[shelfTab="true"]:hover {{
+    border-color: {defn.focus_ring};
+}}
+/* Thin shelf-rail scrollbars: the tab list scrolls instead of
+   compressing names; 8 px keeps the 32 px tab fully readable. */
+QScrollArea[shelfScroll="true"] QScrollBar:vertical {{
+    width: 8px;
+}}
+
 /* ----- tool buttons ----- */
 QToolButton {{
     background-color: transparent;
     border: {bw}px solid transparent;
     border-radius: {m.radius_md}px;
-    padding: 6px {m.spacing_md}px;
+    padding: {btn_pad_v}px {m.spacing_md}px;
     color: {defn.text};
 }}
 QToolButton:hover {{
@@ -321,7 +403,7 @@ QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {{
     color: {defn.text};
     border: {bw}px solid {defn.border};
     border-radius: {m.radius_sm}px;
-    padding: 4px {m.spacing_sm}px;
+    padding: {inp_pad_v}px {m.spacing_sm}px;
     selection-background-color: {defn.secondary};
     selection-color: {defn.text_on_filled};
 }}

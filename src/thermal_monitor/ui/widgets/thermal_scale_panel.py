@@ -56,8 +56,8 @@ class ThermalScaleLegend(QWidget):
         self._cursor_temp: float | None = None
         self._unit_symbol = "°C"
 
-        self.setMinimumWidth(60)
-        self.setMaximumWidth(80)
+        self.setMinimumWidth(48)
+        self.setMaximumWidth(64)
         self.setSizePolicy(self.sizePolicy().Policy.Fixed, self.sizePolicy().Policy.Expanding)
 
     def set_range(self, min_temp: float, max_temp: float) -> None:
@@ -81,8 +81,10 @@ class ThermalScaleLegend(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        rect = self.rect().adjusted(10, 10, -10, -10)
-        if rect.height() < 50:
+        # Narrow bar with reserved label space on the right so tick
+        # values never clip (the widget itself stays 48-64 px wide).
+        rect = self.rect().adjusted(6, 10, -30, -10)
+        if rect.height() < 50 or rect.width() < 12:
             return
 
         # Draw gradient bar
@@ -143,12 +145,9 @@ class ThermalScaleLegend(QWidget):
                 from PyQt6.QtCore import QPoint
                 points = [QPoint(triangle[i], triangle[i+1]) for i in range(0, len(triangle), 2)]
                 painter.drawPolygon(QPolygon(points))
-
-                # Cursor temp label
-                cursor_label = f"{self._cursor_temp:.1f}{self._unit_symbol}"
-                painter.setPen(indicator_color)
-                painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-                painter.drawText(rect.right() + 14, int(y) + 3, cursor_label)
+                # NOTE: no in-legend cursor text (it clipped the narrow
+                # scale); the exact value is shown in the readout label
+                # below the controls.
 
     def _get_palette_colors(self) -> list[QColor]:
         """Get color stops for the current palette."""
@@ -222,24 +221,30 @@ class ThermalScalePanel(QWidget):
         self._apply_theme()
 
     def _setup_ui(self) -> None:
+        from thermal_monitor.ui.theme.tokens import metrics_for
+
+        m = metrics_for(self._theme)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(m.panel_spacing)
 
         # --- TEMPERATURE SCALE GROUP ---
         scale_group = QGroupBox("TEMPERATURE SCALE")
         scale_layout = QHBoxLayout(scale_group)
-        scale_layout.setContentsMargins(8, 12, 8, 8)
-        scale_layout.setSpacing(8)
+        scale_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
+        scale_layout.setSpacing(m.panel_group_spacing)
 
-        # Visual legend (left side of group)
+        # Visual legend (narrow vertical gradient, left side of group)
         self._legend = ThermalScaleLegend(self._theme)
         scale_layout.addWidget(self._legend)
 
         # Controls (right side of group)
         controls_widget = QWidget()
         controls_layout = QFormLayout(controls_widget)
-        controls_layout.setSpacing(8)
+        controls_layout.setSpacing(m.panel_form_spacing)
         controls_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         # Palette selector

@@ -92,7 +92,12 @@ TILE_STATES = (
 
 @dataclass(frozen=True, slots=True)
 class ThemeMetrics:
-    """Centralized layout/typography metrics (no hardcoded sizes in widgets)."""
+    """Centralized layout/typography metrics (no hardcoded sizes in widgets).
+
+    Field defaults preserve the historic spacious look; themes that want
+    the compact industrial density (Industrial Light) override them via a
+    dedicated instance — never by editing widget code.
+    """
 
     font_family: str = '"Segoe UI", "Arial", sans-serif'
     font_mono: str = '"Consolas", "Courier New", monospace'
@@ -102,6 +107,10 @@ class ThemeMetrics:
     font_size_subtitle: int = 15
     font_size_title: int = 24
     control_height: int = 28
+    # Vertical padding inside buttons / inputs: button height ≈ text +
+    # 2 * padding + borders (compact rectangular industrial controls).
+    button_padding_v: int = 6
+    input_padding_v: int = 4
     radius_sm: int = 2
     radius_md: int = 3
     radius_lg: int = 4
@@ -110,9 +119,48 @@ class ThemeMetrics:
     spacing_sm: int = 8
     spacing_md: int = 12
     spacing_lg: int = 16
+    # Side-panel density: top-level layout spacing, group content spacing,
+    # form-row spacing, and group content margins (h, top).
+    panel_spacing: int = 8
+    panel_group_spacing: int = 8
+    panel_form_spacing: int = 6
+    panel_group_margin: int = 8
+    panel_group_margin_top: int = 12
 
 
 DEFAULT_METRICS = ThemeMetrics()
+
+
+def metrics_for(theme_manager) -> ThemeMetrics:
+    """Panel density metrics for a (possibly absent) theme manager.
+
+    Returns the active theme's metrics, falling back to DEFAULT_METRICS
+    for legacy themes, mocks, or a missing manager. Panels read layout
+    spacing/margins from here instead of hardcoding them.
+    """
+    try:
+        metrics = theme_manager.theme_metrics()
+        if isinstance(getattr(metrics, "panel_spacing", None), int):
+            return metrics
+    except Exception:
+        pass
+    return DEFAULT_METRICS
+
+#: Compact industrial density for the Industrial Light theme
+#: (ThermoView-like): tighter buttons, inputs, and panel packing.
+#: Other themes keep DEFAULT_METRICS untouched.
+LIGHT_METRICS = ThemeMetrics(
+    control_height=25,
+    button_padding_v=3,
+    input_padding_v=3,
+    spacing_sm=6,
+    spacing_md=10,
+    panel_spacing=6,
+    panel_group_spacing=6,
+    panel_form_spacing=4,
+    panel_group_margin=6,
+    panel_group_margin_top=10,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +236,8 @@ class ThemeDefinition:
         """Return a color/metric token by name (raises KeyError if unknown)."""
         if name.startswith("font_size_") or name in (
             "control_height",
+            "button_padding_v",
+            "input_padding_v",
             "radius_sm",
             "radius_md",
             "radius_lg",
@@ -196,6 +246,11 @@ class ThemeDefinition:
             "spacing_sm",
             "spacing_md",
             "spacing_lg",
+            "panel_spacing",
+            "panel_group_spacing",
+            "panel_form_spacing",
+            "panel_group_margin",
+            "panel_group_margin_top",
         ):
             return str(getattr(self.metrics, name))
         value = getattr(self, name)

@@ -54,6 +54,18 @@ FONT_SCALE_LABELS: dict[int, str] = {
 FONT_SCALE_MIN_PCT = 80
 FONT_SCALE_MAX_PCT = 150
 
+#: Explicit widget type sizes (pt at 100% scale). The central stylesheet
+#: cannot read ConfigurationModeWidget's PANEL_* constants (import cycle),
+#: so these live here: the config window aliases them (PANEL_TAB_FONT_SIZE_PT
+#: / PANEL_HEADER_FONT_SIZE_PT stay the single documented knobs) and the
+#: central QSS rules below scale them with the font setting.
+#: (Why QSS rules at all: repolish/show() resets explicitly-set widget
+#: fonts back to the stylesheet value whenever a theme is active, so
+#: setPointSize() alone silently never applies. Central rules + dynamic
+#: properties are the same mechanism QLabel roles already use.)
+SHELF_TAB_FONT_PT = 8
+PANEL_TITLE_FONT_PT = 8
+
 
 def _settings() -> QSettings:
     return QSettings(FONT_SETTINGS_ORG, FONT_SETTINGS_APP)
@@ -87,10 +99,14 @@ def save_font_scale(pct: int) -> int:
     return clamped
 
 
-def scaled_font_px(base_px: int, pct: int) -> int:
-    """Scale a QSS pixel font/metric value (floored at 8px for readability)."""
+def scaled_font_px(base_px: int, pct: int, floor: int = 8) -> int:
+    """Scale a QSS pixel font/metric value.
+
+    Readability floor (default 8px) applies to type; pass a lower floor
+    for structural padding that must stay tight.
+    """
     try:
-        return max(8, round(int(base_px) * int(pct) / 100))
+        return max(int(floor), round(int(base_px) * int(pct) / 100))
     except (TypeError, ValueError):
         return int(base_px)
 
@@ -178,6 +194,8 @@ __all__ = [
     "FONT_SCALE_LABELS",
     "FONT_SCALE_MIN_PCT",
     "FONT_SCALE_MAX_PCT",
+    "SHELF_TAB_FONT_PT",
+    "PANEL_TITLE_FONT_PT",
     "apply_font_scale",
     "clamp_font_scale",
     "current_font_scale",

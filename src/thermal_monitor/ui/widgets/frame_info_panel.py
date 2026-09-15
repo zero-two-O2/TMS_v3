@@ -31,13 +31,20 @@ class FrameInfoPanel(QWidget):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        from thermal_monitor.ui.theme.tokens import metrics_for
+
+        m = metrics_for(self._theme)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(m.panel_spacing)
 
         frame_group = QGroupBox("Frame Information")
         frame_form = QFormLayout(frame_group)
-        frame_form.setSpacing(4)
+        frame_form.setSpacing(m.panel_form_spacing)
+        frame_form.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
         frame_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         # Camera/Frame info

@@ -140,7 +140,7 @@ class TestThemeSwitching:
         previous = theme.set_theme("industrial_light")
         assert previous == "industrial_dark"
         assert theme.theme_name == "industrial_light"
-        assert theme.background() == "#FFFFFF"
+        assert theme.background() == "#E9ECEF"
 
     def test_set_theme_updates_live_tile_colors(self) -> None:
         theme = ThemeManager(create_config_manager())

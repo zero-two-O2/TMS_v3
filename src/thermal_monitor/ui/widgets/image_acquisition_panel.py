@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
 from thermal_monitor.core.models import CameraConnectionState, CameraIdentity
 from thermal_monitor.ui.theme import ThemeManager
 from thermal_monitor.ui.theme.properties import set_role, set_status, set_variant
+from thermal_monitor.ui.theme.tokens import metrics_for
 
 
 logger = logging.getLogger(__name__)
@@ -84,9 +85,12 @@ class ImageAcquisitionPanel(QWidget):
         logger.debug("Panel constructed id=%r theme=%r", id(self), theme_manager)
 
     def _setup_ui(self) -> None:
+        # Compact industrial density from the central theme metrics
+        # (Industrial Light overrides them; other themes are untouched).
+        m = metrics_for(self._theme)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(m.panel_spacing)
 
         # NOTE: there is deliberately NO camera selector here. Camera
         # selection flows through exactly one path: Connect ->
@@ -95,8 +99,11 @@ class ImageAcquisitionPanel(QWidget):
         # --- IMAGE ACQUISITION GROUP ---
         group = QGroupBox("IMAGE ACQUISITION")
         group_layout = QVBoxLayout(group)
-        group_layout.setContentsMargins(8, 12, 8, 8)
-        group_layout.setSpacing(8)
+        group_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
+        group_layout.setSpacing(m.panel_group_spacing)
 
         # Camera identity (compact)
         self._camera_label = QLabel("No camera selected")
@@ -106,7 +113,7 @@ class ImageAcquisitionPanel(QWidget):
 
         # Connection status
         status_layout = QHBoxLayout()
-        status_layout.setSpacing(8)
+        status_layout.setSpacing(m.spacing_sm)
 
         self._status_indicator = QLabel("●")
         self._status_indicator.setFixedWidth(16)
@@ -127,7 +134,7 @@ class ImageAcquisitionPanel(QWidget):
 
         # Connection controls (Connect/Disconnect)
         conn_btn_layout = QHBoxLayout()
-        conn_btn_layout.setSpacing(6)
+        conn_btn_layout.setSpacing(m.spacing_xs)
 
         self._connect_btn = QPushButton("Connect")
         self._connect_btn.clicked.connect(self.connect_requested.emit)
@@ -160,7 +167,7 @@ class ImageAcquisitionPanel(QWidget):
         self._run_controls = QWidget()
         run_layout = QHBoxLayout(self._run_controls)
         run_layout.setContentsMargins(0, 0, 0, 0)
-        run_layout.setSpacing(6)
+        run_layout.setSpacing(m.spacing_xs)
 
         self._start_btn = QPushButton("Start")
         self._start_btn.clicked.connect(self.start_requested.emit)
@@ -181,8 +188,11 @@ class ImageAcquisitionPanel(QWidget):
         # --- FEED GROUP (display only: IR / IR+VL / VL) ---
         feed_group = QGroupBox("FEED")
         feed_layout = QHBoxLayout(feed_group)
-        feed_layout.setContentsMargins(8, 12, 8, 8)
-        feed_layout.setSpacing(4)
+        feed_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
+        feed_layout.setSpacing(m.spacing_xs)
         self._feed_buttons: dict[str, QPushButton] = {}
         for mode, text, tip in (
             ("ir", "IR", "Infrared feed only (display)"),
@@ -208,9 +218,12 @@ class ImageAcquisitionPanel(QWidget):
         # --- FOCUS GROUP (Stage 8D: custom-backend focus, async via window) ---
         focus_group = QGroupBox("FOCUS")
         focus_layout = QFormLayout(focus_group)
-        focus_layout.setSpacing(6)
+        focus_layout.setSpacing(m.panel_form_spacing)
         focus_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        focus_layout.setContentsMargins(8, 12, 8, 8)
+        focus_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
 
         self._focus_current_label = QLabel("— mm")
         set_role(self._focus_current_label, "mono")
@@ -221,7 +234,7 @@ class ImageAcquisitionPanel(QWidget):
         focus_layout.addRow("Range:", self._focus_range_label)
 
         focus_row = QHBoxLayout()
-        focus_row.setSpacing(6)
+        focus_row.setSpacing(m.spacing_xs)
         self._focus_spin = QSpinBox()
         self._focus_spin.setRange(1, 1000000)
         self._focus_spin.setSuffix(" mm")
@@ -242,7 +255,7 @@ class ImageAcquisitionPanel(QWidget):
         focus_layout.addRow("Set:", focus_row)
 
         focus_btn_row = QHBoxLayout()
-        focus_btn_row.setSpacing(6)
+        focus_btn_row.setSpacing(m.spacing_xs)
         self._focus_refresh_btn = QPushButton("Read")
         self._focus_refresh_btn.setObjectName("focusReadButton")
         self._focus_refresh_btn.clicked.connect(self.focus_refresh_requested.emit)
@@ -263,8 +276,11 @@ class ImageAcquisitionPanel(QWidget):
         # --- NUC GROUP (Stage 8G: custom-path production NUC, async via window) ---
         nuc_group = QGroupBox("NUC")
         nuc_layout = QVBoxLayout(nuc_group)
-        nuc_layout.setSpacing(6)
-        nuc_layout.setContentsMargins(8, 12, 8, 8)
+        nuc_layout.setSpacing(m.panel_group_spacing)
+        nuc_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
 
         self._nuc_button = QPushButton("Execute NUC")
         self._nuc_button.clicked.connect(self.nuc_requested.emit)

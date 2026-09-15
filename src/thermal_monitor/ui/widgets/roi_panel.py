@@ -68,17 +68,25 @@ class ROIPanel(QWidget):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        from thermal_monitor.ui.theme.tokens import metrics_for
+
+        m = metrics_for(self._theme)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(m.panel_spacing)
 
         # ROI List group
         list_group = QGroupBox("Regions of Interest")
         list_layout = QVBoxLayout(list_group)
-        list_layout.setSpacing(6)
+        list_layout.setSpacing(m.panel_group_spacing)
+        list_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
 
         # Toolbar
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(m.spacing_xs)
         self._add_roi_btn = QPushButton("Add ROI")
         self._add_roi_btn.clicked.connect(self._on_add_roi)
         self._apply_button_style(self._add_roi_btn, "primary")

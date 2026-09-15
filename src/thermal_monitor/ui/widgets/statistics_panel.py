@@ -34,14 +34,21 @@ class StatisticsPanel(QWidget):
         self._setup_ui()
 
     def _setup_ui(self) -> None:
+        from thermal_monitor.ui.theme.tokens import metrics_for
+
+        m = metrics_for(self._theme)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(m.panel_spacing)
 
         # Overall stats
         self._overall_group = QGroupBox("Overall Statistics")
         overall_form = QFormLayout(self._overall_group)
-        overall_form.setSpacing(4)
+        overall_form.setSpacing(m.panel_form_spacing)
+        overall_form.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
 
         self._overall_min = QLabel("—")
         self._overall_max = QLabel("—")
@@ -65,6 +72,11 @@ class StatisticsPanel(QWidget):
         # Per-ROI stats table
         roi_group = QGroupBox("Per-ROI Statistics")
         roi_layout = QVBoxLayout(roi_group)
+        roi_layout.setSpacing(m.panel_group_spacing)
+        roi_layout.setContentsMargins(
+            m.panel_group_margin, m.panel_group_margin_top,
+            m.panel_group_margin, m.panel_group_margin,
+        )
 
         self._roi_stats_table = QTableWidget(0, 7)
         self._roi_stats_table.setHorizontalHeaderLabels(["ROI", "Name", "Min", "Max", "Mean", "Std Dev", "Range"])

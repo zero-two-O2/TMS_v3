@@ -52,7 +52,7 @@ from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
 
 THEME_BACKGROUNDS = {
     "industrial_dark": "#15181D",
-    "industrial_light": "#FFFFFF",
+    "industrial_light": "#E9ECEF",
     "blue_engineering": "#101722",
     "high_contrast": "#000000",
 }
@@ -188,7 +188,7 @@ class TestImmediateApplication:
         controller = _make_controller(theme)
         controller.select_theme("industrial_light")
         assert theme.theme_name == "industrial_light"
-        assert "#FFFFFF" in qapp.styleSheet()
+        assert "#E9ECEF" in qapp.styleSheet()
 
     def test_selecting_blue_applies_immediately(self, qapp, tmp_path):
         _, theme = _make_managers(tmp_path)
@@ -382,7 +382,7 @@ class TestPersistence:
         controller = _make_controller(theme, FailingConfig())
         controller.select_theme("industrial_light")
         assert theme.theme_name == "industrial_light"
-        assert "#FFFFFF" in qapp.styleSheet()
+        assert "#E9ECEF" in qapp.styleSheet()
         assert controller.action_for("industrial_light") is None or True
 
     def test_unrelated_config_untouched(self, qapp, tmp_path):
@@ -613,7 +613,7 @@ class TestLiveThemeSwitchIntegration:
             positions = [wall._grid_layout.getItemPosition(i)[:2] for i in range(9)]
 
             for name, background in (
-                ("industrial_light", "#FFFFFF"),
+                ("industrial_light", "#E9ECEF"),
                 ("blue_engineering", "#101722"),
                 ("high_contrast", "#000000"),
             ):

@@ -136,23 +136,28 @@ def test_manager_carries_scale(isolated_font_settings) -> None:
 
 
 def test_apply_scales_shelf_and_headers(widget, qapp, isolated_font_settings) -> None:
-    record = widget.side_panels()["temp_scale"]
+    """130%: tab heights grow from the deterministic constructed font.
+
+    (Widget .font() itself is QSS-driven whenever a theme is active, so
+    height — not pointSize — is the behavioral assertion. Type size is
+    covered by the central-QSS tests.)
+    """
+    record = widget.side_panels()["statistics"]  # headroom above MIN, below MAX
     before_height = record.tab.height()
-    before_tab_pt = record.tab.font().pointSize()
     title = widget.findChild(
         __import__("PyQt6.QtWidgets", fromlist=["QLabel"]).QLabel,
         "cfg_panel_title_temp_scale",
     )
-    before_title_pt = title.font().pointSize()
+    assert title.property("panelTitle") is True
 
     fonts.apply_font_scale(130, theme_manager=None, app=qapp)
     qapp.processEvents()
 
-    assert record.tab.font().pointSize() > before_tab_pt
-    assert record.tab.height() >= before_height
-    assert title.font().pointSize() > before_title_pt
+    assert record.tab.height() > before_height
     # Shelf stays narrow: width is a constant, never font-driven.
-    assert record.tab.width() <= 26
+    import thermal_monitor.ui.windows.configuration_window as mod
+
+    assert record.tab.width() <= mod.PANEL_TAB_WIDTH + 2
     assert widget.findChild(
         __import__("PyQt6.QtWidgets", fromlist=["QWidget"]).QWidget,
         "cfg_right_shelf",
@@ -164,7 +169,6 @@ def test_apply_smaller_scale(widget, qapp, isolated_font_settings) -> None:
     before_height = record.tab.height()
     fonts.apply_font_scale(90, theme_manager=None, app=qapp)
     qapp.processEvents()
-    assert record.tab.font().pointSize() <= 8
     assert record.tab.height() <= before_height
     assert record.tab.height() >= 60  # still clickable, full name intact
     assert record.tab._tab_title == "ROI"

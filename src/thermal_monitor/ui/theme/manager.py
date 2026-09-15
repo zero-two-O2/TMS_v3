@@ -411,6 +411,20 @@ class ThemeManager:
         """Get resolved colors for a specific theme."""
         return self._colors_cache.get(theme, self._colors_cache["light"])
 
+    def theme_metrics(self):
+        """Layout/typography metrics for the active built-in theme.
+
+        Falls back to DEFAULT_METRICS for legacy themes and when no
+        theme manager state is available. Panels read spacing/margins
+        from here instead of hardcoding them.
+        """
+        from thermal_monitor.ui.theme.tokens import DEFAULT_METRICS
+
+        definition = self.theme_definition()
+        if definition is not None:
+            return definition.metrics
+        return DEFAULT_METRICS
+
     def token(self, name: str, default: str = "") -> str:
         """Return a raw design token for the active built-in theme.
 
