@@ -179,6 +179,10 @@ QWidget[role="toolbar"] {{
     background-color: {defn.surface};
     border-bottom: {bw}px solid {defn.border};
 }}
+QWidget[shelfRail="true"] {{
+    background-color: {defn.surface_alt};
+    border-right: {bw}px solid {defn.border};
+}}
 
 /* ----- side-panel headers (Configuration shelves) ----- */
 QWidget[panelHeader="true"] {{
@@ -553,17 +557,18 @@ QHeaderView::section {{
 /* ----- group boxes ----- */
 QGroupBox {{
     border: {bw}px solid {defn.border};
-    border-radius: {m.radius_lg}px;
+    border-radius: 2px;
     margin-top: {m.spacing_md}px;
-    padding-top: {m.spacing_md}px;
+    padding-top: 10px;
     font-weight: bold;
-    background-color: {defn.background};
+    background-color: {defn.surface};
 }}
 QGroupBox::title {{
     subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px;
+    left: 7px;
+    padding: 0 4px;
     color: {defn.text};
+    background-color: {defn.surface};
 }}
 
 /* ----- scroll areas / scroll bars ----- */
@@ -573,7 +578,7 @@ QScrollArea {{
 }}
 QScrollBar:vertical {{
     background-color: {defn.surface};
-    width: 12px;
+    width: 8px;
     border: none;
 }}
 QScrollBar::handle:vertical {{
@@ -586,7 +591,7 @@ QScrollBar::handle:vertical:hover {{
 }}
 QScrollBar:horizontal {{
     background-color: {defn.surface};
-    height: 12px;
+    height: 8px;
     border: none;
 }}
 QScrollBar::handle:horizontal {{

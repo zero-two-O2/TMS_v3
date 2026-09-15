@@ -147,8 +147,8 @@ PANEL_TAB_MAX_HEIGHT = 280  #: longest tab fits "Configuration Editor" at 150% s
 PANEL_TAB_FONT_SIZE_PT = _SHELF_TAB_FONT_PT  #: small readable tab font (at 100%)
 PANEL_TAB_SPACING = 4  #: vertical gap between tabs in px
 PANEL_TAB_MARGIN = 4  #: rail/host contents margin in px (rail = tab + 2 * margin)
-PANEL_PIN_SIZE = 14  #: pin button size in px (ThermoView-scale)
-PANEL_PIN_ICON_SIZE = 10  #: pin icon visual size in px
+PANEL_PIN_SIZE = 16  #: pin button size in px (ThermoView-scale)
+PANEL_PIN_ICON_SIZE = 12  #: pin icon visual size in px
 PANEL_HEADER_FONT_SIZE_PT = _PANEL_TITLE_FONT_PT  #: compact title font (at 100%)
 
 
@@ -925,6 +925,7 @@ class ConfigurationModeWidget(QWidget):
         rail = QWidget()
         rail.setFixedWidth(PANEL_SHELF_WIDTH)
         set_role(rail, "toolbar")
+        rail.setProperty("shelfRail", True)
         outer = QVBoxLayout(rail)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -939,6 +940,7 @@ class ConfigurationModeWidget(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         host = QWidget()
         host.setObjectName(f"cfg_{tag}_shelf_host" if tag else "cfg_shelf_host")
+        host.setMinimumWidth(PANEL_TAB_WIDTH + 2 * PANEL_TAB_MARGIN)
         host_layout = QVBoxLayout(host)
         host_layout.setContentsMargins(
             PANEL_TAB_MARGIN, PANEL_TAB_MARGIN, PANEL_TAB_MARGIN, PANEL_TAB_MARGIN
