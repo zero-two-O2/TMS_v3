@@ -899,7 +899,7 @@ def test_connect_dialog_dismiss_restores_ui(qapp) -> None:
     try:
         widget._activate_camera("camA", connect=False)
         # Simulate the Connect button's CONNECTING hold on the panels.
-        widget._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
+        widget._set_top_connection_state(CameraConnectionState.CONNECTING)
         widget._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
         assert not widget._acq_panel._connect_btn.isEnabled()
 
@@ -910,7 +910,7 @@ def test_connect_dialog_dismiss_restores_ui(qapp) -> None:
         assert widget._status_label.text() == "Camera: camA"
 
         # Accepted takes the camera_selected path: no interference.
-        widget._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
+        widget._set_top_connection_state(CameraConnectionState.CONNECTING)
         widget._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
         widget._on_connect_dialog_finished(QDialog.DialogCode.Accepted)
         assert widget._acq_panel._connection_state == CameraConnectionState.CONNECTING
@@ -1031,17 +1031,17 @@ def test_runtime_observer_delivers_first_frame() -> None:
 
 
 def _combo_select(widget: ConfigurationModeWidget, camera_id: str) -> None:
-    """Drive the toolbar combo exactly like a user click (emits signal)."""
-    assert widget._toolbar.select_camera_by_id(camera_id), camera_id
+    """Drive the Camera Control combo exactly like a user click (emits)."""
+    assert widget._acq_panel.select_camera_by_id(camera_id), camera_id
 
 
 def _assert_selection_invariant(widget: ConfigurationModeWidget) -> None:
-    """selected == toolbar == panel identity (the section-3 invariant)."""
+    """selected == Camera Control combo == panel identity (invariant)."""
     selected = widget._selected_camera_id
-    toolbar = widget._toolbar._camera_combo.currentData()
+    combo = widget._acq_panel.selected_combo_camera_id
     panel_identity = widget._acq_panel._selected_camera_identity
     panel_id = getattr(panel_identity, "camera_id", None)
-    assert toolbar == selected, f"toolbar={toolbar} selected={selected}"
+    assert combo == selected, f"combo={combo} selected={selected}"
     assert panel_id == selected, f"panel={panel_id} selected={selected}"
 
 
@@ -1204,20 +1204,20 @@ def test_no_phantom_switch_on_config_refresh(qapp) -> None:
 
 
 def test_start_refused_on_identity_mismatch(qapp) -> None:
-    """Toolbar/panel divergence from authority: refuse, log, correct."""
+    """Camera Control combo/panel divergence from authority: refuse, correct."""
     runtime = FakeRuntime()
     widget = _make_widget(qapp, runtime, camera_ids=("camA", "camB"))
     try:
         _combo_select(widget, "camA")
         _connect_selected(widget, qapp, runtime)
         # Force a view divergence without touching the authority.
-        widget._toolbar.blockSignals(True)
+        widget._acq_panel.blockSignals(True)
         try:
-            assert widget._toolbar.select_camera_by_id("camB")
+            assert widget._acq_panel.select_camera_by_id("camB")
         finally:
-            widget._toolbar.blockSignals(False)
+            widget._acq_panel.blockSignals(False)
         assert widget._selected_camera_id == "camA"
-        assert widget._toolbar._camera_combo.currentData() == "camB"
+        assert widget._acq_panel.selected_combo_camera_id == "camB"
 
         widget._acq_panel._start_btn.click()
         qapp.processEvents()
@@ -1227,7 +1227,7 @@ def test_start_refused_on_identity_mismatch(qapp) -> None:
         assert widget._lifecycle == CameraConnectionState.CONNECTED
         assert "mismatch" in widget._status_label.text()
         # Corrected: views re-asserted from the authority.
-        assert widget._toolbar._camera_combo.currentData() == "camA"
+        assert widget._acq_panel.selected_combo_camera_id == "camA"
         _assert_selection_invariant(widget)
     finally:
         _close_widget(widget)

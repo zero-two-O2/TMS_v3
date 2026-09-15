@@ -82,13 +82,13 @@ from thermal_monitor.ui.modes.observer_image import LiveThermalWidget, ROIOverla
 from thermal_monitor.ui.modes.view_finder import ViewFinderWidget
 from thermal_monitor.ui.modes.vl_image import VlImageWidget
 from thermal_monitor.ui.widgets import (
-    ConfigCameraHeader,
     ThermalScalePanel,
     FrameInfoPanel,
     ROIPanel,
     AlarmPanel,
     StatisticsPanel,
     CameraSelectionDialog,
+    AcquisitionSetupDialog,
     ImageAcquisitionPanel,
 )
 from thermal_monitor.ui.theme import ThemeManager
@@ -102,12 +102,42 @@ _DOCK_SETTINGS_ORG = "ThermalMonitoringSystem"
 _DOCK_SETTINGS_APP = "ConfigWorkstation"
 _DOCK_SETTINGS_KEY = "dock_layout_v1"
 
+#: Lifecycle state -> top-bar status role (mirrors the status roles used
+#: by the panel indicators; kept local so the removed top camera selector
+#: module is not imported for a two-line map).
+_TOP_CONNECTION_STATUS_MAP = {
+    CameraConnectionState.DISCONNECTED: "disconnected",
+    CameraConnectionState.CONNECTING: "connecting",
+    CameraConnectionState.CONNECTED: "connected",
+    CameraConnectionState.STARTING: "connecting",
+    CameraConnectionState.ACQUIRING: "acquiring",
+    CameraConnectionState.STOPPING: "connecting",
+    CameraConnectionState.DISCONNECTING: "connecting",
+    CameraConnectionState.DEGRADED: "degraded",
+    CameraConnectionState.RECONNECTING: "connecting",
+    CameraConnectionState.ERROR: "error",
+}
+
 # Bounded waits (seconds) for teardown phases. No arbitrary sleeps: each
 # phase is an event/process-state join with its own timeout, after which
 # the operation escalates (terminate) instead of blocking the GUI.
 _TEARDOWN_PROCESS_TIMEOUT_S = 5.0
 _TEARDOWN_VERIFY_TIMEOUT_S = 1.0
 _OBSERVER_STOP_TIMEOUT_S = 2.0
+
+#: -- Side-shelf geometry (ThermoView-style narrow vertical tabs) ---------
+#: CENTRAL shelf-size constants: change these to resize the shelf rails.
+#: No other shelf dimension is hardcoded elsewhere.
+PANEL_SHELF_WIDTH = 30  #: rail width in px (target 25-32 px)
+PANEL_TAB_WIDTH = 26  #: vertical tab width in px (rail minus margins)
+PANEL_TAB_MIN_HEIGHT = 84  #: shortest tab (e.g. "ROI") in px
+PANEL_TAB_MAX_HEIGHT = 176  #: longest tab (e.g. "Configuration Editor") in px
+PANEL_TAB_FONT_SIZE_PT = 8  #: small but readable tab font
+PANEL_TAB_SPACING = 2  #: vertical gap between tabs in px
+PANEL_TAB_MARGIN = 2  #: rail contents margin in px
+PANEL_PIN_SIZE = 18  #: pin button size in px (ThermoView-scale)
+PANEL_PIN_ICON_SIZE = 12  #: pin icon size in px
+PANEL_HEADER_FONT_SIZE_PT = 8  #: compact panel-title font
 
 
 
@@ -119,16 +149,62 @@ _UNIT_SYMBOLS = {
 }
 
 
-class _ShelfTab(QPushButton):
-    """One narrow vertical tab on a side shelf rail (~28 px wide).
+def _make_pin_icon(pinned: bool):  # -> QIcon (import-deferred for headless tests)
+    """Small professional push-pin icon, drawn programmatically.
 
-    Checkable: checked = its panel is open. Plain Qt widget painting
-    (rotated text over the standard button bevel) — no custom docking
-    framework, no stylesheets; emphasis comes from the theme variant
-    (accent = open, ghost = collapsed) plus the palette text color.
+    Cached per state. Unpinned = hollow gray pin; pinned = filled accent
+    pin. Drawn on a transparent 16x16 pixmap so it stays visible on both
+    light and dark headers; the button background still comes from the
+    theme variant (accent = pinned, ghost = unpinned).
     """
+    from PyQt6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 
-    _RAIL_WIDTH = 28
+    cache = _make_pin_icon.__dict__.setdefault("cache", {})
+    if pinned in cache:
+        return cache[pinned]
+    pixmap = QPixmap(16, 16)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if pinned:
+            head, needle, outline = (
+                QColor(0x1E, 0x88, 0xE5),
+                QColor(0x1E, 0x88, 0xE5),
+                QColor(0xFF, 0xFF, 0xFF),
+            )
+        else:
+            head, needle, outline = (
+                Qt.GlobalColor.transparent,
+                QColor(0x8A, 0x8A, 0x8A),
+                QColor(0x5A, 0x5A, 0x5A),
+            )
+        painter.setPen(QPen(outline, 1.6))
+        painter.setBrush(QBrush(head))
+        painter.drawEllipse(3, 1, 10, 8)  # pin head
+        painter.setPen(QPen(needle if pinned else outline, 2.0))
+        painter.drawLine(8, 8, 4, 14)  # needle, tilted like a real pin
+        painter.setPen(QPen(outline, 1.0))
+        painter.setBrush(QBrush(QColor(0xFF, 0xFF, 0xFF) if pinned else outline))
+        painter.drawEllipse(6, 3, 4, 4)  # highlight dot
+    finally:
+        painter.end()
+    icon = QIcon(pixmap)
+    cache[pinned] = icon
+    return icon
+
+
+class _ShelfTab(QPushButton):
+    """One narrow VERTICAL tab on a side shelf rail (~26 px wide).
+
+    Checkable: checked = its panel is open. The FULL panel name is drawn
+    vertically (rotated text over the standard button bevel — never
+    abbreviated); emphasis comes from the theme variant (accent = open,
+    ghost = collapsed) plus the palette text color. No custom docking
+    framework, no stylesheets.
+
+    Sizing is driven by the PANEL_* module constants above.
+    """
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -136,11 +212,17 @@ class _ShelfTab(QPushButton):
         self.setCheckable(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setToolTip(title)
+        font = self.font()
+        font.setPointSize(PANEL_TAB_FONT_SIZE_PT)
+        self.setFont(font)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.setFixedWidth(self._RAIL_WIDTH)
+        self.setFixedWidth(PANEL_TAB_WIDTH)
         metrics = self.fontMetrics()
         self.setFixedHeight(
-            min(160, max(76, metrics.horizontalAdvance(title) + 18))
+            min(
+                PANEL_TAB_MAX_HEIGHT,
+                max(PANEL_TAB_MIN_HEIGHT, metrics.horizontalAdvance(title) + 18),
+            )
         )
 
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
@@ -164,7 +246,8 @@ class _ShelfTab(QPushButton):
             else:
                 color = palette.color(palette.ColorRole.ButtonText)
             painter.setPen(color)
-            # Bottom-to-top vertical text, centered on the rail: after the
+            painter.setFont(self.font())
+            # Bottom-to-top vertical text, centered on the tab: after the
             # transform, +x runs up the widget and +y runs across it.
             painter.translate(0, self.height())
             painter.rotate(-90)
@@ -172,7 +255,7 @@ class _ShelfTab(QPushButton):
                 8,
                 0,
                 max(0, self.height() - 16),
-                self._RAIL_WIDTH,
+                PANEL_TAB_WIDTH,
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 self._tab_title,
             )
@@ -372,6 +455,12 @@ class ConfigurationModeWidget(QWidget):
         self._display_rate = UniqueFrameRate()
         self._config_editor: Optional[ConfigurationEditor] = None
         self._camera_selection_dialog: CameraSelectionDialog | None = None
+        self._acq_setup_dialog: AcquisitionSetupDialog | None = None
+        # Startup acquisition parameters (FPS / averaging / history). Owned
+        # by the Acquisition Setup dialog; initialized from the selected
+        # camera's metadata and written back on dialog Start. The Start
+        # pipeline reads them from here (never from panel widgets).
+        self._acq_params: dict = {"fps": 9, "averaging": "Off", "history_frames": 100}
         # Focus worker thread (at most one in flight; stale results dropped
         # by camera-id token when the selection changes mid-operation).
         # The worker object is retained (never a bare local) so the Python
@@ -438,14 +527,10 @@ class ConfigurationModeWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # --- Top Toolbar ---
-        self._toolbar = ConfigCameraHeader(self._theme)
-        self._toolbar.camera_selected.connect(self._on_camera_selected)
-        self._toolbar.prev_camera_requested.connect(self._select_prev_camera)
-        self._toolbar.next_camera_requested.connect(self._select_next_camera)
-        self._toolbar.snapshot_requested.connect(self._on_snapshot)
-        self._toolbar.save_requested.connect(self._on_save_config)
-        main_layout.addWidget(self._toolbar)
+        # --- Slim top action bar (no camera selector: selection lives in
+        # Camera Control). Connection status + global actions only.
+        self._top_bar = self._build_top_bar()
+        main_layout.addWidget(self._top_bar)
 
         # --- Workstation row: thin shelf | panels | CENTER | panels | thin shelf
         # Plain widgets only. Side panels live inside their shelf container
@@ -479,16 +564,15 @@ class ConfigurationModeWidget(QWidget):
         self._irvl_mode = "both"
         self._ir_vl_split_saved = None
 
-        # LEFT: Image Acquisition panel (instrument panel)
+        # LEFT: Image Acquisition panel (instrument panel, owns camera
+        # selection + feed display mode + Connect/Start/Stop/Focus/NUC).
         self._acq_panel = ImageAcquisitionPanel(self._theme)
+        self._acq_panel.camera_selection_changed.connect(self._on_camera_selected)
+        self._acq_panel.feed_mode_changed.connect(self.set_irvl_mode)
         self._acq_panel.connect_requested.connect(self._on_connect)
         self._acq_panel.disconnect_requested.connect(self._on_disconnect)
         self._acq_panel.start_requested.connect(self._on_start_acquisition)
         self._acq_panel.stop_requested.connect(self._on_stop_acquisition)
-        self._acq_panel.change_requested.connect(self._on_change_acquisition)
-        self._acq_panel.fps_changed.connect(self._on_fps_changed)
-        self._acq_panel.averaging_changed.connect(self._on_averaging_changed)
-        self._acq_panel.history_changed.connect(self._on_history_changed)
         self._acq_panel.focus_set_requested.connect(self._on_focus_set_requested)
         self._acq_panel.focus_refresh_requested.connect(self._on_focus_refresh_requested)
         self._acq_panel.nuc_requested.connect(self._on_nuc_requested)
@@ -546,9 +630,9 @@ class ConfigurationModeWidget(QWidget):
         ir_vl_splitter.setStretchFactor(1, 2)
         center_layout.addWidget(ir_vl_splitter, 1)
         self._ir_vl_splitter = ir_vl_splitter
-        # Slim workspace bar on top (built after the image widgets exist
-        # so its controls can wire straight to them).
-        center_layout.insertWidget(0, self._build_workspace_bar())
+        # Clean center: camera feed only. Feed mode lives in Camera
+        # Control and zoom commands live in the View menu — no workspace
+        # toolbar above the image.
         # Center goes between the side containers; side-panel widths stay
         # user-resizable (controlled) via this splitter only.
         self._side_splitter.insertWidget(1, center_widget)
@@ -627,6 +711,45 @@ class ConfigurationModeWidget(QWidget):
         # --- Bottom: Status bar ---
         self._create_status_bar(main_layout)
 
+    def _build_top_bar(self) -> QWidget:
+        """Slim status/action strip: connection state + Snapshot/Save.
+
+        Deliberately no camera selector and no navigation arrows — camera
+        selection/connection is owned by the Camera Control panel.
+        """
+        bar = QWidget()
+        bar.setObjectName("cfg_top_bar")
+        set_role(bar, "toolbar")
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(8)
+        self._top_conn_indicator = QLabel("●")
+        self._top_conn_indicator.setFixedWidth(16)
+        set_status(self._top_conn_indicator, "disconnected")
+        self._top_conn_label = QLabel("Disconnected")
+        set_role(self._top_conn_label, "strong")
+        layout.addWidget(self._top_conn_indicator)
+        layout.addWidget(self._top_conn_label)
+        layout.addStretch()
+        self._snapshot_btn = QPushButton("Snapshot")
+        self._snapshot_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_variant(self._snapshot_btn, "outline")
+        self._snapshot_btn.clicked.connect(self._on_snapshot)
+        layout.addWidget(self._snapshot_btn)
+        self._save_btn = QPushButton("Save Config")
+        self._save_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        set_variant(self._save_btn, "ghost")
+        self._save_btn.clicked.connect(self._on_save_config)
+        layout.addWidget(self._save_btn)
+        return bar
+
+    def _set_top_connection_state(self, state: CameraConnectionState) -> None:
+        """Mirror the lifecycle state onto the slim top bar."""
+        status = _TOP_CONNECTION_STATUS_MAP.get(state, "disconnected")
+        set_status(self._top_conn_indicator, status)
+        self._top_conn_label.setText(state.value.replace("_", " ").title())
+        set_status(self._top_conn_label, status)
+
     def _create_status_bar(self, parent_layout: QVBoxLayout) -> None:
         """Create status bar at bottom."""
         status_frame = QFrame()
@@ -669,32 +792,63 @@ class ConfigurationModeWidget(QWidget):
     )
 
     def _build_shelf_rail(self) -> tuple[QWidget, QVBoxLayout]:
-        """Thin clickable rail (~30 px) holding one tab per side panel."""
+        """Narrow vertical-tab rail (PANEL_SHELF_WIDTH px wide).
+
+        Holds one vertical tab per side panel; the camera workspace gains
+        maximum width. Sizing comes from the PANEL_* module constants.
+        """
         rail = QWidget()
-        rail.setFixedWidth(_ShelfTab._RAIL_WIDTH + 4)
+        rail.setFixedWidth(PANEL_SHELF_WIDTH)
         set_role(rail, "toolbar")
         layout = QVBoxLayout(rail)
-        layout.setContentsMargins(2, 4, 2, 4)
-        layout.setSpacing(2)
+        layout.setContentsMargins(
+            PANEL_TAB_MARGIN, PANEL_TAB_MARGIN, PANEL_TAB_MARGIN, PANEL_TAB_MARGIN
+        )
+        layout.setSpacing(PANEL_TAB_SPACING)
         layout.addStretch()
         return rail, layout
 
     def _build_side_container(self) -> QWidget:
         """Host for one side's open panels, stacked vertically from the top.
 
+        The container scrolls as a whole when too many panels are open,
+        while each panel ALSO scrolls its own content (header fixed).
         Width is user-resizable via the side splitter only, within
         controlled limits (spec: side panels may resize in width but
         can never detach, float, or move outside their shelf).
         """
+        from PyQt6.QtWidgets import QScrollArea
+
         container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addStretch()
+        outer = QVBoxLayout(container)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        scroll = QScrollArea(container)
+        scroll.setObjectName("cfg_side_scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        host = QWidget()
+        host.setObjectName("cfg_side_host")
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(0, 0, 0, 0)
+        host_layout.setSpacing(2)
+        host_layout.addStretch()
+        scroll.setWidget(host)
+        outer.addWidget(scroll, 1)
         container.setVisible(False)
-        container.setMinimumWidth(200)
+        container.setMinimumWidth(220)
         container.setMaximumWidth(460)
+        # Pinned for the panel registrar: panels stack inside the host.
+        container._panel_host = host  # type: ignore[attr-defined]
         return container
+
+    def _side_host(self, side: str) -> QWidget:
+        """Inner stacked host inside a side container's scroll area."""
+        container = self._left_container if side == "left" else self._right_container
+        host = getattr(container, "_panel_host", None)
+        return host if host is not None else container
 
     def _register_side_panel(
         self, key: str, title: str, content: QWidget, side: str
@@ -706,37 +860,63 @@ class ConfigurationModeWidget(QWidget):
         There is deliberately no close button, no float, no drag handle —
         visibility is driven by the shelf tab + pin only.
         """
+        from PyQt6.QtWidgets import QScrollArea
+
         record = _SidePanel(key, title, content, side)
         wrapper = QFrame()
         wrapper.setObjectName(f"cfg_panel_{key}")
+        wrapper.setMinimumWidth(200)
         wrapper_layout = QVBoxLayout(wrapper)
         wrapper_layout.setContentsMargins(0, 0, 0, 0)
         wrapper_layout.setSpacing(0)
+        # Fixed header: never scrolls. Only the content below scrolls.
+        # ThermoView-style: title left, one small pin right (only control).
         header = QWidget()
         header.setObjectName(f"cfg_panel_header_{key}")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(2, 2, 2, 2)
-        header_layout.setSpacing(4)
-        pin = QPushButton("○")
+        header_layout.setContentsMargins(6, 2, 2, 2)
+        header_layout.setSpacing(2)
+        title_label = QLabel(title)
+        title_label.setObjectName(f"cfg_panel_title_{key}")
+        title_label.setWordWrap(False)
+        title_font = title_label.font()
+        title_font.setPointSize(PANEL_HEADER_FONT_SIZE_PT)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        header_layout.addWidget(title_label, 1)
+        pin = QPushButton()
         pin.setObjectName(f"cfg_pin_{key}")
-        pin.setFixedSize(22, 22)
+        pin.setFixedSize(PANEL_PIN_SIZE, PANEL_PIN_SIZE)
         pin.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        pin.setFlat(True)  # icon only: no large square background
+        from PyQt6.QtCore import QSize as _QSize
+
+        pin.setIconSize(_QSize(PANEL_PIN_ICON_SIZE, PANEL_PIN_ICON_SIZE))
         pin.setToolTip("Pin panel (keep open)")
         set_variant(pin, "ghost")
         pin.clicked.connect(
             lambda _checked=False, panel_key=key: self._toggle_pin(panel_key)
         )
-        title_label = QLabel(title)
         header_layout.addWidget(pin)
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
         wrapper_layout.addWidget(header)
-        wrapper_layout.addWidget(content, 1)
+        # Scrollable content: vertical scroll when controls exceed height,
+        # never horizontal; header above stays fixed.
+        scroll = QScrollArea(wrapper)
+        scroll.setObjectName(f"cfg_panel_scroll_{key}")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        content.setMinimumWidth(200)
+        content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        scroll.setWidget(content)
+        scroll.setMinimumHeight(80)
+        wrapper_layout.addWidget(scroll, 1)
         wrapper.setVisible(False)
         record.wrapper = wrapper
         record.pin_button = pin
-        container = self._left_container if side == "left" else self._right_container
-        container.layout().insertWidget(container.layout().count() - 1, wrapper)
+        host = self._side_host(side)
+        host.layout().insertWidget(host.layout().count() - 1, wrapper)
         rail_layout = self._left_rail_layout if side == "left" else self._right_rail_layout
         tab = _ShelfTab(title)
         tab.setObjectName(f"cfg_shelf_tab_{key}")
@@ -814,10 +994,17 @@ class ConfigurationModeWidget(QWidget):
         set_variant(record.tab, "accent" if is_open else "ghost")
 
     def _sync_pin_button(self, record: "_SidePanel") -> None:
-        """Reflect pinned state on the panel header pin control."""
+        """Reflect pinned state on the panel header pin control.
+
+        Real drawn icons (never bare Unicode): filled accent pin when
+        pinned, hollow gray pin when unpinned — immediately distinct at
+        PANEL_PIN_SIZE px with icon + tooltip (+ hover/pressed from the
+        flat theme button).
+        """
         if record.pin_button is None:
             return
-        record.pin_button.setText("●" if record.pinned else "○")
+        record.pin_button.setText("")
+        record.pin_button.setIcon(_make_pin_icon(bool(record.pinned)))
         set_variant(record.pin_button, "accent" if record.pinned else "ghost")
         record.pin_button.setToolTip(
             "Unpin panel (auto-hide)" if record.pinned else "Pin panel (keep open)"
@@ -982,90 +1169,15 @@ class ConfigurationModeWidget(QWidget):
             except Exception:
                 pass
 
-    # -- Central workspace bar (IR/VL mode + zoom controls) ----------------
-
-    def _build_workspace_bar(self) -> QWidget:
-        """Slim toolbar: IR/VL workspace mode + zoom controls.
-
-        All controls drive the displayed view only (mode/zoom/pan); the
-        acquisition, SHM and processing paths are untouched, and the VL
-        feed keeps its own independent presentation. Theme variants
-        only — no per-widget stylesheets.
-        """
-        bar = QFrame()
-        set_role(bar, "toolbar")
-        layout = QHBoxLayout(bar)
-        layout.setContentsMargins(8, 2, 8, 2)
-        layout.setSpacing(4)
-
-        self._irvl_buttons: dict[str, QPushButton] = {}
-        for mode, text, tip in (
-            ("ir", "IR", "IR only"),
-            ("both", "IR+VL", "IR and VL side by side"),
-            ("vl", "VL", "VL only"),
-        ):
-            button = QPushButton(text)
-            button.setCheckable(True)
-            button.setToolTip(tip)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            set_variant(button, "ghost")
-            button.clicked.connect(
-                lambda _checked=False, workspace_mode=mode: self.set_irvl_mode(workspace_mode)
-            )
-            layout.addWidget(button)
-            self._irvl_buttons[mode] = button
-
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        layout.addWidget(separator)
-
-        self._zoom_out_btn = QPushButton("\u2212")  # minus sign
-        self._zoom_out_btn.setToolTip("Zoom out (-)")
-        self._zoom_out_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        set_variant(self._zoom_out_btn, "ghost")
-        # clicked() carries a checked flag: never pass it into view methods.
-        self._zoom_out_btn.clicked.connect(lambda _checked=False: self._image_widget.zoom_out())
-        layout.addWidget(self._zoom_out_btn)
-
-        self._zoom_label = QLabel("Fit")
-        self._zoom_label.setMinimumWidth(52)
-        self._zoom_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self._zoom_label)
-
-        self._zoom_in_btn = QPushButton("+")
-        self._zoom_in_btn.setToolTip("Zoom in (+)")
-        self._zoom_in_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        set_variant(self._zoom_in_btn, "ghost")
-        self._zoom_in_btn.clicked.connect(lambda _checked=False: self._image_widget.zoom_in())
-        layout.addWidget(self._zoom_in_btn)
-
-        self._zoom_fit_btn = QPushButton("Fit")
-        self._zoom_fit_btn.setToolTip("Fit to window (0)")
-        self._zoom_fit_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        set_variant(self._zoom_fit_btn, "ghost")
-        self._zoom_fit_btn.clicked.connect(self._image_widget.zoom_fit)
-        layout.addWidget(self._zoom_fit_btn)
-
-        self._zoom_1to1_btn = QPushButton("1:1")
-        self._zoom_1to1_btn.setToolTip("Native pixels (1)")
-        self._zoom_1to1_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        set_variant(self._zoom_1to1_btn, "ghost")
-        self._zoom_1to1_btn.clicked.connect(self._image_widget.zoom_one_to_one)
-        layout.addWidget(self._zoom_1to1_btn)
-
-        layout.addStretch()
-        self._image_widget.view_changed.connect(self._refresh_workspace_zoom)
-        self._refresh_workspace_zoom()
-        self._refresh_irvl_buttons()
-        return bar
+    # -- Center workspace: feed mode + zoom (View menu / Camera Control) ---
 
     def set_irvl_mode(self, mode: str, *, persist: bool = True) -> None:
         """Switch the center workspace between IR / IR+VL / VL.
 
         Display-only: widgets are shown/hidden in the existing splitter
         (ratio still draggable); acquisition, SHM and processing keep
-        producing both feeds either way.
+        producing both feeds either way. Never reconnects, never restarts
+        acquisition, never creates another observer or frame pipeline.
         """
         if mode not in ("ir", "vl", "both"):
             return
@@ -1087,17 +1199,44 @@ class ConfigurationModeWidget(QWidget):
             self._save_shelf_state()
 
     def _refresh_irvl_buttons(self) -> None:
-        """Reflect the workspace mode on the bar buttons."""
-        for mode, button in getattr(self, "_irvl_buttons", {}).items():
-            active = mode == getattr(self, "_irvl_mode", "both")
-            button.setChecked(active)
-            set_variant(button, "accent" if active else "ghost")
+        """Reflect the workspace mode on the Camera Control feed buttons."""
+        try:
+            self._acq_panel.set_feed_mode(getattr(self, "_irvl_mode", "both"))
+        except Exception:
+            logger.debug("Feed button sync failed", exc_info=True)
 
     def _refresh_workspace_zoom(self) -> None:
-        """Reflect the IR view's zoom state on the workspace bar."""
-        label = getattr(self, "_zoom_label", None)
-        if label is not None:
-            label.setText(self._image_widget.zoom_percent())
+        """Kept for View-menu zoom state sync (no workspace bar anymore)."""
+        try:
+            for action in getattr(self, "_zoom_menu_actions", {}).values():
+                action.setEnabled(True)
+        except Exception:
+            pass
+
+    # -- IR workspace zoom delegates (View menu targets; wheel still live) --
+
+    def zoom_in(self) -> None:
+        """Zoom the IR workspace in (cursor-centered, clamped)."""
+        self._image_widget.zoom_in()
+
+    def zoom_out(self) -> None:
+        """Zoom the IR workspace out (floors at Fit, never below)."""
+        self._image_widget.zoom_out()
+
+    def zoom_fit(self) -> None:
+        """Fit the IR workspace to the window."""
+        self._image_widget.zoom_fit()
+
+    def zoom_one_to_one(self) -> None:
+        """Show the IR workspace at native pixels."""
+        self._image_widget.zoom_one_to_one()
+
+    def zoom_reset_pan(self) -> None:
+        """Reset workspace pan (keep zoom)."""
+        try:
+            self._image_widget.set_pan_offset(0.0, 0.0)
+        except Exception:
+            logger.debug("Zoom reset-pan failed", exc_info=True)
 
     # -- View Finder synchronization (two-way, same frame) ------------------
 
@@ -1143,10 +1282,14 @@ class ConfigurationModeWidget(QWidget):
             # Select first camera if available
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
-                self._toolbar.select_camera_by_id(cameras[0].identity.camera_id)
+                self._acq_panel.select_camera_by_id(cameras[0].identity.camera_id)
 
     def _refresh_camera_list(self) -> None:
-        """Refresh the camera list in toolbar."""
+        """Refresh the camera list in Camera Control (sole selector).
+
+        Also refreshes the open Acquisition Setup dialog summary, since a
+        discovery selection can introduce a brand-new configured camera.
+        """
         cameras = self._config_service.get_all_camera_configs()
         camera_list = []
         for config in cameras:
@@ -1158,7 +1301,8 @@ class ConfigurationModeWidget(QWidget):
                 display = f"[Disabled] {display}"
             camera_list.append((identity.camera_id, display, identity, config.enabled))
 
-        self._toolbar.set_cameras(camera_list)
+        self._acq_panel.set_camera_list(camera_list)
+        self._refresh_setup_dialog()
 
     def _on_camera_selected(self, camera_id: str) -> None:
         """Handle camera selection change with dirty state check."""
@@ -1194,7 +1338,8 @@ class ConfigurationModeWidget(QWidget):
             self._discard_current_camera_changes()
             self._switch_camera(target_camera_id)
         else:  # Cancel
-            self._toolbar.select_camera_by_id(self._selected_camera_id)
+            if self._selected_camera_id:
+                self._acq_panel.sync_camera_selection(self._selected_camera_id)
 
     def _save_current_camera_config(self) -> None:
         """Save current camera configuration."""
@@ -1210,32 +1355,6 @@ class ConfigurationModeWidget(QWidget):
             self._roi_panel.clear_dirty(self._selected_camera_id)
             self._alarm_panel.clear_dirty(self._selected_camera_id)
             self._load_camera_config(self._selected_camera_id)
-
-    def _select_prev_camera(self) -> None:
-        """Select previous camera in list."""
-        self._toolbar.select_camera_by_id(self._get_prev_camera_id())
-
-    def _select_next_camera(self) -> None:
-        """Select next camera in list."""
-        self._toolbar.select_camera_by_id(self._get_next_camera_id())
-
-    def _get_prev_camera_id(self) -> str | None:
-        cameras = self._config_service.get_all_camera_configs()
-        if not cameras or not self._selected_camera_id:
-            return None
-        current_idx = next((i for i, c in enumerate(cameras) if c.identity.camera_id == self._selected_camera_id), -1)
-        if current_idx > 0:
-            return cameras[current_idx - 1].identity.camera_id
-        return None
-
-    def _get_next_camera_id(self) -> str | None:
-        cameras = self._config_service.get_all_camera_configs()
-        if not cameras or not self._selected_camera_id:
-            return None
-        current_idx = next((i for i, c in enumerate(cameras) if c.identity.camera_id == self._selected_camera_id), -1)
-        if current_idx >= 0 and current_idx < len(cameras) - 1:
-            return cameras[current_idx + 1].identity.camera_id
-        return None
 
     def _switch_camera(self, camera_id: str) -> None:
         """Switch to a different camera via the safe lifecycle pipeline.
@@ -1267,8 +1386,8 @@ class ConfigurationModeWidget(QWidget):
         self._apply_lifecycle_to_ui()
 
     def _apply_lifecycle_to_ui(self) -> None:
-        """Mirror the lifecycle state onto toolbar/panel indicators."""
-        self._toolbar.set_connection_state(self._lifecycle)
+        """Mirror the lifecycle state onto top-bar/panel indicators."""
+        self._set_top_connection_state(self._lifecycle)
         self._acq_panel.set_connection_state(self._lifecycle)
         status_text = {
             CameraConnectionState.DISCONNECTED: "Connection: Disconnected",
@@ -1281,6 +1400,7 @@ class ConfigurationModeWidget(QWidget):
             CameraConnectionState.ERROR: "Connection: Error",
         }.get(self._lifecycle, f"Connection: {self._lifecycle.value}")
         self._status_conn.setText(status_text)
+        self._refresh_setup_dialog()
 
     def _begin_session(self, camera_id: str) -> int:
         """Start a new session epoch for ``camera_id``.
@@ -1387,24 +1507,24 @@ class ConfigurationModeWidget(QWidget):
             logger.debug("View finder update failed", exc_info=True)
 
     def _selection_mismatch(self, camera_id: str) -> str | None:
-        """Check selected == toolbar == panel identity (section-3 invariant).
+        """Check selected == Camera Control combo == panel identity.
 
         Returns None when every view agrees with the authority
         (``self._selected_camera_id``), else a description of the
         mismatch. Reads are non-blocking Qt property/combo lookups.
         """
         try:
-            toolbar_id = self._toolbar._camera_combo.currentData()
+            combo_id = self._acq_panel.selected_combo_camera_id
         except Exception:
-            toolbar_id = "<unreadable>"
+            combo_id = "<unreadable>"
         try:
             panel_identity = self._acq_panel._selected_camera_identity
             panel_id = getattr(panel_identity, "camera_id", None)
         except Exception:
             panel_id = "<unreadable>"
         parts = []
-        if toolbar_id != camera_id:
-            parts.append(f"toolbar={toolbar_id}")
+        if combo_id != camera_id:
+            parts.append(f"combo={combo_id}")
         if panel_id != camera_id:
             parts.append(f"panel={panel_id}")
         if not parts:
@@ -1412,21 +1532,16 @@ class ConfigurationModeWidget(QWidget):
         return f"authority={camera_id} " + " ".join(parts)
 
     def _resync_selection_views(self, camera_id: str) -> None:
-        """Re-assert toolbar/panel views from the selection authority.
+        """Re-assert Camera Control views from the selection authority.
 
         Used only after an invariant refusal: the combo is moved back to
-        the authoritative camera (emitting through the normal switch
-        pipeline, which early-returns when already convergent) and the
-        panel identity reloaded. Never invents a new selection.
+        the authoritative camera silently and the panel identity reloaded.
+        Never invents a new selection.
         """
         try:
-            self._toolbar.blockSignals(True)
-            try:
-                self._toolbar.select_camera_by_id(camera_id)
-            finally:
-                self._toolbar.blockSignals(False)
+            self._acq_panel.sync_camera_selection(camera_id)
         except Exception:
-            logger.debug("Selection resync (toolbar) failed", exc_info=True)
+            logger.debug("Selection resync (combo) failed", exc_info=True)
         try:
             if self._selected_camera_id:
                 self._load_camera_config(self._selected_camera_id)
@@ -1637,18 +1752,13 @@ class ConfigurationModeWidget(QWidget):
         if connect:
             self._log_camera_diagnostics("CONNECT REQUEST", camera_id)
 
-        # The toolbar combo is a pure view of the selection authority.
-        # Move it silently (blocked: no phantom switch) so no path can
-        # leave the visible selection behind the activated camera — every
-        # production caller previously had to remember this separately.
+        # The Camera Control combo is a pure view of the selection
+        # authority. Move it silently (no phantom switch) so no path can
+        # leave the visible selection behind the activated camera.
         try:
-            self._toolbar.blockSignals(True)
-            try:
-                self._toolbar.select_camera_by_id(camera_id)
-            finally:
-                self._toolbar.blockSignals(False)
+            self._acq_panel.sync_camera_selection(camera_id)
         except Exception:
-            logger.debug("Toolbar selection sync failed", exc_info=True)
+            logger.debug("Camera selection sync failed", exc_info=True)
 
         old_camera_id = self._selected_camera_id
         needs_teardown = (
@@ -1819,21 +1929,36 @@ class ConfigurationModeWidget(QWidget):
         # processing consumer is attached (see _on_start_acquisition).
         status = self._lifecycle
 
-        # Update toolbar
-        self._toolbar.set_connection_state(status)
+        # Update top bar + acquisition panel
+        self._set_top_connection_state(status)
 
         # Update acquisition panel
         self._acq_panel.set_camera_identity(identity)
         self._acq_panel.set_connection_state(status)
 
-        # Update acquisition controls from metadata
-        fps = int(metadata.get("frame_rate", 9))
-        self._acq_panel.set_requested_fps(fps)
+        # Startup acquisition parameters live in the Acquisition Setup
+        # dialog (loaded from the same metadata keys the Start pipeline
+        # has always used — never invented, never reimplemented).
+        try:
+            fps = int(metadata.get("frame_rate", 9))
+        except (TypeError, ValueError):
+            fps = 9
+        averaging = str(metadata.get("averaging", "Off"))
+        try:
+            history_frames = int(metadata.get("history_frames", 100))
+        except (TypeError, ValueError):
+            history_frames = 100
+        self._acq_params = {
+            "fps": fps,
+            "averaging": averaging,
+            "history_frames": history_frames,
+        }
 
         # Update panels
         self._roi_panel.set_camera(camera_id)
         self._alarm_panel.set_camera(camera_id)
         self._stats_panel.clear()
+        self._refresh_setup_dialog()
 
         # Update ROI overlays
         self._update_roi_overlays()
@@ -2225,10 +2350,9 @@ class ConfigurationModeWidget(QWidget):
         self._alarm_panel.set_camera("")
         self._stats_panel.clear()
         self._frame_info_panel.clear()
-        self._toolbar.set_connection_state(CameraConnectionState.DISCONNECTED)
+        self._set_top_connection_state(CameraConnectionState.DISCONNECTED)
         self._acq_panel.set_camera_identity(None)
         self._acq_panel.set_connection_state(CameraConnectionState.DISCONNECTED)
-        self._acq_panel.clear_image_info()
 
     @pyqtSlot(object)
     def _on_processing_result(self, result: ProcessingResult) -> None:
@@ -2311,14 +2435,8 @@ class ConfigurationModeWidget(QWidget):
         else:
             self._vl_widget.set_frame(None, sequence if sequence is not None else -1)
 
-        # Update image info (acquisition panel + Image Information dock)
+        # Update image info (single owner: the Image Information side panel)
         if frame:
-            self._acq_panel.update_image_info(
-                image_size=f"{frame.payload.thermal.shape[1]}×{frame.payload.thermal.shape[0]}" if frame.payload.thermal is not None else "—",
-                frame=str(frame.descriptor.sequence),
-                timestamp=f"{frame.descriptor.timestamp:.3f}",
-                processing=f"{result.processing_time_ms:.1f} ms",
-            )
             self._frame_info_panel.update_from_frame(frame, result)
 
         # Update analysis results
@@ -2331,22 +2449,11 @@ class ConfigurationModeWidget(QWidget):
         # Update ROI overlays
         self._update_roi_overlays()
 
-        # Update FPS
-        if self._runtime_service and self._selected_camera_id:
-            stats = self._runtime_service.camera_stats(self._selected_camera_id)
-            if stats:
-                self._acq_panel.set_acquisition_fps(stats.current_fps or stats.average_fps)
-
-        if self._observer:
-            obs_stats = self._observer.stats()
-            if obs_stats:
-                self._acq_panel.set_display_fps(self._display_rate.fps())
-
     @pyqtSlot(object, object)
     def _on_rendered_frame(self, image, thumbnail) -> None:
         """Use the worker's single rendered image for both displays."""
-        self._scale_panel.update_view_finder_image(thumbnail)
-        # Finder gets the full workspace frame (same object, no copy).
+        # Finder gets the full workspace frame (same object, no copy, no
+        # second stream). Temperature Scale owns no View Finder anymore.
         self._set_finder_thumbnail(image)
         if self._first_display_at is None and self._session_started_at is not None:
             self._first_display_at = time.perf_counter()
@@ -2370,20 +2477,93 @@ class ConfigurationModeWidget(QWidget):
             unit_symbol = _UNIT_SYMBOLS.get(unit.value if hasattr(unit, 'value') else str(unit), "°C")
         self._scale_panel.update_cursor_temperature(temp if not np.isnan(temp) else None, unit_symbol)
 
-    # Connection workflow handlers
+    # Connection workflow handlers (Connect -> Acquisition Setup ->
+    # Connect... -> Camera Selection -> Connect -> Start)
 
     def _on_connect(self) -> None:
-        """Handle Connect button - show camera selection dialog."""
+        """Handle Camera Control Connect button: open Acquisition Setup."""
+        if not self._discovery_service:
+            QMessageBox.warning(self, "Connect Failed", "Camera discovery service not available.")
+            return
+        self._open_acquisition_setup()
+
+    def _open_acquisition_setup(self) -> None:
+        """Show the Acquisition Setup dialog (reused, never recreated)."""
+        if self._acq_setup_dialog is None:
+            self._acq_setup_dialog = AcquisitionSetupDialog(
+                theme_manager=self._theme,
+                parent=self,
+            )
+            self._acq_setup_dialog.connect_requested.connect(
+                self._on_setup_connect_requested
+            )
+            self._acq_setup_dialog.start_requested.connect(self._on_setup_start)
+        params = self._acq_params
+        self._acq_setup_dialog.set_params(
+            params.get("fps", 9),
+            params.get("averaging", "Off"),
+            params.get("history_frames", 100),
+        )
+        self._acq_setup_dialog.show()
+        self._acq_setup_dialog.raise_()
+        self._acq_setup_dialog.activateWindow()
+        # Refresh AFTER show: _refresh_setup_dialog only touches a visible
+        # dialog, so the Start enablement always reflects current state.
+        self._refresh_setup_dialog()
+
+    def _setup_dialog_visible(self) -> bool:
+        return (
+            self._acq_setup_dialog is not None
+            and self._acq_setup_dialog.isVisible()
+        )
+
+    def _setup_camera_summary(self) -> str:
+        """One-line identity of the selected camera for the setup dialog."""
+        camera_id = self._selected_camera_id
+        if not camera_id:
+            return "Camera: Not connected / selected"
+        try:
+            config = self._config_service.get_camera_config(camera_id)
+        except Exception:
+            config = None
+        if config is None:
+            return f"Camera: {camera_id}"
+        identity = config.identity
+        model = getattr(identity, "model", "") or "TV46L"
+        serial = getattr(identity, "serial_number", "") or camera_id
+        metadata = dict(getattr(config, "metadata", None) or {})
+        ip = metadata.get("ip_address", "") or "—"
+        return f"Camera: {model}-{serial}  |  IP: {ip}"
+
+    def _refresh_setup_dialog(self) -> None:
+        """Mirror selection + lifecycle into the open setup dialog (if any)."""
+        if not self._setup_dialog_visible():
+            return
+        assert self._acq_setup_dialog is not None
+        self._acq_setup_dialog.set_camera_summary(self._setup_camera_summary())
+        self._acq_setup_dialog.set_connection_status(
+            f"Status: {self._lifecycle.value.replace('_', ' ').title()}"
+        )
+        self._acq_setup_dialog.set_start_enabled(
+            self._selected_camera_id is not None and can_start(self._lifecycle)
+        )
+
+    def _on_setup_connect_requested(self) -> None:
+        """Acquisition Setup [Connect...]: open the Camera Selection dialog."""
         if not self._discovery_service:
             QMessageBox.warning(self, "Connect Failed", "Camera discovery service not available.")
             return
 
-        # Create and show camera selection dialog
+        # Create and show camera selection dialog (existing GVCP discovery
+        # path, reused unchanged; stacked above the setup dialog).
         if self._camera_selection_dialog is None:
             self._camera_selection_dialog = CameraSelectionDialog(
                 discovery_service=self._discovery_service,
                 theme_manager=self._theme,
-                parent=self,
+                parent=self._acq_setup_dialog
+                if self._setup_dialog_visible()
+                else self,
+                fps_lookup=self._discovered_camera_fps,
             )
             self._camera_selection_dialog.camera_selected.connect(self._on_camera_selected_from_dialog)
             self._camera_selection_dialog.discovery_finished.connect(self._restore_connect_cursor)
@@ -2393,11 +2573,41 @@ class ConfigurationModeWidget(QWidget):
         self._camera_selection_dialog.show()
         self._camera_selection_dialog.raise_()
         self._camera_selection_dialog.activateWindow()
-        self._toolbar.set_connection_state(CameraConnectionState.CONNECTING)
+        self._set_top_connection_state(CameraConnectionState.CONNECTING)
         self._acq_panel.set_connection_state(CameraConnectionState.CONNECTING)
         self._status_conn.setText("Connection: Discovering...")
         self._status_label.setText("Discovering cameras...")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+
+    def _discovered_camera_fps(self, discovered_camera) -> int:
+        """Configured FPS for a discovered camera (selection-row naming)."""
+        try:
+            config = self._config_service.get_camera_config(
+                discovered_camera.camera_id
+            )
+            metadata = dict(getattr(config, "metadata", None) or {})
+            return int(metadata.get("frame_rate", 9))
+        except (TypeError, ValueError, AttributeError):
+            return 9
+
+    def _on_setup_start(self) -> None:
+        """Acquisition Setup [Start]: apply params, close, start acquisition.
+
+        The Start itself flows through the unchanged ``_on_start_acquisition``
+        pipeline (transport verification + observer attach + lifecycle
+        STARTING -> ACQUIRING); the dialog only supplies the parameters.
+        """
+        if self._acq_setup_dialog is None:
+            return
+        if not can_start(self._lifecycle):
+            self._refresh_setup_dialog()
+            return
+        values = self._acq_setup_dialog.values()
+        self._apply_acquisition_params(
+            values["fps"], values["averaging"], values["history_frames"]
+        )
+        self._acq_setup_dialog.accept()
+        self._on_start_acquisition()
 
     def _restore_connect_cursor(self, *args) -> None:
         if QApplication.overrideCursor() is not None:
@@ -2492,15 +2702,11 @@ class ConfigurationModeWidget(QWidget):
                 )
             )
 
-        # Select this camera in the toolbar without emitting the switch
-        # signal (the safe _activate_camera pipeline below owns the
-        # transition, including tearing down the previously selected
-        # camera — never two active pipelines).
-        self._toolbar.blockSignals(True)
-        try:
-            self._toolbar.select_camera_by_id(camera_id)
-        finally:
-            self._toolbar.blockSignals(False)
+        # Select this camera in Camera Control silently (the safe
+        # _activate_camera pipeline below owns the transition, including
+        # tearing down the previously selected camera — never two active
+        # pipelines).
+        self._acq_panel.sync_camera_selection(camera_id)
 
         # CONNECT: establish control + acquisition in one serialized
         # background operation. The GUI shows CONNECTING/DISCONNECTING
@@ -2588,7 +2794,7 @@ class ConfigurationModeWidget(QWidget):
         except Exception:
             panel_id = panel_serial = "<unreadable>"
         try:
-            toolbar_id = self._toolbar._camera_combo.currentData()
+            toolbar_id = self._acq_panel.selected_combo_camera_id
         except Exception:
             toolbar_id = "<unreadable>"
         try:
@@ -2604,7 +2810,7 @@ class ConfigurationModeWidget(QWidget):
             observer_id = "<unreadable>"
         logger.info(
             "START CLICK: ui_selected_id=%s ui_selected_serial=%s ui_selected_name=%s "
-            "panel_camera_id=%s panel_serial=%s toolbar_camera_id=%s "
+            "panel_camera_id=%s panel_serial=%s combo_camera_id=%s "
             "widget_camera_id=%s lifecycle=%s session_camera_id=%s "
             "runtime_camera_ids=%s generation=%s observer_camera_id=%s",
             ui_id,
@@ -2680,9 +2886,12 @@ class ConfigurationModeWidget(QWidget):
         if not config:
             return
 
-        # Update metadata with current spin values
+        # Update metadata with the Acquisition Setup parameters (the
+        # Start pipeline reads them from here, never from panel widgets).
         metadata = dict(config.metadata or {})
-        metadata["frame_rate"] = self._acq_panel.get_requested_fps()
+        metadata["frame_rate"] = int(self._acq_params.get("fps", 9))
+        metadata["averaging"] = str(self._acq_params.get("averaging", "Off"))
+        metadata["history_frames"] = int(self._acq_params.get("history_frames", 100))
 
         updated_config = CameraConfig(
             identity=config.identity,
@@ -2818,19 +3027,27 @@ class ConfigurationModeWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Stop Failed", f"Failed to stop acquisition: {exc}")
 
-    def _on_change_acquisition(self) -> None:
-        """Handle Change button - reconfigure acquisition parameters."""
-        # For now, just update the config with current values
+    def _apply_acquisition_params(self, fps: int, averaging: str, history_frames: int) -> None:
+        """Persist Acquisition Setup parameters to the selected camera config.
+
+        Same metadata keys the Start pipeline has always used
+        (``frame_rate``) plus ``averaging`` / ``history_frames`` carried
+        alongside (history preserves the previous buffer-length semantic).
+        """
+        self._acq_params = {
+            "fps": int(fps),
+            "averaging": str(averaging),
+            "history_frames": int(history_frames),
+        }
         if not self._selected_camera_id:
             return
-
         config = self._config_service.get_camera_config(self._selected_camera_id)
         if not config:
             return
-
         metadata = dict(config.metadata or {})
-        metadata["frame_rate"] = self._acq_panel.get_requested_fps()
-
+        metadata["frame_rate"] = int(fps)
+        metadata["averaging"] = str(averaging)
+        metadata["history_frames"] = int(history_frames)
         updated_config = CameraConfig(
             identity=config.identity,
             name=config.name,
@@ -2844,34 +3061,6 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_camera_config(updated_config)
         self._status_label.setText("Acquisition parameters updated")
-
-    def _on_fps_changed(self, fps: int) -> None:
-        """Handle FPS change."""
-        if self._selected_camera_id:
-            config = self._config_service.get_camera_config(self._selected_camera_id)
-            if config:
-                metadata = dict(config.metadata or {})
-                metadata["frame_rate"] = fps
-                updated_config = CameraConfig(
-                    identity=config.identity,
-                    name=config.name,
-                    description=config.description,
-                    enabled=config.enabled,
-                    thermal_enabled=config.thermal_enabled,
-                    visible_enabled=config.visible_enabled,
-                    ptz_config=config.ptz_config,
-                    tags=config.tags,
-                    metadata=metadata,
-                )
-                self._config_service.set_camera_config(updated_config)
-
-    def _on_averaging_changed(self, value: str) -> None:
-        """Handle averaging change."""
-        pass  # TODO: Implement averaging
-
-    def _on_history_changed(self, frames: int) -> None:
-        """Handle history length change."""
-        pass  # TODO: Implement history buffer
 
     def _on_observer_error(self, message: str) -> None:
         sender = self.sender()
@@ -3066,7 +3255,7 @@ class ConfigurationModeWidget(QWidget):
         else:
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
-                self._toolbar.select_camera_by_id(cameras[0].identity.camera_id)
+                self._acq_panel.select_camera_by_id(cameras[0].identity.camera_id)
         # Correct any lifecycle drift from while inactive (e.g. observer
         # detached on mode switch while transport kept running), then
         # resume the status ticker stopped on deactivation.
@@ -3080,6 +3269,8 @@ class ConfigurationModeWidget(QWidget):
         self._restore_connect_cursor()
         if self._camera_selection_dialog is not None:
             self._camera_selection_dialog.close()
+        if self._acq_setup_dialog is not None:
+            self._acq_setup_dialog.close()
         # Detach the display path; the camera child process keeps running
         # so a mode switch back (or Live mode sharing the runtime) is fast.
         self._detach_observer()
@@ -3194,14 +3385,47 @@ class ConfigurationWindow(QMainWindow):
         camera_menu.addAction(refresh_action)
 
         # View menu: side-shelf panels first (predictable restore after
-        # hiding), then image zoom controls.
+        # hiding), then feed mode (display only), then workspace zoom.
         view_menu = menu_bar.addMenu("View")
         for action in self._config_widget.panel_toggle_actions():
             view_menu.addAction(action)
         view_menu.addSeparator()
+        ir_action = QAction("IR View", self)
+        ir_action.triggered.connect(lambda: self._config_widget.set_irvl_mode("ir"))
+        view_menu.addAction(ir_action)
+        vl_action = QAction("VL View", self)
+        vl_action.triggered.connect(lambda: self._config_widget.set_irvl_mode("vl"))
+        view_menu.addAction(vl_action)
+        both_action = QAction("IR + VL", self)
+        both_action.triggered.connect(lambda: self._config_widget.set_irvl_mode("both"))
+        view_menu.addAction(both_action)
+        view_menu.addSeparator()
+        zoom_in_action = QAction("Zoom In", self)
+        zoom_in_action.setShortcut("+")
+        zoom_in_action.triggered.connect(self._config_widget.zoom_in)
+        view_menu.addAction(zoom_in_action)
+        zoom_out_action = QAction("Zoom Out", self)
+        zoom_out_action.setShortcut("-")
+        zoom_out_action.triggered.connect(self._config_widget.zoom_out)
+        view_menu.addAction(zoom_out_action)
         fit_action = QAction("Fit to Window", self)
-        fit_action.triggered.connect(lambda: self._config_widget._image_widget.set_zoom("Fit to Window"))
+        fit_action.setShortcut("0")
+        fit_action.triggered.connect(self._config_widget.zoom_fit)
         view_menu.addAction(fit_action)
+        one_action = QAction("1:1", self)
+        one_action.setShortcut("1")
+        one_action.triggered.connect(self._config_widget.zoom_one_to_one)
+        view_menu.addAction(one_action)
+        pan_action = QAction("Reset Pan", self)
+        pan_action.triggered.connect(self._config_widget.zoom_reset_pan)
+        view_menu.addAction(pan_action)
+        self._config_widget._zoom_menu_actions = {
+            "zoom_in": zoom_in_action,
+            "zoom_out": zoom_out_action,
+            "fit": fit_action,
+            "one": one_action,
+            "pan": pan_action,
+        }
 
         view_menu.addSeparator()
         for zoom in ["50%", "100%", "200%", "400%"]:

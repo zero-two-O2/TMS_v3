@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QObject, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, pyqtSlot
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.sip import isdeleted
 
@@ -316,7 +316,14 @@ class AppController(QObject):
         self._launcher_window.mode_requested.connect(self._on_mode_requested)
 
     def _create_live_window(self) -> LiveWindow:
-        """Create the live window."""
+        """Create the live window.
+
+        The window owns WA_DeleteOnClose: closing it destroys the C++
+        object, which fires ``destroyed`` so the controller can clear its
+        flags and return to the Launcher — no application restart, no
+        orphan windows. (Without the attribute, close() merely hides the
+        window and the Launcher never comes back.)
+        """
         if self._live_window is None:
             logger.info("CONTROLLER CREATE LIVE: config_service id=%s count=%d config_path=%s", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()), self._config_manager.config_path if self._config_manager else "unknown")
             self._live_window = LiveWindow(
@@ -328,6 +335,7 @@ class AppController(QObject):
                 config_manager=self._config_manager,
             )
             logger.info("CONTROLLER LIVE CREATED: live_window config_service id=%s same_as_controller=%s", hex(id(self._live_window._config_service)), hex(id(self._live_window._config_service)) == hex(id(self._config_service)))
+            self._live_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self._live_window.destroyed.connect(self._on_live_window_destroyed)
         else:
             logger.info("CONTROLLER REUSE LIVE: config_service id=%s count=%d", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()))
@@ -346,13 +354,14 @@ class AppController(QObject):
                 config_manager=self._config_manager,
             )
             logger.info("CONTROLLER CONFIG CREATED: config_window config_service id=%s same_as_controller=%s live_same=%s", hex(id(self._config_window._config_service)), hex(id(self._config_window._config_service)) == hex(id(self._config_service)), hex(id(self._config_window._config_service)) == hex(id(self._live_window._config_service)) if self._live_window else "no_live")
+            self._config_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self._config_window.destroyed.connect(self._on_config_window_destroyed)
         else:
             logger.info("CONTROLLER REUSE CONFIG: config_service id=%s count=%d", hex(id(self._config_service)), len(self._config_service.get_all_camera_configs()))
         return self._config_window
 
     def _create_offline_window(self) -> OfflineWindow:
-        """Create the offline window."""
+        """Create the offline window (delete-on-close, like the rest)."""
         if self._offline_window is None:
             self._offline_window = OfflineWindow(
                 offline_service=self._offline_service,
@@ -362,6 +371,7 @@ class AppController(QObject):
                 theme_manager=self._theme_manager,
                 config_manager=self._config_manager,
             )
+            self._offline_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self._offline_window.destroyed.connect(self._on_offline_window_destroyed)
         return self._offline_window
 

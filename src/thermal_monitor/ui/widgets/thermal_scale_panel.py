@@ -7,7 +7,10 @@ ThermoView-style right panel with:
 - Palette selector
 - Range controls (Auto/Manual)
 - Zoom controls
-- View finder (thumbnail)
+
+NOTE (GUI polish): this panel owns temperature-scale functionality ONLY.
+The navigation View Finder lives in its own dedicated side-shelf panel
+(ui.modes.view_finder.ViewFinderWidget) and must not be duplicated here.
 """
 
 from __future__ import annotations
@@ -295,26 +298,6 @@ class ThermalScalePanel(QWidget):
         scale_layout.addWidget(controls_widget, 1)
         layout.addWidget(scale_group)
 
-        # Separator
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
-        self._apply_border_style(separator)
-        layout.addWidget(separator)
-
-        # --- VIEW FINDER GROUP ---
-        finder_group = QGroupBox("VIEW FINDER")
-        finder_layout = QVBoxLayout(finder_group)
-        finder_layout.setContentsMargins(8, 12, 8, 8)
-
-        self._view_finder = QLabel("View Finder\n(thumbnail)")
-        self._view_finder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._view_finder.setMinimumHeight(120)
-        set_role(self._view_finder, "viewfinder")
-        finder_layout.addWidget(self._view_finder)
-
-        layout.addWidget(finder_group)
-
         layout.addStretch()
 
     def _apply_theme(self) -> None:
@@ -403,47 +386,12 @@ class ThermalScalePanel(QWidget):
             self._cursor_temp_label.setText(f"Cursor: — {unit_symbol}")
 
     def update_view_finder(self, temperature_image: np.ndarray | None) -> None:
-        """Update the View Finder with a thumbnail of the thermal image."""
-        if temperature_image is None:
-            self._view_finder.setText("View Finder\n(thumbnail)")
-            return
-        
-        # Create a small thumbnail
-        from thermal_monitor.ui.modes.observer_image import LiveThermalWidget
-        # Use the same palette logic to create a display image
-        temp_img = temperature_image
-        finite = np.isfinite(temp_img)
-        if not np.any(finite):
-            display = np.zeros(temp_img.shape, dtype=np.uint8)
-        else:
-            lo = float(temp_img[finite].min())
-            hi = float(temp_img[finite].max())
-            if hi <= lo:
-                hi = lo + 1.0
-            normalized = np.clip((temp_img - lo) / (hi - lo), 0.0, 1.0)
-            normalized[~finite] = 0.0
-            display = (normalized * 255.0).astype(np.uint8)
-        
-        # Apply palette (simplified - grayscale for thumbnail)
-        h, w = display.shape
-        qimg = QImage(display.data, w, h, display.strides[0], QImage.Format.Format_Grayscale8)
-        
-        # Scale to fit the view finder
-        pixmap = QPixmap.fromImage(qimg)
-        scaled = pixmap.scaled(
-            self._view_finder.width() - 4,
-            self._view_finder.height() - 4,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._view_finder.setPixmap(scaled)
+        """Deprecated no-op: the View Finder lives in its own side panel."""
+        return
 
     def update_view_finder_image(self, image: QImage | None) -> None:
-        """Display a thumbnail already rendered by the thermal renderer."""
-        if image is None:
-            self._view_finder.setText("View Finder\n(thumbnail)")
-            return
-        self._view_finder.setPixmap(QPixmap.fromImage(image))
+        """Deprecated no-op: the View Finder lives in its own side panel."""
+        return
 
     def set_unit(self, unit_symbol: str) -> None:
         self._custom_min_spin.setSuffix(f" {unit_symbol}")

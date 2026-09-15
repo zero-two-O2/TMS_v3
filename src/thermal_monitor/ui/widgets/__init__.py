@@ -7,6 +7,7 @@ from thermal_monitor.ui.widgets.roi_panel import ROIPanel
 from thermal_monitor.ui.widgets.alarm_panel import AlarmPanel
 from thermal_monitor.ui.widgets.statistics_panel import StatisticsPanel
 from thermal_monitor.ui.widgets.camera_selection_dialog import CameraSelectionDialog
+from thermal_monitor.ui.widgets.acquisition_setup_dialog import AcquisitionSetupDialog
 from thermal_monitor.ui.widgets.image_acquisition_panel import ImageAcquisitionPanel
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "AlarmPanel",
     "StatisticsPanel",
     "CameraSelectionDialog",
+    "AcquisitionSetupDialog",
     "ImageAcquisitionPanel",
 ]

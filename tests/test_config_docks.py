@@ -168,12 +168,16 @@ def test_left_shelf_exists(widget) -> None:
     rail = widget.findChild(QWidget, "cfg_left_shelf")
     assert rail is not None
     assert rail.isVisible()
-    assert rail.width() <= 40  # thin rail: ~24-32 px, never 50-70+
+    assert rail.width() <= 40  # narrow vertical rail (~30 px)
     tabs = [
         widget.findChild(QWidget, f"cfg_shelf_tab_{key}") for key in LEFT_KEYS
     ]
     assert all(tab is not None for tab in tabs)
     assert all(tab.isVisible() for tab in tabs)
+    # Full panel names on vertical tabs (never abbreviated).
+    for key in LEFT_KEYS:
+        tab = widget.findChild(QWidget, f"cfg_shelf_tab_{key}")
+        assert tab._tab_title == LEFT_TITLES[key]
 
 
 def test_right_shelf_exists(widget) -> None:
@@ -185,14 +189,21 @@ def test_right_shelf_exists(widget) -> None:
         tab = widget.findChild(QWidget, f"cfg_shelf_tab_{key}")
         assert tab is not None, f"missing right shelf tab: {key}"
         assert tab.isVisible()
+        assert tab._tab_title == RIGHT_TITLES[key]
 
 
 def test_shelf_tabs_are_narrow_and_checkable(widget, qapp) -> None:
+    import thermal_monitor.ui.windows.configuration_window as mod
+
     for key in ALL_KEYS:
         record = widget.side_panels()[key]
         assert record.tab is not None
-        assert record.tab.width() <= 32
+        assert record.tab.width() <= mod.PANEL_TAB_WIDTH + 2
         assert record.tab.isCheckable()
+        # Entire name carried by the vertical tab (rotated paint, full text).
+        assert record.tab._tab_title == record.title
+        assert record.tab.height() >= mod.PANEL_TAB_MIN_HEIGHT
+        assert record.tab.height() <= mod.PANEL_TAB_MAX_HEIGHT
 
 
 # ---------------------------------------------------------------------------
@@ -283,17 +294,22 @@ def test_pin_unpin_works(widget, qapp) -> None:
     widget.set_panel_open("roi", True)
     widget.set_panel_pinned("roi", False)
     record = widget.side_panels()["roi"]
-    assert record.pin_button.text() == "○"
+    # Real drawn icon (never bare Unicode), visibly distinct per state.
+    assert record.pin_button.text() == ""
+    assert not record.pin_button.icon().isNull()
 
     record.pin_button.click()
     qapp.processEvents()
     assert record.pinned
-    assert record.pin_button.text() == "●"
+    assert record.pin_button.text() == ""
+    assert not record.pin_button.icon().isNull()
 
     record.pin_button.click()
     qapp.processEvents()
     assert not record.pinned
-    assert record.pin_button.text() == "○"
+    assert record.pin_button.text() == ""
+    assert not record.pin_button.icon().isNull()
+    assert "Pin panel" in record.pin_button.toolTip()
 
 
 def test_shelf_tab_toggles_panel(widget, qapp) -> None:
@@ -372,13 +388,21 @@ def test_collapse_preserves_panel_state(widget, qapp) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _side_host(widget, object_name: str) -> QWidget:
+    """Inner stacked host inside a side container's scroll area."""
+    container = widget.findChild(QWidget, object_name)
+    assert container is not None
+    host = container.findChild(QWidget, "cfg_side_host")
+    return host if host is not None else container
+
+
 def test_multiple_left_panels_stack(widget, qapp) -> None:
     widget.set_panel_open("camera_control", True)
     widget.set_panel_open("image_info", True)
     qapp.processEvents()
     left = widget.findChild(QWidget, "cfg_left_panels")
     assert left.isVisible()
-    layout = left.layout()
+    layout = _side_host(widget, "cfg_left_panels").layout()
     order = [
         layout.itemAt(i).widget().objectName()
         for i in range(layout.count())
@@ -394,7 +418,7 @@ def test_multiple_right_panels_stack(widget, qapp) -> None:
     qapp.processEvents()
     right = widget.findChild(QWidget, "cfg_right_panels")
     assert right.isVisible()
-    layout = right.layout()
+    layout = _side_host(widget, "cfg_right_panels").layout()
     order = [
         layout.itemAt(i).widget().objectName()
         for i in range(layout.count())
@@ -504,27 +528,27 @@ def _workspace_image():
     return image
 
 
-def test_workspace_bar_controls(widget, qapp) -> None:
-    assert widget._zoom_label.text() == "Fit"
+def test_workspace_zoom_delegates(widget, qapp) -> None:
+    """Zoom lives in the View menu now (delegates); behavior unchanged."""
     widget._image_widget._display_image = _workspace_image()
 
-    widget._zoom_in_btn.click()
+    widget.zoom_in()
     qapp.processEvents()
     assert not widget._image_widget.is_fit()
-    assert widget._zoom_label.text() == widget._image_widget.zoom_percent()
 
-    widget._zoom_fit_btn.click()
+    widget.zoom_fit()
     qapp.processEvents()
     assert widget._image_widget.is_fit()
-    assert widget._zoom_label.text() == "Fit"
 
-    widget._zoom_1to1_btn.click()
+    widget.zoom_one_to_one()
     qapp.processEvents()
-    assert widget._zoom_label.text() == "100%"
+    assert widget._image_widget.zoom_percent() == "100%"
 
-    widget._zoom_out_btn.click()  # floors at fit, never below
+    widget.zoom_out()  # floors at fit, never below
     qapp.processEvents()
-    assert widget._zoom_label.text() in ("Fit", widget._image_widget.zoom_percent())
+    assert isinstance(widget._image_widget.zoom_percent(), str)
+    widget.zoom_reset_pan()
+    qapp.processEvents()
 
 
 # ---------------------------------------------------------------------------
@@ -886,9 +910,11 @@ def test_camera_control_lifecycle_buttons_intact(widget, qapp) -> None:
     widget._set_lifecycle(CameraConnectionState.CONNECTED)
     assert panel._start_btn.isEnabled()
     assert panel._disconnect_btn.isEnabled()
-    # Status label + camera selection still wired.
+    # Status label + Camera Control camera selection still wired.
     assert widget._status_conn.text() != ""
-    assert widget._toolbar is not None
+    assert widget._top_bar is not None
+    assert panel._camera_combo.count() == 2
+    assert panel.select_camera_by_id("camA")
 
     dialog = QDialog()
     try:

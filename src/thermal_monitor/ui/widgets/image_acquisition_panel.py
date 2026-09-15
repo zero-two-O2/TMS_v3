@@ -1,13 +1,17 @@
 """
-ui.widgets.image_acquisition_panel -- Left sidebar panel for Image Acquisition controls.
+ui.widgets.image_acquisition_panel -- Camera Control operational panel.
 
-ThermoView-style instrument panel:
-- Camera identity (compact)
-- Connection status indicator
-- Start/Stop acquisition
-- Requested/Acquisition/Display FPS
-- Averaging, History
-- Change button
+Clean operational controls only (ThermoView-style):
+- Configured-camera selector
+- Camera identity + connection status
+- Connect / Disconnect (Connect opens the Acquisition Setup dialog)
+- Feed display selection (IR / IR+VL / VL, display only)
+- Start / Stop acquisition
+- Focus, NUC
+
+Startup acquisition parameters (FPS, averaging, history) live in the
+Acquisition Setup dialog, and image metadata lives in the dedicated
+Image Information side panel — neither is duplicated here.
 """
 
 from __future__ import annotations
@@ -25,7 +29,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QSpinBox,
-    QDoubleSpinBox,
     QComboBox,
     QFrame,
     QSizePolicy,
@@ -64,13 +67,11 @@ class ImageAcquisitionPanel(QWidget):
     disconnect_requested = pyqtSignal()
     start_requested = pyqtSignal()
     stop_requested = pyqtSignal()
-    change_requested = pyqtSignal()
-    fps_changed = pyqtSignal(int)
-    averaging_changed = pyqtSignal(str)
-    history_changed = pyqtSignal(int)
     focus_set_requested = pyqtSignal(int)
     focus_refresh_requested = pyqtSignal()
     nuc_requested = pyqtSignal()
+    camera_selection_changed = pyqtSignal(str)  # camera_id
+    feed_mode_changed = pyqtSignal(str)  # "ir" | "both" | "vl" (display only)
 
     def __init__(self, theme_manager: Optional[ThemeManager] = None) -> None:
         super().__init__()
@@ -88,6 +89,22 @@ class ImageAcquisitionPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
+
+        # --- CAMERA SELECTION GROUP (sole camera selector in Config mode) ---
+        select_group = QGroupBox("CAMERA")
+        select_layout = QVBoxLayout(select_group)
+        select_layout.setContentsMargins(8, 12, 8, 8)
+        select_layout.setSpacing(6)
+
+        self._camera_combo = QComboBox()
+        self._camera_combo.setMinimumHeight(24)
+        self._camera_combo.setSizePolicy(
+            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+        )
+        self._camera_combo.currentIndexChanged.connect(self._on_camera_combo_changed)
+        self._apply_input_style(self._camera_combo)
+        select_layout.addWidget(self._camera_combo)
+        layout.addWidget(select_group)
 
         # --- IMAGE ACQUISITION GROUP ---
         group = QGroupBox("IMAGE ACQUISITION")
@@ -146,15 +163,18 @@ class ImageAcquisitionPanel(QWidget):
         self._apply_border_style(sep2)
         group_layout.addWidget(sep2)
 
-        # Acquisition controls (enabled only when connected)
-        self._acq_controls = QWidget()
-        acq_layout = QFormLayout(self._acq_controls)
-        acq_layout.setSpacing(6)
-        acq_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        # Separator
+        sep3 = QFrame()
+        sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setFrameShadow(QFrame.Shadow.Sunken)
+        self._apply_border_style(sep3)
+        group_layout.addWidget(sep3)
 
-        # Start/Stop buttons
-        acq_btn_layout = QHBoxLayout()
-        acq_btn_layout.setSpacing(6)
+        # Start/Stop acquisition (enabled only when connected)
+        self._run_controls = QWidget()
+        run_layout = QHBoxLayout(self._run_controls)
+        run_layout.setContentsMargins(0, 0, 0, 0)
+        run_layout.setSpacing(6)
 
         self._start_btn = QPushButton("Start")
         self._start_btn.clicked.connect(self.start_requested.emit)
@@ -165,54 +185,39 @@ class ImageAcquisitionPanel(QWidget):
         self._stop_btn.setEnabled(False)
         self._apply_button_style(self._stop_btn, "secondary")
 
-        acq_btn_layout.addWidget(self._start_btn)
-        acq_btn_layout.addWidget(self._stop_btn)
-        acq_layout.addRow("", acq_btn_layout)
-
-        # FPS controls
-        self._requested_fps = QSpinBox()
-        self._requested_fps.setRange(1, 60)
-        self._requested_fps.setValue(9)
-        self._requested_fps.setSuffix(" Hz")
-        self._requested_fps.valueChanged.connect(self.fps_changed.emit)
-        self._apply_input_style(self._requested_fps)
-        acq_layout.addRow("Requested FPS:", self._requested_fps)
-
-        self._acq_fps_label = QLabel("— Hz")
-        set_role(self._acq_fps_label, "mono")
-        acq_layout.addRow("Acquisition FPS:", self._acq_fps_label)
-
-        self._disp_fps_label = QLabel("— Hz")
-        set_role(self._disp_fps_label, "mono")
-        acq_layout.addRow("Display FPS:", self._disp_fps_label)
-
-        # Averaging
-        self._averaging_combo = QComboBox()
-        self._averaging_combo.addItems(["Off", "2", "4", "8", "16"])
-        self._averaging_combo.currentTextChanged.connect(self.averaging_changed.emit)
-        self._apply_input_style(self._averaging_combo)
-        acq_layout.addRow("Averaging:", self._averaging_combo)
-
-        # History
-        self._history_spin = QSpinBox()
-        self._history_spin.setRange(1, 1000)
-        self._history_spin.setValue(100)
-        self._history_spin.setSuffix(" frames")
-        self._history_spin.valueChanged.connect(self.history_changed.emit)
-        self._apply_input_style(self._history_spin)
-        acq_layout.addRow("History:", self._history_spin)
-
-        self._acq_controls.setEnabled(False)
-        group_layout.addWidget(self._acq_controls)
-
-        # Change button
-        self._change_btn = QPushButton("Change...")
-        self._change_btn.clicked.connect(self.change_requested.emit)
-        self._change_btn.setEnabled(False)
-        self._apply_button_style(self._change_btn, "accent")
-        group_layout.addWidget(self._change_btn)
+        run_layout.addWidget(self._start_btn)
+        run_layout.addWidget(self._stop_btn)
+        self._run_controls.setEnabled(False)
+        group_layout.addWidget(self._run_controls)
 
         layout.addWidget(group)
+
+        # --- FEED GROUP (display only: IR / IR+VL / VL) ---
+        feed_group = QGroupBox("FEED")
+        feed_layout = QHBoxLayout(feed_group)
+        feed_layout.setContentsMargins(8, 12, 8, 8)
+        feed_layout.setSpacing(4)
+        self._feed_buttons: dict[str, QPushButton] = {}
+        for mode, text, tip in (
+            ("ir", "IR", "Infrared feed only (display)"),
+            ("both", "IR + VL", "Infrared and visible side by side (display)"),
+            ("vl", "VL", "Visible-light feed only (display)"),
+        ):
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setMinimumHeight(24)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self._apply_button_style(button, "secondary")
+            button.clicked.connect(
+                lambda _checked=False, feed_mode=mode: self._on_feed_button(feed_mode)
+            )
+            feed_layout.addWidget(button)
+            self._feed_buttons[mode] = button
+        self._feed_mode = "both"
+        self._sync_feed_buttons()
+        layout.addWidget(feed_group)
 
         # --- FOCUS GROUP (Stage 8D: custom-backend focus, async via window) ---
         focus_group = QGroupBox("FOCUS")
@@ -289,49 +294,14 @@ class ImageAcquisitionPanel(QWidget):
         self._nuc_group.setEnabled(False)
         layout.addWidget(nuc_group)
 
-        # --- IMAGE INFO GROUP ---
-        info_group = QGroupBox("IMAGE INFO")
-        info_layout = QFormLayout(info_group)
-        info_layout.setSpacing(4)
-        info_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        info_layout.setContentsMargins(8, 12, 8, 8)
-
-        self._info_camera = QLabel("—")
-        self._info_serial = QLabel("—")
-        self._info_size = QLabel("—")
-        self._info_frame = QLabel("—")
-        self._info_timestamp = QLabel("—")
-        self._info_calibration = QLabel("—")
-        self._info_emissivity = QLabel("—")
-        self._info_ambient = QLabel("—")
-        self._info_processing = QLabel("—")
-
-        for label in [
-            self._info_camera, self._info_serial, self._info_size,
-            self._info_frame, self._info_timestamp, self._info_calibration,
-            self._info_emissivity, self._info_ambient, self._info_processing
-        ]:
-            set_role(label, "mono")
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-
-        info_layout.addRow("Camera:", self._info_camera)
-        info_layout.addRow("Serial:", self._info_serial)
-        info_layout.addRow("Image Size:", self._info_size)
-        info_layout.addRow("Frame:", self._info_frame)
-        info_layout.addRow("Timestamp:", self._info_timestamp)
-        info_layout.addRow("Calibration:", self._info_calibration)
-        info_layout.addRow("Emissivity:", self._info_emissivity)
-        info_layout.addRow("Ambient:", self._info_ambient)
-        info_layout.addRow("Processing:", self._info_processing)
-
-        layout.addWidget(info_group)
-
+        # NOTE: image metadata lives ONLY in the dedicated Image
+        # Information side panel (FrameInfoPanel) — never duplicated here.
         layout.addStretch()
 
-        # Set fixed width for left panel
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
-        self.setMinimumWidth(260)
-        self.setMaximumWidth(300)
+        # Scroll-friendly sizing: readable minimum, never forces horizontal
+        # scroll inside the side-panel scroll area.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(220)
 
     def _apply_theme(self) -> None:
         # Group boxes, labels, and inputs are styled centrally; nothing
@@ -404,22 +374,108 @@ class ImageAcquisitionPanel(QWidget):
             self._start_btn.setEnabled(False)
             self._stop_btn.setEnabled(False)
 
-        self._change_btn.setEnabled(connected)
-        self._acq_controls.setEnabled(connected)
+        self._run_controls.setEnabled(connected)
 
     # Public API
+
+    def _on_camera_combo_changed(self, index: int) -> None:
+        camera_id = self._camera_combo.itemData(index)
+        if camera_id:
+            self.camera_selection_changed.emit(camera_id)
+
+    def set_camera_list(
+        self, cameras: list[tuple[str, str, CameraIdentity | None, bool]]
+    ) -> None:
+        """Replace the camera list silently (no phantom selection emit).
+
+        Exactly one deliberate emit happens, and only when the effective
+        selection genuinely changed — same contract the old top toolbar
+        provided, now owned by Camera Control.
+        """
+        combo = self._camera_combo
+        current_id = combo.currentData()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            for camera_id, display_name, _identity, _enabled in cameras:
+                combo.addItem(display_name, camera_id)
+            restored_idx = -1
+            if current_id:
+                restored_idx = combo.findData(current_id)
+            if restored_idx < 0 and cameras:
+                restored_idx = 0
+            if restored_idx >= 0:
+                combo.setCurrentIndex(restored_idx)
+        finally:
+            combo.blockSignals(False)
+        new_id = combo.currentData()
+        if new_id != current_id and new_id:
+            self._on_camera_combo_changed(combo.currentIndex())
+
+    def select_camera_by_id(self, camera_id: str) -> bool:
+        """User-equivalent selection (emits when the selection changes)."""
+        idx = self._camera_combo.findData(camera_id)
+        if idx >= 0:
+            self._camera_combo.setCurrentIndex(idx)
+            return True
+        return False
+
+    def sync_camera_selection(self, camera_id: str) -> None:
+        """Silent authority sync: move the combo without emitting."""
+        self._camera_combo.blockSignals(True)
+        try:
+            self.select_camera_by_id_no_emit(camera_id)
+        finally:
+            self._camera_combo.blockSignals(False)
+
+    def select_camera_by_id_no_emit(self, camera_id: str) -> bool:
+        idx = self._camera_combo.findData(camera_id)
+        if idx >= 0:
+            self._camera_combo.blockSignals(True)
+            try:
+                self._camera_combo.setCurrentIndex(idx)
+            finally:
+                self._camera_combo.blockSignals(False)
+            return True
+        return False
+
+    @property
+    def selected_combo_camera_id(self) -> str | None:
+        try:
+            return self._camera_combo.currentData()
+        except Exception:
+            return None
+
+    def _on_feed_button(self, mode: str) -> None:
+        if mode == self._feed_mode:
+            self._sync_feed_buttons()
+            return
+        self.feed_mode_changed.emit(mode)
+
+    def set_feed_mode(self, mode: str) -> None:
+        """Reflect the workspace feed mode (display only, no acquire touch)."""
+        if mode not in ("ir", "both", "vl"):
+            return
+        self._feed_mode = mode
+        self._sync_feed_buttons()
+
+    def _sync_feed_buttons(self) -> None:
+        for mode, button in getattr(self, "_feed_buttons", {}).items():
+            active = mode == getattr(self, "_feed_mode", "both")
+            button.setChecked(active)
+            self._apply_button_style(button, "primary" if active else "secondary")
+
+    @property
+    def feed_mode(self) -> str:
+        return getattr(self, "_feed_mode", "both")
 
     def set_camera_identity(self, identity: CameraIdentity | None) -> None:
         """Set the camera identity display."""
         self._selected_camera_identity = identity
         if identity:
             self._camera_label.setText(f"{identity.model or 'TV46L'}-{identity.serial_number}")
-            self._info_camera.setText(identity.model or "TV46L")
-            self._info_serial.setText(identity.serial_number)
         else:
             self._camera_label.setText("No camera selected")
-            self._info_camera.setText("—")
-            self._info_serial.setText("—")
 
     def set_connection_state(self, state: CameraConnectionState) -> None:
         """Update connection state and UI.
@@ -455,70 +511,6 @@ class ImageAcquisitionPanel(QWidget):
             self.set_connection_state(CameraConnectionState.ACQUIRING)
         elif self._connection_state == CameraConnectionState.ACQUIRING:
             self.set_connection_state(CameraConnectionState.CONNECTED)
-
-    def set_acquisition_fps(self, fps: float | None) -> None:
-        """Update acquisition FPS display."""
-        if fps is not None:
-            self._acq_fps_label.setText(f"{fps:.1f} Hz")
-        else:
-            self._acq_fps_label.setText("— Hz")
-
-    def set_display_fps(self, fps: float | None) -> None:
-        """Update display FPS display."""
-        if fps is not None:
-            self._disp_fps_label.setText(f"{fps:.1f} Hz")
-        else:
-            self._disp_fps_label.setText("— Hz")
-
-    def set_requested_fps(self, fps: int) -> None:
-        """Set requested FPS spinbox."""
-        self._requested_fps.setValue(fps)
-
-    def get_requested_fps(self) -> int:
-        return self._requested_fps.value()
-
-    def set_averaging(self, value: str) -> None:
-        idx = self._averaging_combo.findText(value)
-        if idx >= 0:
-            self._averaging_combo.setCurrentIndex(idx)
-
-    def set_history(self, frames: int) -> None:
-        self._history_spin.setValue(frames)
-
-    def update_image_info(
-        self,
-        image_size: str | None = None,
-        frame: str | None = None,
-        timestamp: str | None = None,
-        calibration: str | None = None,
-        emissivity: str | None = None,
-        ambient: str | None = None,
-        processing: str | None = None,
-    ) -> None:
-        """Update image info fields."""
-        if image_size is not None:
-            self._info_size.setText(image_size)
-        if frame is not None:
-            self._info_frame.setText(frame)
-        if timestamp is not None:
-            self._info_timestamp.setText(timestamp)
-        if calibration is not None:
-            self._info_calibration.setText(calibration)
-        if emissivity is not None:
-            self._info_emissivity.setText(emissivity)
-        if ambient is not None:
-            self._info_ambient.setText(ambient)
-        if processing is not None:
-            self._info_processing.setText(processing)
-
-    def clear_image_info(self) -> None:
-        """Clear all image info fields."""
-        for label in [
-            self._info_size, self._info_frame, self._info_timestamp,
-            self._info_calibration, self._info_emissivity, self._info_ambient,
-            self._info_processing
-        ]:
-            label.setText("—")
 
     # -- Focus (Stage 8D; dumb view, window drives runtime asynchronously) --
 

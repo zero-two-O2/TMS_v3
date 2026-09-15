@@ -9,7 +9,7 @@ Similar to ThermoView's "Select Camera" dialog:
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Callable, Optional
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -42,6 +42,25 @@ def _interface_label(service: object) -> str:
     return str(getattr(service, "interface_label", "GVCP"))
 
 
+def format_camera_display_name(
+    model: str | None, serial: str | None, fps: object, ip: str | None
+) -> str:
+    """ThermoView-style camera identity: ``MODEL-<serial>@<fps>Hz@<ip>``.
+
+    Uses the REAL discovered model/serial/IP plus the configured or
+    default frame rate. Never hardcoded: missing fields degrade to
+    explicit placeholders (never a fabricated address).
+    """
+    model_text = (model or "").strip() or "TV46L"
+    serial_text = (serial or "").strip() or "?"
+    try:
+        fps_text = f"{int(fps)}Hz"  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        fps_text = "9Hz"
+    ip_text = (ip or "").strip() or "?"
+    return f"{model_text}-{serial_text}@{fps_text}@{ip_text}"
+
+
 class _DiscoveryWorker(QThread):
     completed = pyqtSignal(object)
     failed = pyqtSignal(str)
@@ -69,10 +88,15 @@ class CameraSelectionDialog(QDialog):
         discovery_service: "CameraDiscoveryService | GvcpDiscoveryService",
         theme_manager: Optional[ThemeManager] = None,
         parent=None,
+        *,
+        fps_lookup: Callable[[DiscoveredCamera], int] | None = None,
     ) -> None:
         super().__init__(parent)
         self._discovery_service = discovery_service
         self._theme = theme_manager
+        # Optional configured-FPS source (falls back to 9 Hz): lets the
+        # camera rows show the REAL requested rate per camera.
+        self._fps_lookup = fps_lookup
         self._selected_camera: DiscoveredCamera | None = None
         self._discovery_worker: _DiscoveryWorker | None = None
 
@@ -175,10 +199,25 @@ class CameraSelectionDialog(QDialog):
         self._discovery_worker.finished.connect(self._on_discovery_finished)
         self._discovery_worker.start()
 
+    def _camera_fps(self, cam: DiscoveredCamera) -> int:
+        """Configured/requested FPS for a discovered camera (default 9)."""
+        if self._fps_lookup is not None:
+            try:
+                return int(self._fps_lookup(cam))
+            except (TypeError, ValueError):
+                pass
+        return 9
+
+    def display_name_for(self, cam: DiscoveredCamera) -> str:
+        """ThermoView-style identity for one discovered camera."""
+        return format_camera_display_name(
+            cam.model, cam.serial_number, self._camera_fps(cam), cam.ip_address
+        )
+
     def _on_discovery_completed(self, cameras) -> None:
         for cam in cameras:
             interface = _interface_label(self._discovery_service)
-            item = QTreeWidgetItem([interface, cam.camera_id, cam.serial_number or "—", cam.ip_address or "—", cam.model or "—"])
+            item = QTreeWidgetItem([interface, self.display_name_for(cam), cam.serial_number or "—", cam.ip_address or "—", cam.model or "—"])
             item.setData(0, Qt.ItemDataRole.UserRole, cam)
             self._camera_tree.addTopLevelItem(item)
         self._selection_info.setText(f"{len(cameras)} camera(s) discovered ({_interface_label(self._discovery_service)})")
@@ -200,7 +239,7 @@ class CameraSelectionDialog(QDialog):
             self._selected_camera = cam
             self._connect_btn.setEnabled(True)
             self._selection_info.setText(
-                f"Selected: {cam.camera_id}  |  Serial: {cam.serial_number or '—'}  |  IP: {cam.ip_address or '—'}  |  Model: {cam.model or '—'}"
+                f"Selected: {self.display_name_for(cam)}  |  Serial: {cam.serial_number or '—'}  |  IP: {cam.ip_address or '—'}  |  Model: {cam.model or '—'}"
             )
         else:
             self._selected_camera = None

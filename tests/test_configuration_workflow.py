@@ -8,7 +8,7 @@ import pytest
 import time
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 
@@ -142,9 +142,9 @@ class TestCameraSelectionDialog:
         # Check tree has cameras
         assert dialog._camera_tree.topLevelItemCount() == 2
         
-        # Check first camera data
+        # Check first camera data (ThermoView-style identity row)
         item0 = dialog._camera_tree.topLevelItem(0)
-        assert item0.text(1) == "cam_26010002"  # camera_id
+        assert item0.text(1) == "TV46L-26010002@9Hz@169.254.24.69"  # MODEL-serial@fpsHz@ip
         assert item0.text(2) == "26010002"      # serial
         assert item0.text(3) == "169.254.24.69"  # IP
         assert item0.text(4) == "TV46L"          # model
@@ -225,7 +225,7 @@ class TestImageAcquisitionPanel:
         assert panel._status_text.text() == "Disconnected"
         assert not panel._start_btn.isEnabled()
         assert not panel._stop_btn.isEnabled()
-        assert not panel._acq_controls.isEnabled()
+        assert not panel._run_controls.isEnabled()
 
     def test_set_camera_identity(self, qapp, mock_theme):
         """Test setting camera identity updates display."""
@@ -240,8 +240,9 @@ class TestImageAcquisitionPanel:
         
         assert "TV46L" in panel._camera_label.text()
         assert "26010002" in panel._camera_label.text()
-        assert panel._info_camera.text() == "TV46L"
-        assert panel._info_serial.text() == "26010002"
+        # Image metadata lives only in the Image Information side panel.
+        assert getattr(panel, "_info_camera", None) is None
+        assert panel.findChild(QWidget, "IMAGE INFO") is None
 
     def test_connection_state_transitions(self, qapp, mock_theme):
         """Test connection state transitions update UI correctly."""
@@ -256,7 +257,7 @@ class TestImageAcquisitionPanel:
         panel.set_connection_state(CameraConnectionState.CONNECTED)
         assert panel._connection_state == CameraConnectionState.CONNECTED
         assert panel._start_btn.isEnabled()
-        assert panel._acq_controls.isEnabled()
+        assert panel._run_controls.isEnabled()
         
         # CONNECTED -> ACQUIRING
         panel.set_acquisition_running(True)
@@ -274,7 +275,7 @@ class TestImageAcquisitionPanel:
         panel.set_connection_state(CameraConnectionState.DISCONNECTED)
         assert panel._connection_state == CameraConnectionState.DISCONNECTED
         assert not panel._start_btn.isEnabled()
-        assert not panel._acq_controls.isEnabled()
+        assert not panel._run_controls.isEnabled()
 
     def test_error_state(self, qapp, mock_theme):
         """Test error state displays correctly."""
@@ -572,41 +573,65 @@ class TestConnectionWorkflow:
         assert len(received) == 1
         assert received[0].serial_number == "26010002"
 
-    def test_acquisition_panel_fps_control(self, qapp):
-        """Test FPS control in acquisition panel."""
-        panel = ImageAcquisitionPanel()
-        
-        received = []
-        panel.fps_changed.connect(lambda fps: received.append(fps))
-        
-        panel._requested_fps.setValue(15)
-        
-        assert len(received) == 1
-        assert received[0] == 15
+    def test_acquisition_setup_fps_control(self, qapp):
+        """Test FPS control lives in the Acquisition Setup dialog."""
+        from thermal_monitor.ui.widgets import AcquisitionSetupDialog
 
-    def test_acquisition_panel_averaging_control(self, qapp):
-        """Test averaging control."""
-        panel = ImageAcquisitionPanel()
-        
-        received = []
-        panel.averaging_changed.connect(lambda val: received.append(val))
-        
-        panel._averaging_combo.setCurrentText("4")
-        
-        assert len(received) == 1
-        assert received[0] == "4"
+        dialog = AcquisitionSetupDialog()
+        try:
+            dialog.set_params(9, "Off", 100)
+            dialog._fps_spin.setValue(15)
 
-    def test_acquisition_panel_history_control(self, qapp):
-        """Test history length control."""
+            assert dialog.values()["fps"] == 15
+        finally:
+            dialog.close()
+
+    def test_acquisition_setup_averaging_control(self, qapp):
+        """Test averaging control lives in the Acquisition Setup dialog."""
+        from thermal_monitor.ui.widgets import AcquisitionSetupDialog
+
+        dialog = AcquisitionSetupDialog()
+        try:
+            dialog._averaging_combo_box.setCurrentText("4")
+
+            assert dialog.values()["averaging"] == "4"
+        finally:
+            dialog.close()
+
+    def test_acquisition_setup_history_control(self, qapp):
+        """Test history length control lives in the Acquisition Setup dialog."""
+        from thermal_monitor.ui.widgets import AcquisitionSetupDialog
+
+        dialog = AcquisitionSetupDialog()
+        try:
+            dialog._history_spin_box.setValue(200)
+
+            assert dialog.values()["history_frames"] == 200
+        finally:
+            dialog.close()
+
+    def test_camera_control_has_no_startup_params(self, qapp):
+        """Camera Control keeps operations only; startup params moved out."""
         panel = ImageAcquisitionPanel()
-        
-        received = []
-        panel.history_changed.connect(lambda val: received.append(val))
-        
-        panel._history_spin.setValue(200)
-        
-        assert len(received) == 1
-        assert received[0] == 200
+
+        for stale in (
+            "_requested_fps",
+            "_averaging_combo",
+            "_history_spin",
+            "_change_btn",
+            "_acq_controls",
+            "_acq_fps_label",
+            "_disp_fps_label",
+            "_info_camera",
+        ):
+            assert not hasattr(panel, stale), f"stale Camera Control API: {stale}"
+        for signal in (
+            "fps_changed",
+            "averaging_changed",
+            "history_changed",
+            "change_requested",
+        ):
+            assert not hasattr(panel, signal), f"stale Camera Control signal: {signal}"
 
 
 class TestDependencyInjectionRegression:
