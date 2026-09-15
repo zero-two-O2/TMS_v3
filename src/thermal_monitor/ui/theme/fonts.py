@@ -63,10 +63,10 @@ FONT_SCALE_MAX_PCT = 150
 #: fonts back to the stylesheet value whenever a theme is active, so
 #: setPointSize() alone silently never applies. Central rules + dynamic
 #: properties are the same mechanism QLabel roles already use.)
-#: Shelf tabs render at 10 pt so full vertical titles stay readable at
+#: Shelf tabs render at 12 pt so full vertical titles stay readable at
 #: the supported window sizes (industrial tool-strip minimum).
-SHELF_TAB_FONT_PT = 10
-PANEL_TITLE_FONT_PT = 10
+SHELF_TAB_FONT_PT = 12
+PANEL_TITLE_FONT_PT = 11
 
 
 def _settings() -> QSettings:

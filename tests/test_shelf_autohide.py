@@ -450,9 +450,9 @@ def test_small_scale_stays_clickable(widget, qapp) -> None:
 
 
 def test_shelf_geometry_constants() -> None:
-    assert mod.PANEL_SHELF_WIDTH == 40
-    assert mod.PANEL_TAB_WIDTH == 36
-    assert 34 <= mod.PANEL_TAB_WIDTH <= 40
+    assert mod.PANEL_SHELF_WIDTH == 36
+    assert mod.PANEL_TAB_WIDTH == 32
+    assert 30 <= mod.PANEL_TAB_WIDTH <= 34
     assert mod.PANEL_TAB_MIN_HEIGHT == 60
     assert mod.PANEL_TAB_MAX_HEIGHT == 400
     assert mod.PANEL_TAB_SPACING == 6
@@ -485,7 +485,7 @@ def test_shelf_qss_is_scoped_not_global() -> None:
     assert "#607D8B" in sheet  # muted steel-blue pressed/open
     assert "border-radius: 4px;" in sheet
     assert "background-color: transparent;" in sheet
-    assert "font-size: 10px;" in sheet
+    assert "font-size: 12px;" in sheet
     # The global theme is untouched: generic button + accent intact.
     assert "QPushButton {" in sheet
     assert light.accent == "#546E7A"

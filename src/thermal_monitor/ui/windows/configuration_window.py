@@ -140,11 +140,11 @@ from thermal_monitor.ui.theme.fonts import (
     SHELF_TAB_FONT_PT as _SHELF_TAB_FONT_PT,
 )
 
-PANEL_SHELF_WIDTH = 40  #: rail width in px (floating tabs + margins)
-PANEL_TAB_WIDTH = 36  #: floating tab thickness in px (industrial tool strip)
+PANEL_SHELF_WIDTH = 25  #: rail width in px (floating tabs + margins)
+PANEL_TAB_WIDTH = 21  #: floating tab thickness in px (industrial tool strip)
 PANEL_TAB_MIN_HEIGHT = 60  #: clickability floor in px (short titles pad to this)
 PANEL_TAB_MAX_HEIGHT = 400  #: extreme-scale ceiling (long titles never clip below this)
-PANEL_TAB_FONT_SIZE_PT = _SHELF_TAB_FONT_PT  #: readable 10 pt tab font (at 100%)
+PANEL_TAB_FONT_SIZE_PT = _SHELF_TAB_FONT_PT  #: readable 12 pt tab font (at 100%)
 PANEL_TAB_SPACING = 6  #: vertical gap between floating tabs in px
 PANEL_TAB_MARGIN = 2  #: rail/host contents margin in px (rail = tab + 2 * margin)
 PANEL_PIN_SIZE = 20  #: pin button size in px (icon-only, no large rectangle)
@@ -227,14 +227,14 @@ def _make_pin_icon(pinned: bool):  # -> QIcon (import-deferred for headless test
 
 
 class _ShelfTab(QPushButton):
-    """One floating minimized-tab on a side shelf (~36 px thick).
+    """One floating minimized-tab on a side shelf (~32 px thick).
 
     Checkable: checked mirrors its panel's open state (compat mirror only
     — the source of truth is ``record.is_open()`` + ``record.pinned``,
     synced through ``_sync_panel_visual_state``). The FULL panel name is
     drawn as ONE rotated text string over a custom light-industrial
     floating tab (very light neutral background, subtle grey border,
-    4 px corners, dark charcoal 10 pt text) — never abbreviated, never
+    4 px corners, dark charcoal 12 pt text) — never abbreviated, never
     elided, never per-character stacked. The same canonical title renders
     in every state; only background/border/text-color change with
     hover/pressed. While its panel is OPEN the tab is physically hidden

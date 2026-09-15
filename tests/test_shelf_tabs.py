@@ -200,8 +200,8 @@ def test_names_survive_many_open_and_shelf_scroll(widget, qapp) -> None:
 def test_tab_geometry_fits_full_title(widget) -> None:
     from PyQt6.QtGui import QFontMetrics
 
-    assert mod.PANEL_SHELF_WIDTH == 40
-    assert mod.PANEL_TAB_WIDTH == 36
+    assert mod.PANEL_SHELF_WIDTH == 36
+    assert mod.PANEL_TAB_WIDTH == 32
     assert mod.PANEL_TAB_MIN_HEIGHT == 60
     assert mod.PANEL_TAB_MAX_HEIGHT == 400
     for name in ("cfg_left_shelf", "cfg_right_shelf"):

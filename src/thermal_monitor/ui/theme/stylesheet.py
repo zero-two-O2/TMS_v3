@@ -205,7 +205,7 @@ QLabel[panelTitle="true"] {{
 /* Shelf-specific light-industrial tool-strip look (fixed palette so the
    shelf stays light and readable in every theme; the global theme and
    accent are untouched): very light neutral tab, subtle grey border,
-   small dark-charcoal 10 pt text, restrained 4 px corners (industrial,
+   small dark-charcoal 12 pt text, restrained 4 px corners (industrial,
    not pill-shaped). Weight stays normal in every state so the advance
    never changes after selection. min-height/min-width 0 so the fixed
    tab geometry (PANEL_* constants) is never clamped by the generic
