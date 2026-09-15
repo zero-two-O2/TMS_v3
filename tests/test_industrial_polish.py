@@ -77,9 +77,9 @@ def widget(qapp, isolated_font_settings):
 
 def test_shelf_dimensions_reduced() -> None:
     assert config_window_module.PANEL_SHELF_WIDTH == 40
-    assert config_window_module.PANEL_TAB_WIDTH == 32
-    assert config_window_module.PANEL_TAB_MIN_HEIGHT == 84
-    assert config_window_module.PANEL_TAB_MAX_HEIGHT == 280
+    assert config_window_module.PANEL_TAB_WIDTH == 36
+    assert config_window_module.PANEL_TAB_MIN_HEIGHT == 60
+    assert config_window_module.PANEL_TAB_MAX_HEIGHT == 400
 
 
 def test_rails_match_central_constants(widget) -> None:
@@ -218,8 +218,8 @@ def test_explicit_widget_type_scales_in_stylesheet() -> None:
     large = build_stylesheet(BUILTIN_THEMES["industrial_light"], 130)
     assert '[shelfTab="true"]' in base
     assert '[panelTitle="true"]' in base
-    assert "font-size: 8px;" in base
-    assert "font-size: 10px;" in large  # round(8 * 1.3)
+    assert "font-size: 10px;" in base
+    assert "font-size: 13px;" in large  # round(10 * 1.3)
 
 
 def test_tabs_carry_shelf_property(widget) -> None:

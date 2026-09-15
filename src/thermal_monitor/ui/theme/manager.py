@@ -1014,7 +1014,11 @@ class ThemeManager:
         """Apply the active theme and repolish all widgets.
 
         Returns the number of refreshed widgets.  Still a pure GUI-style
-        operation (see :func:`refresh_all_widgets`).
+        operation (see :func:`refresh_all_widgets`).  Widgets carrying
+        explicit fixed geometry derived from fonts (side-shelf tabs) get
+        their ``refresh_font_metrics()`` hook re-run afterwards: a raw
+        (un)polish rewrites their stylesheet-driven minimum sizes and
+        would otherwise collapse them until the next panel transition.
         """
         from thermal_monitor.ui.theme.properties import refresh_all_widgets
 
@@ -1023,7 +1027,14 @@ class ThemeManager:
 
             app = QApplication.instance()
         self.apply(app)
-        return refresh_all_widgets(app)
+        count = refresh_all_widgets(app)
+        try:
+            from thermal_monitor.ui.theme.fonts import refresh_font_metrics_hooks
+
+            refresh_font_metrics_hooks(app)
+        except Exception:
+            pass
+        return count
 
     # --- Window configuration ---
 

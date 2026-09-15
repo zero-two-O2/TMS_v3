@@ -201,9 +201,9 @@ def test_tab_geometry_fits_full_title(widget) -> None:
     from PyQt6.QtGui import QFontMetrics
 
     assert mod.PANEL_SHELF_WIDTH == 40
-    assert mod.PANEL_TAB_WIDTH == 32
-    assert mod.PANEL_TAB_MIN_HEIGHT == 84
-    assert mod.PANEL_TAB_MAX_HEIGHT == 280
+    assert mod.PANEL_TAB_WIDTH == 36
+    assert mod.PANEL_TAB_MIN_HEIGHT == 60
+    assert mod.PANEL_TAB_MAX_HEIGHT == 400
     for name in ("cfg_left_shelf", "cfg_right_shelf"):
         rail = widget.findChild(QWidget, name)
         assert rail is not None

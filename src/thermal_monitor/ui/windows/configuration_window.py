@@ -140,16 +140,33 @@ from thermal_monitor.ui.theme.fonts import (
     SHELF_TAB_FONT_PT as _SHELF_TAB_FONT_PT,
 )
 
-PANEL_SHELF_WIDTH = 40  #: rail width in px (ThermoView compact industrial)
-PANEL_TAB_WIDTH = 32  #: vertical tab width in px (rail minus 2 * margin)
-PANEL_TAB_MIN_HEIGHT = 84  #: shortest tab (e.g. "ROI") in px (clickable)
-PANEL_TAB_MAX_HEIGHT = 280  #: longest tab fits "Configuration Editor" at 150% scale
-PANEL_TAB_FONT_SIZE_PT = _SHELF_TAB_FONT_PT  #: small readable tab font (at 100%)
-PANEL_TAB_SPACING = 4  #: vertical gap between tabs in px
-PANEL_TAB_MARGIN = 4  #: rail/host contents margin in px (rail = tab + 2 * margin)
-PANEL_PIN_SIZE = 16  #: pin button size in px (ThermoView-scale)
-PANEL_PIN_ICON_SIZE = 12  #: pin icon visual size in px
-PANEL_HEADER_FONT_SIZE_PT = _PANEL_TITLE_FONT_PT  #: compact title font (at 100%)
+PANEL_SHELF_WIDTH = 40  #: rail width in px (floating tabs + margins)
+PANEL_TAB_WIDTH = 36  #: floating tab thickness in px (industrial tool strip)
+PANEL_TAB_MIN_HEIGHT = 60  #: clickability floor in px (short titles pad to this)
+PANEL_TAB_MAX_HEIGHT = 400  #: extreme-scale ceiling (long titles never clip below this)
+PANEL_TAB_FONT_SIZE_PT = _SHELF_TAB_FONT_PT  #: readable 10 pt tab font (at 100%)
+PANEL_TAB_SPACING = 6  #: vertical gap between floating tabs in px
+PANEL_TAB_MARGIN = 2  #: rail/host contents margin in px (rail = tab + 2 * margin)
+PANEL_PIN_SIZE = 20  #: pin button size in px (icon-only, no large rectangle)
+PANEL_PIN_ICON_SIZE = 16  #: pin icon visual size in px
+PANEL_HEADER_FONT_SIZE_PT = _PANEL_TITLE_FONT_PT  #: readable 10 pt title font (at 100%)
+
+#: -- Floating-shelf palette (light industrial, shelf-specific) --------------
+#: Fixed hex values (deliberately NOT theme tokens): the shelf keeps its
+#: light-instrument look in every theme while the global application
+#: accent/theme stays untouched. Normal weight dark text on a very light
+#: neutral tab; hover slightly darker; pressed a muted steel-blue.
+_SHELF_TAB_BG = "#EFF1F4"  #: minimized tab background (very light neutral grey)
+_SHELF_TAB_BG_HOVER = "#DFE4EA"  #: hovered tab background (slightly darker)
+_SHELF_TAB_BG_PRESSED = "#607D8B"  #: pressed tab background (muted steel-blue)
+_SHELF_TAB_BORDER = "#BCC4CC"  #: tab border (subtle medium-light grey)
+_SHELF_TAB_TEXT = "#23272C"  #: tab text (dark charcoal, normal weight)
+_SHELF_TAB_TEXT_PRESSED = "#FFFFFF"  #: pressed tab text (light on steel-blue)
+_SHELF_TAB_RADIUS = 4  #: tab corner radius in px (industrial, not pill-shaped)
+_PIN_GREY = "#6E777F"  #: unpinned pin outline/needle (neutral grey)
+_PIN_GREY_FILL = "#C3CAD1"  #: unpinned pin head fill (light grey)
+_PIN_STEEL = "#546E7A"  #: pinned pin head/needle (muted industrial steel-blue)
+_PIN_STEEL_DARK = "#37474F"  #: pinned pin outline (dark steel)
 
 
 
@@ -162,12 +179,14 @@ _UNIT_SYMBOLS = {
 
 
 def _make_pin_icon(pinned: bool):  # -> QIcon (import-deferred for headless tests)
-    """Small professional push-pin icon, drawn programmatically.
+    """Small industrial push-pin icon, drawn programmatically.
 
-    Cached per state. Unpinned = hollow gray pin; pinned = filled accent
-    pin. Drawn on a transparent 16x16 pixmap so it stays visible on both
-    light and dark headers; the button background still comes from the
-    theme variant (accent = pinned, ghost = unpinned).
+    Cached per state. Unpinned = light-grey head with a neutral grey
+    outline/needle (subtle); pinned = muted steel-blue head/needle with a
+    dark steel outline and white highlight (clearly distinct). Drawn on a
+    transparent 16x16 pixmap and shown at 16 px inside a flat icon-only
+    button (no large square): the state difference comes from the icon
+    itself, never from a button background.
     """
     from PyQt6.QtGui import QBrush, QColor, QIcon, QPainter, QPen, QPixmap
 
@@ -180,25 +199,26 @@ def _make_pin_icon(pinned: bool):  # -> QIcon (import-deferred for headless test
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if pinned:
-            head, needle, outline = (
-                QColor(0x1E, 0x88, 0xE5),
-                QColor(0x1E, 0x88, 0xE5),
-                QColor(0xFF, 0xFF, 0xFF),
-            )
+            head_fill = QColor(_PIN_STEEL)
+            outline = QColor(_PIN_STEEL_DARK)
+            needle = QColor(_PIN_STEEL_DARK)
+            dot = QColor(0xFF, 0xFF, 0xFF)
         else:
-            head, needle, outline = (
-                Qt.GlobalColor.transparent,
-                QColor(0x8A, 0x8A, 0x8A),
-                QColor(0x5A, 0x5A, 0x5A),
-            )
-        painter.setPen(QPen(outline, 1.6))
-        painter.setBrush(QBrush(head))
-        painter.drawEllipse(3, 1, 10, 8)  # pin head
-        painter.setPen(QPen(needle if pinned else outline, 2.0))
-        painter.drawLine(8, 8, 4, 14)  # needle, tilted like a real pin
+            head_fill = QColor(_PIN_GREY_FILL)
+            outline = QColor(_PIN_GREY)
+            needle = QColor(_PIN_GREY)
+            dot = QColor(0xFF, 0xFF, 0xFF)
+        # Pin head: bold industrial ellipse with a visible outline.
+        painter.setPen(QPen(outline, 1.8))
+        painter.setBrush(QBrush(head_fill))
+        painter.drawEllipse(2, 1, 12, 8)
+        # Needle: thick tilted shaft below the head.
+        painter.setPen(QPen(needle, 2.2))
+        painter.drawLine(9, 8, 5, 15)
+        # Highlight dot on the head.
         painter.setPen(QPen(outline, 1.0))
-        painter.setBrush(QBrush(QColor(0xFF, 0xFF, 0xFF) if pinned else outline))
-        painter.drawEllipse(6, 3, 4, 4)  # highlight dot
+        painter.setBrush(QBrush(dot))
+        painter.drawEllipse(5, 2, 5, 5)
     finally:
         painter.end()
     icon = QIcon(pixmap)
@@ -207,25 +227,32 @@ def _make_pin_icon(pinned: bool):  # -> QIcon (import-deferred for headless test
 
 
 class _ShelfTab(QPushButton):
-    """One narrow VERTICAL tab on a side shelf rail (~40 px wide).
+    """One floating minimized-tab on a side shelf (~36 px thick).
 
-    Checkable: checked = its panel is open. The FULL panel name is drawn
-    as ONE rotated text string over the standard button bevel — never
-    abbreviated, never elided, never per-character stacked. The same
-    canonical title renders in every state (collapsed / open / pinned /
-    unpinned); only background/border/text-color change via the theme
-    variant (accent = open, outline = collapsed). No custom docking
-    framework.
+    Checkable: checked mirrors its panel's open state (compat mirror only
+    — the source of truth is ``record.is_open()`` + ``record.pinned``,
+    synced through ``_sync_panel_visual_state``). The FULL panel name is
+    drawn as ONE rotated text string over a custom light-industrial
+    floating tab (very light neutral background, subtle grey border,
+    4 px corners, dark charcoal 10 pt text) — never abbreviated, never
+    elided, never per-character stacked. The same canonical title renders
+    in every state; only background/border/text-color change with
+    hover/pressed. While its panel is OPEN the tab is physically hidden
+    (``setVisible(False)``); the open panel's header carries the title.
+    No custom docking framework.
 
     Sizing is driven by the PANEL_* module constants above. Tab height
     (vertical room for the rotated title) is measured from the actual
-    rendered font advance + padding; tab width (horizontal thickness)
-    stays fixed so long names consume VERTICAL space, never horizontal.
+    rendered font advance + padding with the SAME font used for painting;
+    tab thickness stays fixed so long names consume VERTICAL space, never
+    horizontal. The MIN/MAX clamps are a clickability floor (60 px) and
+    an extreme-scale ceiling (400 px) only — natural titles size
+    dynamically between them.
     """
 
     #: End margin (px) on each side of the rotated title inside the tab.
-    #: Height reservation = advance + 2 * _TEXT_MARGIN.
-    _TEXT_MARGIN = 12
+    #: Height reservation = advance + 2 * _TEXT_MARGIN (~16 px padding).
+    _TEXT_MARGIN = 8
 
     def __init__(self, title: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -299,18 +326,29 @@ class _ShelfTab(QPushButton):
         return font
 
     def refresh_metrics(self) -> None:
-        """Recompute tab height from the global font scale.
+        """Recompute tab geometry from the global font scale.
 
         Measured with a deterministically constructed pixel font (never
         the widget's own font: show()/repolish resets that to the
         stylesheet value at unpredictable times, which used to produce
-        wrong tab heights depending on test order / theme state).
-        Reservation = advance + 2 * _TEXT_MARGIN, clamped to
-        [MIN, MAX] so the longest title ("Configuration Editor" at 150%
-        scale) still fits while short titles stay clickable.
+        wrong tab heights depending on test order / theme state) — the
+        SAME font ``paintEvent`` renders with. Reservation = advance +
+        2 * _TEXT_MARGIN (~16 px padding), floored at PANEL_TAB_MIN_HEIGHT
+        so short titles stay clickable and capped at PANEL_TAB_MAX_HEIGHT
+        only for extreme scales; long titles (e.g. "Configuration Editor")
+        always fit completely.
+
+        Re-asserts the FULL fixed geometry (width + height) every time:
+        a stylesheet (un)polish — e.g. via ``set_variant`` repolish or a
+        theme switch — rewrites the widget's minimum sizes from the QSS
+        ``min-height: 0px`` rule and silently breaks the fixed height set
+        here, collapsing the tab to its ~6 px empty-text size hint. This
+        method must therefore run AFTER the last polish on every visual
+        transition (see ``_sync_shelf_tab`` and ``changeEvent``).
         """
         from PyQt6.QtGui import QFontMetrics
 
+        self.setFixedWidth(PANEL_TAB_WIDTH)
         try:
             advance = QFontMetrics(self._tab_font()).horizontalAdvance(
                 self._tab_title
@@ -325,11 +363,11 @@ class _ShelfTab(QPushButton):
         )
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        """Re-assert the fixed height on show.
+        """Re-assert the fixed geometry on show.
 
         Showing a widget while a QSS theme is active clamps its explicit
-        minimum height down to the style minimum (verified empirically);
-        re-applying here keeps the compact tab height exact. Idempotent.
+        minimum sizes down to the style minimum (verified empirically);
+        re-applying here keeps the floating tab geometry exact. Idempotent.
         """
         try:
             self.refresh_metrics()
@@ -337,45 +375,90 @@ class _ShelfTab(QPushButton):
             pass
         super().showEvent(event)
 
+    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Re-assert the fixed geometry after stylesheet repolishes.
+
+        A theme switch (un)polishes every widget, which rewrites this
+        tab's minimum sizes from the QSS ``min-height`` rule and would
+        otherwise collapse it to its ~6 px empty-text size hint until the
+        next panel transition. Re-applying on StyleChange keeps the
+        minimized tab pixel-identical across theme switches. Idempotent;
+        never touches the canonical title.
+        """
+        super().changeEvent(event)
+        try:
+            if event is not None and event.type() == QEvent.Type.StyleChange:
+                self.refresh_metrics()
+        except Exception:
+            pass
+
+    def enterEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Repaint for the hover state (floating-tab hover tint)."""
+        try:
+            self.update()
+        except Exception:
+            pass
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Repaint back to the resting floating-tab look."""
+        try:
+            self.update()
+        except Exception:
+            pass
+        super().leaveEvent(event)
+
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        from PyQt6.QtGui import QPainter
-        from PyQt6.QtWidgets import QStyle, QStyleOptionButton
+        from PyQt6.QtGui import QColor, QPainter
 
         painter = QPainter(self)
-        option = QStyleOptionButton()
-        self.initStyleOption(option)
-        option.text = ""  # bevel only; text is drawn rotated below
-        self.style().drawControl(
-            QStyle.ControlElement.CE_PushButton, option, painter, self
-        )
-        # ONE rotated string (never per-character, never elided): the
-        # canonical title renders identically collapsed/open/pinned.
-        painter.save()
         try:
-            palette = self.palette()
-            if self.isChecked():
-                color = palette.color(palette.ColorRole.HighlightedText)
-                if color.alpha() == 0:
-                    color = palette.color(palette.ColorRole.Highlight)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            # Floating light-industrial tab: own visual language, never a
+            # button bevel inside a dark rail. State only changes
+            # background/border/text-color — never the title string.
+            if self.isDown():
+                background = QColor(_SHELF_TAB_BG_PRESSED)
+                border = QColor(_SHELF_TAB_BG_PRESSED)
+                text_color = QColor(_SHELF_TAB_TEXT_PRESSED)
+            elif self.underMouse():
+                background = QColor(_SHELF_TAB_BG_HOVER)
+                border = QColor(_SHELF_TAB_BORDER)
+                text_color = QColor(_SHELF_TAB_TEXT)
             else:
-                color = palette.color(palette.ColorRole.ButtonText)
-            painter.setPen(color)
-            painter.setFont(self._tab_font())
-            # Bottom-to-top vertical text, centered on the tab: after the
-            # transform, +x runs up the widget and +y runs across it.
-            painter.translate(0, self.height())
-            painter.rotate(-90)
-            margin = self._TEXT_MARGIN
-            painter.drawText(
-                margin,
-                0,
-                max(0, self.height() - 2 * margin),
-                PANEL_TAB_WIDTH,
-                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
-                self.displayed_text,
+                background = QColor(_SHELF_TAB_BG)
+                border = QColor(_SHELF_TAB_BORDER)
+                text_color = QColor(_SHELF_TAB_TEXT)
+            rect = self.rect().adjusted(1, 1, -1, -1)
+            painter.setPen(border)
+            painter.setBrush(background)
+            painter.drawRoundedRect(
+                rect, _SHELF_TAB_RADIUS, _SHELF_TAB_RADIUS
             )
+            # ONE rotated string (never per-character, never elided): the
+            # canonical title renders identically in every shelf state.
+            painter.save()
+            try:
+                painter.setPen(text_color)
+                painter.setFont(self._tab_font())
+                # Bottom-to-top vertical text, centered on the tab: after
+                # the transform, +x runs up the widget and +y runs across.
+                painter.translate(0, self.height())
+                painter.rotate(-90)
+                margin = self._TEXT_MARGIN
+                painter.drawText(
+                    margin,
+                    0,
+                    max(0, self.height() - 2 * margin),
+                    PANEL_TAB_WIDTH,
+                    Qt.AlignmentFlag.AlignHCenter
+                    | Qt.AlignmentFlag.AlignVCenter,
+                    self.displayed_text,
+                )
+            finally:
+                painter.restore()
         finally:
-            painter.restore()
+            painter.end()
 
 
 class _SidePanel:
@@ -591,6 +674,11 @@ class ConfigurationModeWidget(QWidget):
         # Dirty state tracking for camera-specific configurations
         self._dirty_camera_configs: set[str] = set()
         self._pending_camera_switch: str | None = None
+        # Side-shelf auto-hide: re-entrancy guard for the click-outside
+        # handler plus a one-shot flag for the menu-bar filter install
+        # (the window only exists once shown; see showEvent).
+        self._in_autohide = False
+        self._menu_filter_installed = False
 
         # --- Camera lifecycle (Part 3: explicit state machine + sessions) ---
         # The lifecycle state is the authority; button enablement follows it
@@ -754,7 +842,9 @@ class ConfigurationModeWidget(QWidget):
         self._side_splitter.setStretchFactor(0, 0)
         self._side_splitter.setStretchFactor(1, 1)
         self._side_splitter.setStretchFactor(2, 0)
-        center_widget.installEventFilter(self)
+        # Center presses funnel into the click-outside auto-hide handler
+        # (filters installed on all outside areas in
+        # _install_outside_press_filters at the end of setup).
 
         # RIGHT: independent analysis/control tools, stacked vertically
         # from top to bottom inside the right shelf. No dragging,
@@ -823,6 +913,14 @@ class ConfigurationModeWidget(QWidget):
         self._restore_shelf_state()
         # Apply the persisted global font scale to shelf/header metrics.
         self.refresh_font_metrics()
+        # Click-outside auto-hide: watch every panel-free outside area
+        # (center workspace, top bar, both shelf edges). Presses there
+        # minimize open unpinned panels; presses inside panels never reach
+        # these filters, so no position math or propagation tracking is
+        # needed. The menu bar is covered once the window exists
+        # (see showEvent). Filters never consume events: the clicked
+        # control still receives them (no flicker, no timers).
+        self._install_outside_press_filters()
 
         # --- Bottom: Status bar ---
         self._create_status_bar(main_layout)
@@ -908,13 +1006,15 @@ class ConfigurationModeWidget(QWidget):
     )
 
     def _build_shelf_rail(self, tag: str = "") -> tuple[QWidget, QVBoxLayout]:
-        """Narrow vertical-tab rail (PANEL_SHELF_WIDTH px wide).
+        """Transparent shelf edge hosting floating minimized tabs.
 
-        Holds one vertical tab per side panel; the camera workspace keeps
-        maximum width. Sizing comes from the PANEL_* module constants.
+        The shelf is NOT a solid rectangular rail: it is a transparent
+        strip on the window edge from which individual floating tabs
+        (PANEL_TAB_WIDTH px thick, spaced PANEL_TAB_SPACING px apart)
+        protrude. Sizing comes from the PANEL_* module constants.
 
         The TAB LIST scrolls inside an outer QScrollArea (vertical only,
-        as-needed): when many panels exist the rail scrolls instead of
+        as-needed): when many panels exist the shelf scrolls instead of
         compressing tabs until their names become unreadable. Scrolling
         never alters tab content — the canonical title paints identically
         in every state. The returned layout is the scrollable host layout
@@ -924,7 +1024,6 @@ class ConfigurationModeWidget(QWidget):
 
         rail = QWidget()
         rail.setFixedWidth(PANEL_SHELF_WIDTH)
-        set_role(rail, "toolbar")
         rail.setProperty("shelfRail", True)
         outer = QVBoxLayout(rail)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -1027,8 +1126,8 @@ class ConfigurationModeWidget(QWidget):
         header.setObjectName(f"cfg_panel_header_{key}")
         header.setProperty("panelHeader", True)
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(6, 2, 2, 2)
-        header_layout.setSpacing(2)
+        header_layout.setContentsMargins(8, 4, 4, 4)
+        header_layout.setSpacing(4)
         title_label = QLabel(title)
         title_label.setObjectName(f"cfg_panel_title_{key}")
         title_label.setProperty("panelTitle", True)
@@ -1053,11 +1152,11 @@ class ConfigurationModeWidget(QWidget):
         pin.setFixedSize(PANEL_PIN_SIZE, PANEL_PIN_SIZE)
         pin.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         pin.setFlat(True)  # icon only: no large square background
+        pin.setProperty("pinButton", True)  # central icon-only pin styling
         from PyQt6.QtCore import QSize as _QSize
 
         pin.setIconSize(_QSize(PANEL_PIN_ICON_SIZE, PANEL_PIN_ICON_SIZE))
         pin.setToolTip("Pin panel")
-        set_variant(pin, "ghost")
         pin.clicked.connect(
             lambda _checked=False, panel_key=key: self._toggle_pin(panel_key)
         )
@@ -1101,8 +1200,7 @@ class ConfigurationModeWidget(QWidget):
         )
         record.tab = tab
         self._side_panels[key] = record
-        self._sync_pin_button(record)
-        self._sync_shelf_tab(record)
+        self._sync_panel_visual_state(record)
         return record
 
     def side_panels(self) -> dict[str, "_SidePanel"]:
@@ -1114,15 +1212,22 @@ class ConfigurationModeWidget(QWidget):
         self.set_panel_open(key, True)
 
     def set_panel_open(self, key: str, open: bool, *, persist: bool = True) -> None:
-        """Show/hide a panel without destroying its widget or state."""
+        """Show/hide a panel without destroying its widget or state.
+
+        Opening hides that panel's shelf tab (the open panel's header
+        carries the full title); closing returns the tab to the shelf.
+        Other panels are untouched, so View-menu/programmatic opens can
+        stack multiple panels; shelf-click exclusivity lives in
+        :meth:`_on_shelf_tab`.
+        """
         record = self._side_panels.get(key)
         if record is None or record.wrapper is None:
             return
-        record.wrapper.setVisible(bool(open))
-        self._sync_shelf_tab(record)
-        action = self._panel_view_actions.get(key)
-        if action is not None:
-            action.setChecked(bool(open))
+        try:
+            record.wrapper.setVisible(bool(open))
+        except RuntimeError:
+            return
+        self._sync_panel_visual_state(record)
         self._update_side_container(record.side)
         if persist:
             self._save_shelf_state()
@@ -1154,45 +1259,113 @@ class ConfigurationModeWidget(QWidget):
         self._save_shelf_state()
 
     def _on_shelf_tab(self, key: str) -> None:
-        """Shelf tab click toggles that panel (pin state untouched)."""
+        """Shelf tab click opens that panel (pin state untouched).
+
+        Opening via the shelf minimizes every other open UNPINNED panel
+        first (its tab returns to the shelf), so the newly opened panel
+        replaces it; PINNED panels stay open, allowing several pinned
+        panels to coexist. Closing an open panel (programmatic toggle)
+        returns its tab to the shelf.
+        """
         record = self._side_panels.get(key)
         if record is None:
             return
-        self.set_panel_open(key, not record.is_open())
+        if record.is_open():
+            self.set_panel_open(key, False)
+            return
+        for other in self._side_panels.values():
+            if (
+                other.key != key
+                and other.wrapper is not None
+                and other.is_open()
+                and not other.pinned
+            ):
+                self.set_panel_open(other.key, False, persist=False)
+        self.set_panel_open(key, True)
+
+    def _sync_panel_visual_state(self, record: "_SidePanel") -> None:
+        """Authoritative shelf/panel/pin synchronization for one panel.
+
+        ``record.is_open()`` + ``record.pinned`` determine everything:
+
+        - open: shelf tab physically hidden, wrapper shown (pinned panels
+          stay open; unpinned panels are auto-hide eligible).
+        - minimized: shelf tab visible with the full name, wrapper hidden.
+        - pin icon + tooltip reflect ``pinned``; the View-menu action
+          mirrors ``is_open()``.
+
+        The canonical title string is never touched here.
+        """
+        self._sync_shelf_tab(record)
+        self._sync_pin_button(record)
+        try:
+            action = self._panel_view_actions.get(record.key)
+        except AttributeError:
+            action = None
+        if action is not None:
+            try:
+                action.setChecked(bool(record.is_open()))
+            except RuntimeError:
+                pass
 
     def _sync_shelf_tab(self, record: "_SidePanel") -> None:
-        """Reflect panel visibility on its rail tab (theme system only).
+        """Reflect panel visibility on its shelf tab (never the title).
 
-        Visual state only (background/border/text-color via variant +
-        checked flag): the canonical tab title string is never touched,
-        so collapsed/open/pinned all render the identical full name.
-        Collapsed uses ``outline`` (neutral grey surface + grey border +
-        dark text — ThermoView unselected) rather than ``ghost``
-        (transparent, too faint for a 32 px rail); open uses ``accent``
-        (compact blue/grey selected).
+        An OPEN panel's tab is physically hidden (``setVisible(False)``)
+        — the open panel itself represents it. A MINIMIZED panel's tab is
+        shown with its full fixed floating-tab geometry explicitly
+        restored: ``set_variant`` repolishes the widget, and that polish
+        rewrites the tab's minimum sizes from the QSS ``min-height`` rule
+        (verified: min-height 186 -> 6 px), so ``refresh_metrics`` must run
+        AFTER it — otherwise a tab returning to the shelf collapses to a
+        small horizontal box instead of its vertical floating-tab shape.
+        The checked flag is a compat mirror only; the canonical tab title
+        string is never touched, so minimized/open/pinned all carry the
+        identical full name.
         """
         if record.tab is None:
             return
-        is_open = record.is_open()
-        record.tab.setChecked(is_open)
-        set_variant(record.tab, "accent" if is_open else "outline")
+        is_open = bool(record.is_open())
+        try:
+            record.tab.setVisible(not is_open)
+        except RuntimeError:
+            return
+        try:
+            if record.tab.isChecked() != is_open:
+                record.tab.setChecked(is_open)
+        except RuntimeError:
+            pass
+        try:
+            set_variant(record.tab, "accent" if is_open else "outline")
+        except RuntimeError:
+            pass
+        # LAST write wins: re-assert the fixed floating-tab geometry after
+        # the repolish above (and after showEvent's own refresh, which runs
+        # before this when the tab becomes visible).
+        try:
+            record.tab.refresh_metrics()
+        except (RuntimeError, AttributeError):
+            pass
 
     def _sync_pin_button(self, record: "_SidePanel") -> None:
         """Reflect pinned state on the panel header pin control.
 
-        Real drawn icons (never bare Unicode): filled accent pin when
-        pinned, hollow gray pin when unpinned — immediately distinct at
-        PANEL_PIN_SIZE px with icon + tooltip (+ hover/pressed from the
-        flat theme button).
+        Real drawn icons (never bare Unicode): muted steel-blue pin when
+        pinned, neutral grey outline pin when unpinned — immediately
+        distinct at PANEL_PIN_ICON_SIZE px with icon + tooltip. The
+        button itself stays a flat icon-only control (no large square):
+        state comes from the icon, never from a button background.
         """
         if record.pin_button is None:
             return
-        record.pin_button.setText("")
-        record.pin_button.setIcon(_make_pin_icon(bool(record.pinned)))
-        set_variant(record.pin_button, "accent" if record.pinned else "ghost")
-        record.pin_button.setToolTip(
-            "Unpin panel" if record.pinned else "Pin panel"
-        )
+        try:
+            record.pin_button.setText("")
+            record.pin_button.setIcon(_make_pin_icon(bool(record.pinned)))
+            record.pin_button.setToolTip(
+                "Unpin panel" if record.pinned else "Pin panel"
+            )
+        except RuntimeError:
+            pass
 
     def _update_side_container(self, side: str) -> None:
         """Show a side container iff at least one of its panels is open."""
@@ -1270,38 +1443,106 @@ class ConfigurationModeWidget(QWidget):
                 continue
 
     def _collapse_unpinned(self) -> None:
-        """Auto-hide: collapse every open, unpinned panel (state kept)."""
-        changed = False
-        for record in self._side_panels.values():
-            if record.is_open() and not record.pinned:
-                record.wrapper.setVisible(False)
-                self._sync_shelf_tab(record)
-                action = self._panel_view_actions.get(record.key)
-                if action is not None:
-                    action.setChecked(False)
-                changed = True
-        if changed:
-            self._update_side_container("left")
-            self._update_side_container("right")
-            self._save_shelf_state()
+        """Auto-hide: minimize every open, unpinned panel (state kept).
+
+        Each minimized panel's tab returns to the shelf via the
+        authoritative sync path; pinned panels are untouched. Idempotent
+        and re-entrancy guarded (the click-outside handler funnels here).
+        """
+        if getattr(self, "_in_autohide", False):
+            return
+        self._in_autohide = True
+        try:
+            changed = False
+            for record in self._side_panels.values():
+                if (
+                    record.wrapper is not None
+                    and record.is_open()
+                    and not record.pinned
+                ):
+                    try:
+                        record.wrapper.setVisible(False)
+                    except RuntimeError:
+                        continue
+                    self._sync_panel_visual_state(record)
+                    changed = True
+            if changed:
+                self._update_side_container("left")
+                self._update_side_container("right")
+                self._save_shelf_state()
+        finally:
+            self._in_autohide = False
+
+    def _install_outside_press_filters(self) -> None:
+        """Watch every panel-free outside area for click-outside presses.
+
+        Installs this widget as the event filter on the center workspace,
+        the top bar and both shelf edges — recursively, so buttons, image
+        widgets and shelf tabs are covered too. None of these subtrees
+        contains a panel wrapper, so ANY mouse press reaching them is by
+        construction outside every panel: no position math and no
+        propagation tracking is needed (presses inside panels live in the
+        side containers, which are deliberately NOT watched — an ignored
+        press propagating up from panel content must never read as an
+        outside click). The event is never consumed.
+        """
+        roots: list[QWidget] = [
+            root
+            for root in (
+                getattr(self, "_center_widget", None),
+                getattr(self, "_top_bar", None),
+                getattr(self, "_left_rail", None),
+                getattr(self, "_right_rail", None),
+            )
+            if isinstance(root, QWidget)
+        ]
+        seen: set[int] = set()
+        for root in roots:
+            try:
+                candidates = [root] + list(root.findChildren(QWidget))
+            except RuntimeError:
+                continue
+            for candidate in candidates:
+                if id(candidate) in seen:
+                    continue
+                seen.add(id(candidate))
+                try:
+                    candidate.installEventFilter(self)
+                except RuntimeError:
+                    continue
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Cover the menu bar once the top-level window exists."""
+        super().showEvent(event)
+        if getattr(self, "_menu_filter_installed", False):
+            return
+        try:
+            window = self.window()
+            menu_bar = window.menuBar() if hasattr(window, "menuBar") else None
+        except RuntimeError:
+            return
+        if menu_bar is None:
+            return
+        try:
+            menu_bar.installEventFilter(self)
+            self._menu_filter_installed = True
+        except RuntimeError:
+            pass
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt override)
-        """Dismiss unpinned panels when the user clicks back to work.
+        """Auto-hide open unpinned panels on outside mouse presses.
 
-        Only while the IR view is fitted (no pan gesture possible there,
-        so the press cannot be the start of a drag); zoomed presses are
-        left alone for panning.
+        Only panel-free outside areas are watched (see
+        :meth:`_install_outside_press_filters`), so every press here
+        minimizes open unpinned panels while inside presses and pin
+        clicks never arrive. Never consumes events and never uses timers
+        (no flicker, no recursion: collapsing emits no clicks).
         """
         try:
-            if (
-                watched is self._center_widget
-                and event.type() == QEvent.Type.MouseButtonPress
-                and self._image_widget is not None
-                and self._image_widget.is_fit()
-            ):
+            if event is not None and event.type() == QEvent.Type.MouseButtonPress:
                 self._collapse_unpinned()
         except Exception:
-            logger.debug("Center-press auto-hide failed", exc_info=True)
+            logger.debug("Shelf event-filter failed", exc_info=True)
         return super().eventFilter(watched, event)
 
     def panel_toggle_actions(self) -> list[QAction]:
@@ -1353,13 +1594,20 @@ class ConfigurationModeWidget(QWidget):
             logger.debug("Shelf state save failed", exc_info=True)
 
     def _restore_shelf_state(self) -> None:
-        """Restore pins/open/widths/IR-VL/zoom, falling back to defaults."""
+        """Restore pins/open/widths/IR-VL/zoom, falling back to defaults.
+
+        Fresh startup (no persisted state) minimizes everything: all
+        panels closed, all unpinned, every shelf tab visible. Restored
+        state always funnels through the authoritative sync path, so a
+        minimized panel never loses its shelf tab and an open panel never
+        keeps one.
+        """
         try:
             settings = QSettings(_DOCK_SETTINGS_ORG, _DOCK_SETTINGS_APP)
             pins = settings.value("shelf_pins_v1", None)
             opened = settings.value("shelf_open_v1", None)
             if pins is None and opened is None:
-                pins, opened = ["camera_control"], ["camera_control", "temp_scale"]
+                pins, opened = [], []
             if isinstance(pins, str):
                 pins = [pins]
             if isinstance(opened, str):
@@ -1368,9 +1616,12 @@ class ConfigurationModeWidget(QWidget):
             opened = set(opened or [])
             for key, record in self._side_panels.items():
                 record.pinned = key in pins
-                self._sync_pin_button(record)
-                record.wrapper.setVisible(key in opened)
-                self._sync_shelf_tab(record)
+                if record.wrapper is not None:
+                    try:
+                        record.wrapper.setVisible(key in opened)
+                    except RuntimeError:
+                        pass
+                self._sync_panel_visual_state(record)
             self._update_side_container("left")
             self._update_side_container("right")
             split_state = settings.value("shelf_split_v1", None)

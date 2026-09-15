@@ -180,8 +180,15 @@ QWidget[role="toolbar"] {{
     border-bottom: {bw}px solid {defn.border};
 }}
 QWidget[shelfRail="true"] {{
-    background-color: {defn.surface_alt};
-    border-right: {bw}px solid {defn.border};
+    background-color: transparent;
+    border: none;
+}}
+QScrollArea[shelfScroll="true"] {{
+    background-color: transparent;
+    border: none;
+}}
+QScrollArea[shelfScroll="true"] QWidget {{
+    background-color: transparent;
 }}
 
 /* ----- side-panel headers (Configuration shelves) ----- */
@@ -194,24 +201,52 @@ QLabel[panelTitle="true"] {{
     font-weight: bold;
 }}
 
-/* ----- side-shelf vertical tabs (Configuration shelves) ----- */
-/* ThermoView-style: light neutral grey, thin grey border, small dark
-   text, minimal padding, near-rectangular (2 px) corners. Selected
-   emphasis comes from the variant rules below (accent = open,
-   outline/ghost = collapsed); weight stays normal in every state so
-   the advance never changes after selection. min-height/min-width 0
-   so the fixed tab geometry (PANEL_* constants) is never clamped by
-   the generic button rule. */
+/* ----- side-shelf floating tabs (Configuration shelves) ----- */
+/* Shelf-specific light-industrial tool-strip look (fixed palette so the
+   shelf stays light and readable in every theme; the global theme and
+   accent are untouched): very light neutral tab, subtle grey border,
+   small dark-charcoal 10 pt text, restrained 4 px corners (industrial,
+   not pill-shaped). Weight stays normal in every state so the advance
+   never changes after selection. min-height/min-width 0 so the fixed
+   tab geometry (PANEL_* constants) is never clamped by the generic
+   button rule. The tab itself is custom-painted to match; these rules
+   keep the QSS state identical for any non-painted context. */
 QPushButton[shelfTab="true"] {{
     font-size: {fs_shelf_tab}px;
     font-weight: normal;
-    background-color: {defn.surface};
-    color: {defn.text};
-    border: {bw}px solid {defn.border};
-    border-radius: 2px;
+    background-color: #EFF1F4;
+    color: #23272C;
+    border: 1px solid #BCC4CC;
+    border-radius: 4px;
     padding: 2px;
     min-height: 0px;
     min-width: 0px;
+}}
+QPushButton[shelfTab="true"]:hover {{
+    background-color: #DFE4EA;
+    border-color: #BCC4CC;
+    color: #23272C;
+}}
+QPushButton[shelfTab="true"]:pressed {{
+    background-color: #607D8B;
+    border-color: #607D8B;
+    color: #FFFFFF;
+}}
+
+/* ----- shelf pin buttons (icon-only, state carried by the icon) ----- */
+QPushButton[pinButton="true"] {{
+    background-color: transparent;
+    border: none;
+    border-radius: 2px;
+    padding: 0px;
+    min-height: 0px;
+    min-width: 0px;
+}}
+QPushButton[pinButton="true"]:hover {{
+    background-color: #DFE4EA;
+}}
+QPushButton[pinButton="true"]:pressed {{
+    background-color: #CBD2D9;
 }}
 
 /* ----- buttons ----- */
@@ -337,41 +372,41 @@ QPushButton[dirty="true"]:hover {{
 }}
 
 /* ----- side-shelf selected/collapsed (higher specificity wins) ----- */
-/* Open: compact blue/grey fill + light text. Collapsed (outline/ghost):
-   neutral grey surface + grey border + dark text (ThermoView). Weight
-   stays normal in both so selecting a tab never changes its advance
-   (the previous "..." clipping came from accent-bold widening the text
-   beyond the fixed tab height). */
+/* Open tabs are physically hidden while their panel is open, so the
+   accent rule below only shows transiently (press) — a muted
+   steel-blue matching the custom paint. Minimized (outline/ghost)
+   tabs keep the floating light-tab look. Weight stays normal in both
+   so selecting a tab never changes its advance. */
 QPushButton[shelfTab="true"][variant="accent"] {{
-    background-color: {defn.accent};
-    color: {defn.text_on_filled};
-    border: {bw}px solid {defn.accent};
+    background-color: #607D8B;
+    color: #FFFFFF;
+    border: 1px solid #607D8B;
     font-weight: normal;
 }}
 QPushButton[shelfTab="true"][variant="accent"]:hover {{
-    background-color: {defn.accent_hover};
-    border-color: {defn.accent_hover};
+    background-color: #546E7A;
+    border-color: #546E7A;
 }}
 QPushButton[shelfTab="true"][variant="outline"] {{
-    background-color: {defn.surface};
-    color: {defn.text};
-    border: {bw}px solid {defn.border};
+    background-color: #EFF1F4;
+    color: #23272C;
+    border: 1px solid #BCC4CC;
     font-weight: normal;
 }}
 QPushButton[shelfTab="true"][variant="outline"]:hover {{
-    background-color: {defn.surface_alt};
-    border-color: {defn.focus_ring};
+    background-color: #DFE4EA;
+    border-color: #BCC4CC;
 }}
 QPushButton[shelfTab="true"][variant="ghost"] {{
-    background-color: {defn.surface};
-    color: {defn.text};
-    border: {bw}px solid {defn.border};
+    background-color: #EFF1F4;
+    color: #23272C;
+    border: 1px solid #BCC4CC;
     font-weight: normal;
 }}
 QPushButton[shelfTab="true"][variant="ghost"]:hover {{
-    background-color: {defn.surface_alt};
-    border-color: {defn.focus_ring};
-    color: {defn.text};
+    background-color: #DFE4EA;
+    border-color: #BCC4CC;
+    color: #23272C;
 }}
 QPushButton[shelfTab="true"]:hover {{
     border-color: {defn.focus_ring};
