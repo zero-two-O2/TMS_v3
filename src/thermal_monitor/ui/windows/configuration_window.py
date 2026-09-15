@@ -28,14 +28,13 @@ import threading
 import time
 from typing import Optional
 
-from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal, pyqtSlot, QSettings
+from PyQt6.QtCore import Qt, QThread, QTimer, QObject, pyqtSignal, pyqtSlot, QSettings, QEvent
 from PyQt6.QtWidgets import (
     QMainWindow,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QSplitter,
-    QTabWidget,
     QStatusBar,
     QMessageBox,
     QFrame,
@@ -44,8 +43,8 @@ from PyQt6.QtWidgets import (
     QMenu,
     QApplication,
     QDialog,
-    QDockWidget,
     QPushButton,
+    QSizePolicy,
 )
 from PyQt6.QtGui import QColor, QAction
 
@@ -118,6 +117,107 @@ _UNIT_SYMBOLS = {
     "fahrenheit": "°F",
     "kelvin": "K",
 }
+
+
+class _ShelfTab(QPushButton):
+    """One narrow vertical tab on a side shelf rail (~28 px wide).
+
+    Checkable: checked = its panel is open. Plain Qt widget painting
+    (rotated text over the standard button bevel) — no custom docking
+    framework, no stylesheets; emphasis comes from the theme variant
+    (accent = open, ghost = collapsed) plus the palette text color.
+    """
+
+    _RAIL_WIDTH = 28
+
+    def __init__(self, title: str, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._tab_title = title
+        self.setCheckable(True)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setToolTip(title)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.setFixedWidth(self._RAIL_WIDTH)
+        metrics = self.fontMetrics()
+        self.setFixedHeight(
+            min(160, max(76, metrics.horizontalAdvance(title) + 18))
+        )
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        from PyQt6.QtGui import QPainter
+        from PyQt6.QtWidgets import QStyle, QStyleOptionButton
+
+        painter = QPainter(self)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = ""  # bevel only; text is drawn rotated below
+        self.style().drawControl(
+            QStyle.ControlElement.CE_PushButton, option, painter, self
+        )
+        painter.save()
+        try:
+            palette = self.palette()
+            if self.isChecked():
+                color = palette.color(palette.ColorRole.HighlightedText)
+                if color.alpha() == 0:
+                    color = palette.color(palette.ColorRole.Highlight)
+            else:
+                color = palette.color(palette.ColorRole.ButtonText)
+            painter.setPen(color)
+            # Bottom-to-top vertical text, centered on the rail: after the
+            # transform, +x runs up the widget and +y runs across it.
+            painter.translate(0, self.height())
+            painter.rotate(-90)
+            painter.drawText(
+                8,
+                0,
+                max(0, self.height() - 16),
+                self._RAIL_WIDTH,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                self._tab_title,
+            )
+        finally:
+            painter.restore()
+
+
+class _SidePanel:
+    """One tool panel docked inside its side shelf (never floating).
+
+    The content widget is reparented into the wrapper (never copied or
+    recreated), so collapsing/expanding preserves all panel state.
+    There is deliberately no close button, no float, no drag handle:
+    visibility is driven by the shelf tab + pin only.
+    """
+
+    __slots__ = (
+        "key",
+        "title",
+        "content",
+        "side",
+        "wrapper",
+        "pin_button",
+        "tab",
+        "pinned",
+    )
+
+    def __init__(self, key: str, title: str, content: QWidget, side: str) -> None:
+        self.key = key
+        self.title = title
+        self.content = content
+        self.side = side  # "left" | "right"
+        self.wrapper: QFrame | None = None
+        self.pin_button: QPushButton | None = None
+        self.tab: _ShelfTab | None = None
+        self.pinned = False
+
+    def is_open(self) -> bool:
+        """True while the panel wrapper is shown (state flag, not on-screen).
+
+        Uses the explicit hidden flag so the answer does not depend on
+        ancestor visibility (container / splitter / window): opening a
+        panel sets the flag even before the container is shown.
+        """
+        return self.wrapper is not None and not self.wrapper.isHidden()
 
 
 class FocusWorker(QObject):
@@ -347,24 +447,39 @@ class ConfigurationModeWidget(QWidget):
         self._toolbar.save_requested.connect(self._on_save_config)
         main_layout.addWidget(self._toolbar)
 
-        # --- Dock workstation host ---
-        # Native Qt docking: the IR/VL acquisition area is the central
-        # workspace; every tool panel is an independent QDockWidget that
-        # can be shown/hidden, docked, floated, dragged and reordered.
-        # Hiding a dock collapses it toward its screen edge (the center
-        # expands); the widget is hidden, never destroyed, so its state
-        # survives camera switches, reconnects and resizes.
-        self._dock_host = QMainWindow()
-        self._dock_host.setDockOptions(
-            QMainWindow.DockOption.AllowNestedDocks
-            | QMainWindow.DockOption.AllowTabbedDocks
-            | QMainWindow.DockOption.AnimatedDocks
-        )
-        self._dock_host.setDocumentMode(True)
-        main_layout.addWidget(self._dock_host, 1)
-        self._docks: dict[str, QDockWidget] = {}
+        # --- Workstation row: thin shelf | panels | CENTER | panels | thin shelf
+        # Plain widgets only. Side panels live inside their shelf container
+        # and can never float, drag, tabify or cover the center: hiding a
+        # panel hides its widget (never destroyed), and the camera
+        # workspace expands to use the freed space.
+        work_row = QHBoxLayout()
+        work_row.setContentsMargins(0, 0, 0, 0)
+        work_row.setSpacing(0)
+        main_layout.addLayout(work_row, 1)
 
-        # LEFT DOCK: Image Acquisition panel (instrument panel)
+        self._left_rail, self._left_rail_layout = self._build_shelf_rail()
+        self._left_rail.setObjectName("cfg_left_shelf")
+        work_row.addWidget(self._left_rail)
+        self._side_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._side_splitter.setChildrenCollapsible(False)
+        self._side_splitter.setObjectName("cfg_side_splitter")
+        work_row.addWidget(self._side_splitter, 1)
+        self._right_rail, self._right_rail_layout = self._build_shelf_rail()
+        self._right_rail.setObjectName("cfg_right_shelf")
+        work_row.addWidget(self._right_rail)
+
+        self._left_container = self._build_side_container()
+        self._left_container.setObjectName("cfg_left_panels")
+        self._side_splitter.addWidget(self._left_container)
+        self._right_container = self._build_side_container()
+        self._right_container.setObjectName("cfg_right_panels")
+        # Center widget is inserted between the side containers below.
+        self._side_panels: dict[str, _SidePanel] = {}
+        self._panel_view_actions: dict[str, QAction] = {}
+        self._irvl_mode = "both"
+        self._ir_vl_split_saved = None
+
+        # LEFT: Image Acquisition panel (instrument panel)
         self._acq_panel = ImageAcquisitionPanel(self._theme)
         self._acq_panel.connect_requested.connect(self._on_connect)
         self._acq_panel.disconnect_requested.connect(self._on_disconnect)
@@ -394,20 +509,22 @@ class ConfigurationModeWidget(QWidget):
             id(self._acq_panel.focus_apply_button),
             self._acq_panel.focus_apply_button.isVisible(),
         )
-        # LEFT DOCK: Image Information panel (frame metadata; previously
-        # constructed nowhere — the widget existed but was never shown).
+        # LEFT: Image Information panel (frame metadata).
         self._frame_info_panel = FrameInfoPanel(self._theme)
-        self._register_dock(
-            "camera_control", "Camera Control", self._acq_panel, Qt.DockWidgetArea.LeftDockWidgetArea
+        self._register_side_panel(
+            "camera_control", "Camera Control", self._acq_panel, "left"
         )
-        self._register_dock(
-            "image_info", "Image Information", self._frame_info_panel, Qt.DockWidgetArea.LeftDockWidgetArea
+        self._register_side_panel(
+            "image_info", "Image Information", self._frame_info_panel, "left"
         )
 
         # CENTER: Large thermal + VL display (primary workspace).
-        # The painters letterbox with KeepAspectRatio, so dock resizing
-        # never stretches the 640x480 (4:3) image.
+        # The painters letterbox with KeepAspectRatio, so side shelves
+        # never stretch the 640x480 (4:3) image.
         center_widget = QWidget()
+        self._center_widget = center_widget
+        center_widget.setObjectName("cfg_center_workspace")
+        center_widget.setMinimumSize(320, 240)
         center_layout = QVBoxLayout(center_widget)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(0)
@@ -421,28 +538,36 @@ class ConfigurationModeWidget(QWidget):
         # IR (dominant) + VL side-by-side for the selected camera (Stage 8D/8E
         # dual-feed); the splitter preserves the thermal workspace priority.
         ir_vl_splitter = QSplitter(Qt.Orientation.Horizontal)
+        ir_vl_splitter.setObjectName("cfg_ir_vl_splitter")
         ir_vl_splitter.addWidget(self._image_widget)
         ir_vl_splitter.addWidget(self._vl_widget)
         ir_vl_splitter.setSizes([700, 420])
         ir_vl_splitter.setStretchFactor(0, 3)
         ir_vl_splitter.setStretchFactor(1, 2)
         center_layout.addWidget(ir_vl_splitter, 1)
+        self._ir_vl_splitter = ir_vl_splitter
         # Slim workspace bar on top (built after the image widgets exist
         # so its controls can wire straight to them).
         center_layout.insertWidget(0, self._build_workspace_bar())
+        # Center goes between the side containers; side-panel widths stay
+        # user-resizable (controlled) via this splitter only.
+        self._side_splitter.insertWidget(1, center_widget)
+        self._side_splitter.addWidget(self._right_container)
+        self._side_splitter.setStretchFactor(0, 0)
+        self._side_splitter.setStretchFactor(1, 1)
+        self._side_splitter.setStretchFactor(2, 0)
+        center_widget.installEventFilter(self)
 
-        self._dock_host.setCentralWidget(center_widget)
-
-        # RIGHT DOCKS: independent analysis/control tools, stacked
-        # vertically. The user can drag/reorder, tab, float or hide them;
-        # order is not hard-coded after construction.
+        # RIGHT: independent analysis/control tools, stacked vertically
+        # from top to bottom inside the right shelf. No dragging,
+        # floating or tabifying: order follows registration.
         self._scale_panel = ThermalScalePanel(self._theme)
         self._scale_panel.palette_changed.connect(self._on_palette_changed)
         self._scale_panel.auto_range_toggled.connect(self._on_auto_range_toggled)
         self._scale_panel.manual_range_applied.connect(self._on_apply_range)
         self._scale_panel.zoom_changed.connect(self._on_zoom_changed)
-        self._register_dock(
-            "temp_scale", "Temperature Scale", self._scale_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        self._register_side_panel(
+            "temp_scale", "Temperature Scale", self._scale_panel, "right"
         )
 
         # View Finder dock: a real navigation thumbnail showing the same
@@ -451,31 +576,31 @@ class ConfigurationModeWidget(QWidget):
         self._finder_widget = ViewFinderWidget()
         self._finder_widget.viewport_dragged.connect(self._on_finder_dragged)
         self._image_widget.view_changed.connect(self._sync_finder_viewport)
-        self._register_dock(
-            "view_finder", "View Finder", self._finder_widget, Qt.DockWidgetArea.RightDockWidgetArea
+        self._register_side_panel(
+            "view_finder", "View Finder", self._finder_widget, "right"
         )
 
-        # ROI dock
+        # ROI panel
         self._roi_panel = ROIPanel(self._config_service, self._theme)
         self._roi_panel.roi_selected.connect(self._on_roi_selected)
         self._roi_panel.roi_created.connect(self._on_roi_created)
         self._roi_panel.roi_updated.connect(self._on_roi_updated)
         self._roi_panel.roi_deleted.connect(self._on_roi_deleted)
-        self._register_dock(
-            "roi", "ROI", self._roi_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        self._register_side_panel(
+            "roi", "ROI", self._roi_panel, "right"
         )
 
-        # Alarm dock
+        # Alarm panel
         self._alarm_panel = AlarmPanel(self._config_service, self._theme)
         self._alarm_panel.alarm_selected.connect(self._on_alarm_selected)
-        self._register_dock(
-            "alarms", "Alarms", self._alarm_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        self._register_side_panel(
+            "alarms", "Alarms", self._alarm_panel, "right"
         )
 
-        # Statistics dock
+        # Statistics panel
         self._stats_panel = StatisticsPanel(self._theme)
-        self._register_dock(
-            "statistics", "Statistics", self._stats_panel, Qt.DockWidgetArea.RightDockWidgetArea
+        self._register_side_panel(
+            "statistics", "Statistics", self._stats_panel, "right"
         )
 
         # Configuration Editor dock (deployment config)
@@ -488,19 +613,16 @@ class ConfigurationModeWidget(QWidget):
             self._config_editor.config_saved.connect(self._on_config_saved)
             self._config_editor.config_error.connect(self._on_config_error)
             self._config_editor.restart_required.connect(self._on_restart_required)
-            self._register_dock(
+            self._register_side_panel(
                 "config_editor",
                 "Configuration Editor",
                 self._config_editor,
-                Qt.DockWidgetArea.RightDockWidgetArea,
+                "right",
             )
 
-        # Restore the user's previous dock arrangement (panels, positions,
-        # floating state). Panel widgets themselves are never recreated.
-        self._restore_dock_layout()
-
-        # Panel shelf: taskbar-like strip for restoring hidden docks.
-        self._build_panel_shelf(main_layout)
+        # Restore pins/open panels/widths/IR-VL/zoom. Panel widgets
+        # themselves are never recreated.
+        self._restore_shelf_state()
 
         # --- Bottom: Status bar ---
         self._create_status_bar(main_layout)
@@ -534,63 +656,237 @@ class ConfigurationModeWidget(QWidget):
 
         parent_layout.addWidget(status_frame)
 
-    # -- Dock workstation -------------------------------------------------
+    # -- Side shelves (pin / auto-hide workstation) -------------------------
 
-    def _register_dock(
-        self, key: str, title: str, widget: QWidget, area: Qt.DockWidgetArea
-    ) -> QDockWidget:
-        """Host ``widget`` in an independent dockable window.
+    _LEFT_ORDER = ("camera_control", "image_info")
+    _RIGHT_ORDER = (
+        "temp_scale",
+        "view_finder",
+        "roi",
+        "alarms",
+        "statistics",
+        "config_editor",
+    )
 
-        The panel widget is reparented into the dock (never copied), so
-        hiding/floating/moving the dock preserves all panel state. Docks
-        are closable (collapse toward their screen edge) but never
-        delete their widget on close.
+    def _build_shelf_rail(self) -> tuple[QWidget, QVBoxLayout]:
+        """Thin clickable rail (~30 px) holding one tab per side panel."""
+        rail = QWidget()
+        rail.setFixedWidth(_ShelfTab._RAIL_WIDTH + 4)
+        set_role(rail, "toolbar")
+        layout = QVBoxLayout(rail)
+        layout.setContentsMargins(2, 4, 2, 4)
+        layout.setSpacing(2)
+        layout.addStretch()
+        return rail, layout
+
+    def _build_side_container(self) -> QWidget:
+        """Host for one side's open panels, stacked vertically from the top.
+
+        Width is user-resizable via the side splitter only, within
+        controlled limits (spec: side panels may resize in width but
+        can never detach, float, or move outside their shelf).
         """
-        dock = QDockWidget(title, self._dock_host)
-        dock.setObjectName(f"cfg_dock_{key}")
-        dock.setWidget(widget)
-        dock.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-            | QDockWidget.DockWidgetFeature.DockWidgetClosable
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addStretch()
+        container.setVisible(False)
+        container.setMinimumWidth(200)
+        container.setMaximumWidth(460)
+        return container
+
+    def _register_side_panel(
+        self, key: str, title: str, content: QWidget, side: str
+    ) -> "_SidePanel":
+        """Dock a panel widget inside its side shelf (never floating).
+
+        The content widget is reparented into the wrapper (never copied
+        or recreated): collapsing/expanding preserves all panel state.
+        There is deliberately no close button, no float, no drag handle —
+        visibility is driven by the shelf tab + pin only.
+        """
+        record = _SidePanel(key, title, content, side)
+        wrapper = QFrame()
+        wrapper.setObjectName(f"cfg_panel_{key}")
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(0, 0, 0, 0)
+        wrapper_layout.setSpacing(0)
+        header = QWidget()
+        header.setObjectName(f"cfg_panel_header_{key}")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(2, 2, 2, 2)
+        header_layout.setSpacing(4)
+        pin = QPushButton("○")
+        pin.setObjectName(f"cfg_pin_{key}")
+        pin.setFixedSize(22, 22)
+        pin.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        pin.setToolTip("Pin panel (keep open)")
+        set_variant(pin, "ghost")
+        pin.clicked.connect(
+            lambda _checked=False, panel_key=key: self._toggle_pin(panel_key)
         )
-        self._dock_host.addDockWidget(area, dock)
-        self._docks[key] = dock
-        return dock
+        title_label = QLabel(title)
+        header_layout.addWidget(pin)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        wrapper_layout.addWidget(header)
+        wrapper_layout.addWidget(content, 1)
+        wrapper.setVisible(False)
+        record.wrapper = wrapper
+        record.pin_button = pin
+        container = self._left_container if side == "left" else self._right_container
+        container.layout().insertWidget(container.layout().count() - 1, wrapper)
+        rail_layout = self._left_rail_layout if side == "left" else self._right_rail_layout
+        tab = _ShelfTab(title)
+        tab.setObjectName(f"cfg_shelf_tab_{key}")
+        tab.clicked.connect(
+            lambda _checked=False, panel_key=key: self._on_shelf_tab(panel_key)
+        )
+        rail_layout.insertWidget(rail_layout.count() - 1, tab)
+        record.tab = tab
+        self._side_panels[key] = record
+        self._sync_pin_button(record)
+        self._sync_shelf_tab(record)
+        return record
 
-    def docks(self) -> dict[str, QDockWidget]:
-        """All dockable panels by key (workstation layout)."""
-        return dict(self._docks)
+    def side_panels(self) -> dict[str, "_SidePanel"]:
+        """All side-shelf panels by key (workstation layout)."""
+        return dict(self._side_panels)
 
-    def show_dock(self, key: str) -> None:
-        """Restore a hidden dock without recreating its panel state."""
-        dock = self._docks.get(key)
-        if dock is not None:
-            dock.show()
-            dock.raise_()
+    def open_panel(self, key: str) -> None:
+        """Open a panel, preserving its pinned state and widget state."""
+        self.set_panel_open(key, True)
 
-    def dock_toggle_actions(self) -> list[QAction]:
-        """Checkable View-menu actions bound to each dock (stable order)."""
+    def set_panel_open(self, key: str, open: bool, *, persist: bool = True) -> None:
+        """Show/hide a panel without destroying its widget or state."""
+        record = self._side_panels.get(key)
+        if record is None or record.wrapper is None:
+            return
+        record.wrapper.setVisible(bool(open))
+        self._sync_shelf_tab(record)
+        action = self._panel_view_actions.get(key)
+        if action is not None:
+            action.setChecked(bool(open))
+        self._update_side_container(record.side)
+        if persist:
+            self._save_shelf_state()
+
+    def set_panel_pinned(self, key: str, pinned: bool, *, persist: bool = True) -> None:
+        """Pin (stays open) or unpin (auto-hide eligible) a panel."""
+        record = self._side_panels.get(key)
+        if record is None:
+            return
+        record.pinned = bool(pinned)
+        self._sync_pin_button(record)
+        if persist:
+            self._save_shelf_state()
+
+    def _toggle_pin(self, key: str) -> None:
+        """Header pin click: pinned stays open; unpinned becomes dismissible.
+
+        Pinning a closed panel opens it (an invisible pinned panel would
+        be confusing); unpinning keeps the current open state — the panel
+        collapses on the next dismissal (own tab or workspace click).
+        """
+        record = self._side_panels.get(key)
+        if record is None:
+            return
+        pinned = not record.pinned
+        self.set_panel_pinned(key, pinned, persist=False)
+        if pinned and not record.is_open():
+            self.set_panel_open(key, True, persist=False)
+        self._save_shelf_state()
+
+    def _on_shelf_tab(self, key: str) -> None:
+        """Shelf tab click toggles that panel (pin state untouched)."""
+        record = self._side_panels.get(key)
+        if record is None:
+            return
+        self.set_panel_open(key, not record.is_open())
+
+    def _sync_shelf_tab(self, record: "_SidePanel") -> None:
+        """Reflect panel visibility on its rail tab (theme system only)."""
+        if record.tab is None:
+            return
+        is_open = record.is_open()
+        record.tab.setChecked(is_open)
+        set_variant(record.tab, "accent" if is_open else "ghost")
+
+    def _sync_pin_button(self, record: "_SidePanel") -> None:
+        """Reflect pinned state on the panel header pin control."""
+        if record.pin_button is None:
+            return
+        record.pin_button.setText("●" if record.pinned else "○")
+        set_variant(record.pin_button, "accent" if record.pinned else "ghost")
+        record.pin_button.setToolTip(
+            "Unpin panel (auto-hide)" if record.pinned else "Pin panel (keep open)"
+        )
+
+    def _update_side_container(self, side: str) -> None:
+        """Show a side container iff at least one of its panels is open."""
+        container = self._left_container if side == "left" else self._right_container
+        any_open = any(
+            record.is_open()
+            for record in self._side_panels.values()
+            if record.side == side
+        )
+        container.setVisible(any_open)
+
+    def _collapse_unpinned(self) -> None:
+        """Auto-hide: collapse every open, unpinned panel (state kept)."""
+        changed = False
+        for record in self._side_panels.values():
+            if record.is_open() and not record.pinned:
+                record.wrapper.setVisible(False)
+                self._sync_shelf_tab(record)
+                action = self._panel_view_actions.get(record.key)
+                if action is not None:
+                    action.setChecked(False)
+                changed = True
+        if changed:
+            self._update_side_container("left")
+            self._update_side_container("right")
+            self._save_shelf_state()
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt override)
+        """Dismiss unpinned panels when the user clicks back to work.
+
+        Only while the IR view is fitted (no pan gesture possible there,
+        so the press cannot be the start of a drag); zoomed presses are
+        left alone for panning.
+        """
+        try:
+            if (
+                watched is self._center_widget
+                and event.type() == QEvent.Type.MouseButtonPress
+                and self._image_widget is not None
+                and self._image_widget.is_fit()
+            ):
+                self._collapse_unpinned()
+        except Exception:
+            logger.debug("Center-press auto-hide failed", exc_info=True)
+        return super().eventFilter(watched, event)
+
+    def panel_toggle_actions(self) -> list[QAction]:
+        """Checkable View-menu actions bound to each panel (stable order)."""
         actions: list[QAction] = []
-        for key in (
-            "camera_control",
-            "image_info",
-            "temp_scale",
-            "view_finder",
-            "roi",
-            "alarms",
-            "statistics",
-            "config_editor",
-        ):
-            dock = self._docks.get(key)
-            if dock is not None:
-                action = dock.toggleViewAction()
-                action.setText(dock.windowTitle())
-                actions.append(action)
+        for key in self._LEFT_ORDER + self._RIGHT_ORDER:
+            record = self._side_panels.get(key)
+            if record is None:
+                continue
+            action = QAction(record.title, self)
+            action.setCheckable(True)
+            action.setChecked(record.is_open())
+            action.triggered.connect(
+                lambda checked=False, panel_key=key: self.set_panel_open(panel_key, checked)
+            )
+            actions.append(action)
+            self._panel_view_actions[key] = action
         return actions
 
-    def _save_dock_layout(self) -> None:
-        """Persist dock arrangement via QMainWindow saveState (no new system).
+    def _save_shelf_state(self) -> None:
+        """Persist pins/open/widths/IR-VL/zoom via QSettings (same scope).
 
         The workspace zoom/pan rides along in the same settings scope.
         A missing zoom restores as Fit; out-of-range values are clamped
@@ -598,25 +894,68 @@ class ConfigurationModeWidget(QWidget):
         """
         try:
             settings = QSettings(_DOCK_SETTINGS_ORG, _DOCK_SETTINGS_APP)
-            settings.setValue(_DOCK_SETTINGS_KEY, self._dock_host.saveState(1))
+            try:
+                settings.remove(_DOCK_SETTINGS_KEY)  # obsolete dock layout
+            except Exception:
+                pass
+            settings.setValue(
+                "shelf_pins_v1",
+                [key for key, record in self._side_panels.items() if record.pinned],
+            )
+            settings.setValue(
+                "shelf_open_v1",
+                [key for key, record in self._side_panels.items() if record.is_open()],
+            )
+            settings.setValue("shelf_split_v1", self._side_splitter.saveState())
+            settings.setValue("irvl_mode_v1", self._irvl_mode)
+            settings.setValue("irvl_split_v1", self._ir_vl_splitter.saveState())
             zoom = self._image_widget._zoom
             settings.setValue("workspace_zoom_v1", float(zoom) if zoom is not None else 0.0)
             pan = self._image_widget._pan_offset
             settings.setValue("workspace_pan_v1", [float(pan.x()), float(pan.y())])
         except Exception:
-            logger.debug("Dock layout save failed", exc_info=True)
+            logger.debug("Shelf state save failed", exc_info=True)
 
-    def _restore_dock_layout(self) -> None:
-        """Restore the previous dock arrangement, if one was saved."""
+    def _restore_shelf_state(self) -> None:
+        """Restore pins/open/widths/IR-VL/zoom, falling back to defaults."""
         try:
             settings = QSettings(_DOCK_SETTINGS_ORG, _DOCK_SETTINGS_APP)
-            state = settings.value(_DOCK_SETTINGS_KEY)
-            if state is not None:
-                self._dock_host.restoreState(state, 1)
+            pins = settings.value("shelf_pins_v1", None)
+            opened = settings.value("shelf_open_v1", None)
+            if pins is None and opened is None:
+                pins, opened = ["camera_control"], ["camera_control", "temp_scale"]
+            if isinstance(pins, str):
+                pins = [pins]
+            if isinstance(opened, str):
+                opened = [opened]
+            pins = set(pins or [])
+            opened = set(opened or [])
+            for key, record in self._side_panels.items():
+                record.pinned = key in pins
+                self._sync_pin_button(record)
+                record.wrapper.setVisible(key in opened)
+                self._sync_shelf_tab(record)
+            self._update_side_container("left")
+            self._update_side_container("right")
+            split_state = settings.value("shelf_split_v1", None)
+            if split_state is not None:
+                try:
+                    self._side_splitter.restoreState(split_state)
+                except Exception:
+                    pass
+            mode = settings.value("irvl_mode_v1", "both") or "both"
+            self.set_irvl_mode(mode if mode in ("ir", "vl", "both") else "both", persist=False)
+            irvl_split = settings.value("irvl_split_v1", None)
+            if irvl_split is not None and self._irvl_mode == "both":
+                try:
+                    self._ir_vl_splitter.restoreState(irvl_split)
+                except Exception:
+                    pass
             self._restore_workspace_zoom(settings)
+            self._refresh_irvl_buttons()
+            self._refresh_workspace_zoom()
         except Exception:
-            logger.debug("Dock layout restore failed", exc_info=True)
-        self._ensure_docks_visible()
+            logger.debug("Shelf state restore failed", exc_info=True)
 
     def _restore_workspace_zoom(self, settings: QSettings) -> None:
         """Restore persisted workspace zoom/pan, clamped to usable range."""
@@ -643,41 +982,14 @@ class ConfigurationModeWidget(QWidget):
             except Exception:
                 pass
 
-    def _ensure_docks_visible(self) -> None:
-        """Keep floating docks on a visible desktop after restore.
-
-        When screen geometry changed since the layout was saved, Qt may
-        restore a floating dock outside every screen. Such docks are
-        moved to the primary screen's available area; docked/tabbed
-        panels are always visible by construction and left alone.
-        """
-        try:
-            app = QApplication.instance()
-            screens = app.screens() if app is not None else []
-            if not screens:
-                return
-            available = [screen.availableGeometry() for screen in screens]
-            for dock in self._docks.values():
-                if not dock.isFloating():
-                    continue
-                geometry = dock.geometry()
-                if any(area.intersects(geometry) for area in available):
-                    continue
-                target = available[0]
-                dock.move(
-                    target.center().x() - dock.width() // 2,
-                    target.center().y() - dock.height() // 2,
-                )
-        except Exception:
-            logger.debug("Dock visibility rescue failed", exc_info=True)
-
-    # -- Central workspace bar (IR identity + zoom controls) ----------------
+    # -- Central workspace bar (IR/VL mode + zoom controls) ----------------
 
     def _build_workspace_bar(self) -> QWidget:
-        """Slim toolbar identifying the IR workspace with zoom controls.
+        """Slim toolbar: IR/VL workspace mode + zoom controls.
 
-        Controls drive the displayed view only (Fit / step / 1:1); the
-        VL feed keeps its own independent presentation. Theme variants
+        All controls drive the displayed view only (mode/zoom/pan); the
+        acquisition, SHM and processing paths are untouched, and the VL
+        feed keeps its own independent presentation. Theme variants
         only — no per-widget stylesheets.
         """
         bar = QFrame()
@@ -686,8 +998,27 @@ class ConfigurationModeWidget(QWidget):
         layout.setContentsMargins(8, 2, 8, 2)
         layout.setSpacing(4)
 
-        ir_label = QLabel("IR")
-        layout.addWidget(ir_label)
+        self._irvl_buttons: dict[str, QPushButton] = {}
+        for mode, text, tip in (
+            ("ir", "IR", "IR only"),
+            ("both", "IR+VL", "IR and VL side by side"),
+            ("vl", "VL", "VL only"),
+        ):
+            button = QPushButton(text)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            set_variant(button, "ghost")
+            button.clicked.connect(
+                lambda _checked=False, workspace_mode=mode: self.set_irvl_mode(workspace_mode)
+            )
+            layout.addWidget(button)
+            self._irvl_buttons[mode] = button
+
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(separator)
 
         self._zoom_out_btn = QPushButton("\u2212")  # minus sign
         self._zoom_out_btn.setToolTip("Zoom out (-)")
@@ -724,12 +1055,43 @@ class ConfigurationModeWidget(QWidget):
         layout.addWidget(self._zoom_1to1_btn)
 
         layout.addStretch()
-        vl_label = QLabel("VL")
-        layout.addWidget(vl_label)
-
         self._image_widget.view_changed.connect(self._refresh_workspace_zoom)
         self._refresh_workspace_zoom()
+        self._refresh_irvl_buttons()
         return bar
+
+    def set_irvl_mode(self, mode: str, *, persist: bool = True) -> None:
+        """Switch the center workspace between IR / IR+VL / VL.
+
+        Display-only: widgets are shown/hidden in the existing splitter
+        (ratio still draggable); acquisition, SHM and processing keep
+        producing both feeds either way.
+        """
+        if mode not in ("ir", "vl", "both"):
+            return
+        if self._irvl_mode == "both" and mode != "both":
+            try:
+                self._irvl_split_saved = self._ir_vl_splitter.saveState()
+            except Exception:
+                self._irvl_split_saved = None
+        self._irvl_mode = mode
+        self._image_widget.setVisible(mode in ("ir", "both"))
+        self._vl_widget.setVisible(mode in ("vl", "both"))
+        if mode == "both" and self._ir_vl_split_saved is not None:
+            try:
+                self._ir_vl_splitter.restoreState(self._ir_vl_split_saved)
+            except Exception:
+                pass
+        self._refresh_irvl_buttons()
+        if persist:
+            self._save_shelf_state()
+
+    def _refresh_irvl_buttons(self) -> None:
+        """Reflect the workspace mode on the bar buttons."""
+        for mode, button in getattr(self, "_irvl_buttons", {}).items():
+            active = mode == getattr(self, "_irvl_mode", "both")
+            button.setChecked(active)
+            set_variant(button, "accent" if active else "ghost")
 
     def _refresh_workspace_zoom(self) -> None:
         """Reflect the IR view's zoom state on the workspace bar."""
@@ -755,86 +1117,6 @@ class ConfigurationModeWidget(QWidget):
             self._image_widget.pan_to_normalized(center_x, center_y)
         except Exception:
             logger.debug("Finder drag pan failed", exc_info=True)
-
-    # -- Panel shelf (taskbar) ----------------------------------------------
-
-    _SHELF_ORDER = (
-        "camera_control",
-        "image_info",
-        "temp_scale",
-        "view_finder",
-        "roi",
-        "alarms",
-        "statistics",
-        "config_editor",
-    )
-
-    def _build_panel_shelf(self, parent_layout: QVBoxLayout) -> None:
-        """Build the in-application panel shelf (small taskbar).
-
-        One compact control per dockable panel, in a stable strip below
-        the workspace. Closing a dock hides it; its shelf item remains
-        and restores it to its previous dock/floating location. The shelf
-        lives outside the dock host, so it stays usable even when every
-        dock is hidden. Panels are never destroyed or recreated.
-        """
-        shelf = QFrame()
-        set_role(shelf, "toolbar")
-        shelf_layout = QHBoxLayout(shelf)
-        shelf_layout.setContentsMargins(8, 2, 8, 2)
-        shelf_layout.setSpacing(4)
-        caption = QLabel("Panels:")
-        shelf_layout.addWidget(caption)
-        self._shelf_buttons: dict[str, QPushButton] = {}
-        for key in self._SHELF_ORDER:
-            dock = self._docks.get(key)
-            if dock is None:
-                continue
-            button = QPushButton(dock.windowTitle())
-            button.setCheckable(True)
-            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            button.clicked.connect(
-                lambda checked=False, dock_key=key: self._on_shelf_clicked(dock_key)
-            )
-            dock.visibilityChanged.connect(
-                lambda visible, dock_key=key: self._sync_shelf_item(dock_key, visible)
-            )
-            shelf_layout.addWidget(button)
-            self._shelf_buttons[key] = button
-            self._sync_shelf_item(key, dock.isVisible())
-        shelf_layout.addStretch()
-        parent_layout.addWidget(shelf)
-        self._shelf_frame = shelf
-
-    def shelf_buttons(self) -> dict[str, QPushButton]:
-        """Panel-shelf buttons by dock key (workstation taskbar)."""
-        return dict(getattr(self, "_shelf_buttons", {}))
-
-    def _sync_shelf_item(self, key: str, visible: bool) -> None:
-        """Reflect dock visibility on its shelf item (theme system only)."""
-        button = self._shelf_buttons.get(key)
-        if button is None:
-            return
-        button.setChecked(visible)
-        # Open docks read as active, hidden docks as inactive; floating
-        # docks are visible, so they read as open — as specified.
-        set_variant(button, "accent" if visible else "ghost")
-
-    def _on_shelf_clicked(self, key: str) -> None:
-        """Shelf click: restore a hidden dock, or raise/focus a visible one."""
-        dock = self._docks.get(key)
-        if dock is None:
-            return
-        if dock.isVisible():
-            dock.raise_()
-            if dock.isFloating():
-                dock.activateWindow()
-            else:
-                dock.setFocus()
-        else:
-            # QDockWidget restores its previous dock/floating location;
-            # the panel widget and its state are untouched.
-            self.show_dock(key)
 
     def _connect_signals(self) -> None:
         """Connect internal signals."""
@@ -2758,8 +3040,8 @@ class ConfigurationModeWidget(QWidget):
     def _on_save_config(self) -> None:
         """Handle save config button."""
         if self._config_editor is not None:
-            # Reveal the Configuration Editor dock (state preserved).
-            self.show_dock("config_editor")
+            # Reveal the Configuration Editor panel (state preserved).
+            self.open_panel("config_editor")
         else:
             self._status_label.setText("Configuration Editor not available")
 
@@ -2794,7 +3076,7 @@ class ConfigurationModeWidget(QWidget):
 
     def on_mode_deactivated(self) -> None:
         """Called when configuration mode is deactivated."""
-        self._save_dock_layout()
+        self._save_shelf_state()
         self._restore_connect_cursor()
         if self._camera_selection_dialog is not None:
             self._camera_selection_dialog.close()
@@ -2911,10 +3193,10 @@ class ConfigurationWindow(QMainWindow):
         refresh_action.triggered.connect(self._config_widget._refresh_camera_list)
         camera_menu.addAction(refresh_action)
 
-        # View menu: dockable panels first (predictable restore after
+        # View menu: side-shelf panels first (predictable restore after
         # hiding), then image zoom controls.
         view_menu = menu_bar.addMenu("View")
-        for action in self._config_widget.dock_toggle_actions():
+        for action in self._config_widget.panel_toggle_actions():
             view_menu.addAction(action)
         view_menu.addSeparator()
         fit_action = QAction("Fit to Window", self)
@@ -2957,7 +3239,7 @@ class ConfigurationWindow(QMainWindow):
         # Window menu
         window_menu = menu_bar.addMenu("Window")
         config_action = QAction("Configuration Editor", self)
-        config_action.triggered.connect(lambda: self._config_widget.show_dock("config_editor"))
+        config_action.triggered.connect(lambda: self._config_widget.open_panel("config_editor"))
         window_menu.addAction(config_action)
 
         # Settings menu with live Theme switching (same manager everywhere).
