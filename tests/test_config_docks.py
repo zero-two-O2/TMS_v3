@@ -910,11 +910,15 @@ def test_camera_control_lifecycle_buttons_intact(widget, qapp) -> None:
     widget._set_lifecycle(CameraConnectionState.CONNECTED)
     assert panel._start_btn.isEnabled()
     assert panel._disconnect_btn.isEnabled()
-    # Status label + Camera Control camera selection still wired.
+    # Status label + top bar wiring intact; selection flows through the
+    # single Connect -> Acquisition Setup -> Camera Selection funnel
+    # (no selector widget inside Camera Control).
     assert widget._status_conn.text() != ""
     assert widget._top_bar is not None
-    assert panel._camera_combo.count() == 2
-    assert panel.select_camera_by_id("camA")
+    assert getattr(panel, "_camera_combo", None) is None
+    widget._on_camera_selected("camA")
+    qapp.processEvents()
+    assert widget._selected_camera_id == "camA"
 
     dialog = QDialog()
     try:

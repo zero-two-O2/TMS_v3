@@ -32,12 +32,25 @@ from __future__ import annotations
 from thermal_monitor.ui.theme.tokens import ThemeDefinition
 
 
-def build_stylesheet(defn: ThemeDefinition) -> str:
-    """Render the full application QSS for *defn*."""
+def build_stylesheet(defn: ThemeDefinition, font_scale_pct: int = 100) -> str:
+    """Render the full application QSS for *defn*.
+
+    ``font_scale_pct`` scales the font/metric tokens at generation time
+    (global Settings -> Font Size): the same single stylesheet, just
+    larger type and taller controls — never a second hardcoded patch.
+    """
+    from thermal_monitor.ui.theme.fonts import scaled_font_px
+
     m = defn.metrics
     bw = m.border_width
     ff = m.font_family
     fm = m.font_mono
+    pct = font_scale_pct
+    fs_base = scaled_font_px(m.font_size_base, pct)
+    fs_title = scaled_font_px(m.font_size_title, pct)
+    fs_subtitle = scaled_font_px(m.font_size_subtitle, pct)
+    fs_sm = scaled_font_px(m.font_size_sm, pct)
+    control_min_h = scaled_font_px(m.control_height - 6, pct)
     return f"""
 /* ===== TMS V3 theme: {defn.name} ({defn.display_name}) ===== */
 /* Generated centrally -- do not scatter QSS across widgets. */
@@ -45,7 +58,7 @@ QWidget {{
     color: {defn.text};
     background-color: {defn.background};
     font-family: {ff};
-    font-size: {m.font_size_base}px;
+    font-size: {fs_base}px;
 }}
 QMainWindow {{
     background-color: {defn.background};
@@ -68,17 +81,17 @@ QToolTip {{
 
 /* ----- labels: semantic roles ----- */
 QLabel[role="title"] {{
-    font-size: {m.font_size_title}px;
+    font-size: {fs_title}px;
     font-weight: bold;
     color: {defn.title};
 }}
 QLabel[role="subtitle"] {{
-    font-size: {m.font_size_subtitle}px;
+    font-size: {fs_subtitle}px;
     color: {defn.text_secondary};
 }}
 QLabel[role="status"] {{
     color: {defn.text_secondary};
-    font-size: {m.font_size_sm}px;
+    font-size: {fs_sm}px;
 }}
 QLabel[role="strong"] {{
     font-weight: bold;
@@ -86,7 +99,7 @@ QLabel[role="strong"] {{
 }}
 QLabel[role="muted"] {{
     color: {defn.muted_text};
-    font-size: {m.font_size_sm}px;
+    font-size: {fs_sm}px;
 }}
 QLabel[role="mono"] {{
     font-family: {fm};
@@ -94,7 +107,7 @@ QLabel[role="mono"] {{
 }}
 QLabel[role="readout"] {{
     font-family: {fm};
-    font-size: {m.font_size_sm}px;
+    font-size: {fs_sm}px;
     font-weight: bold;
     color: {defn.text};
 }}
@@ -168,7 +181,7 @@ QPushButton {{
     border: {bw}px solid {defn.border};
     border-radius: {m.radius_md}px;
     padding: 6px {m.spacing_md}px;
-    min-height: {m.control_height - 6}px;
+    min-height: {control_min_h}px;
 }}
 QPushButton:hover {{
     border-color: {defn.focus_ring};

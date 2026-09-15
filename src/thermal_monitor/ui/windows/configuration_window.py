@@ -127,17 +127,19 @@ _OBSERVER_STOP_TIMEOUT_S = 2.0
 
 #: -- Side-shelf geometry (ThermoView-style narrow vertical tabs) ---------
 #: CENTRAL shelf-size constants: change these to resize the shelf rails.
-#: No other shelf dimension is hardcoded elsewhere.
-PANEL_SHELF_WIDTH = 30  #: rail width in px (target 25-32 px)
-PANEL_TAB_WIDTH = 26  #: vertical tab width in px (rail minus margins)
+#: No other shelf dimension is hardcoded elsewhere. Base point sizes are
+#: scaled by the global font-size setting (see ui.theme.fonts) through
+#: ConfigurationModeWidget.refresh_font_metrics().
+PANEL_SHELF_WIDTH = 28  #: rail width in px (target 24-28 px)
+PANEL_TAB_WIDTH = 24  #: vertical tab width in px (rail minus margins)
 PANEL_TAB_MIN_HEIGHT = 84  #: shortest tab (e.g. "ROI") in px
 PANEL_TAB_MAX_HEIGHT = 176  #: longest tab (e.g. "Configuration Editor") in px
-PANEL_TAB_FONT_SIZE_PT = 8  #: small but readable tab font
+PANEL_TAB_FONT_SIZE_PT = 8  #: small but readable tab font (at 100%)
 PANEL_TAB_SPACING = 2  #: vertical gap between tabs in px
 PANEL_TAB_MARGIN = 2  #: rail contents margin in px
 PANEL_PIN_SIZE = 18  #: pin button size in px (ThermoView-scale)
-PANEL_PIN_ICON_SIZE = 12  #: pin icon size in px
-PANEL_HEADER_FONT_SIZE_PT = 8  #: compact panel-title font
+PANEL_PIN_ICON_SIZE = 14  #: pin icon visual size in px
+PANEL_HEADER_FONT_SIZE_PT = 8  #: compact panel-title font (at 100%)
 
 
 
@@ -212,16 +214,30 @@ class _ShelfTab(QPushButton):
         self.setCheckable(True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setToolTip(title)
-        font = self.font()
-        font.setPointSize(PANEL_TAB_FONT_SIZE_PT)
-        self.setFont(font)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.setFixedWidth(PANEL_TAB_WIDTH)
+        self.refresh_metrics()
+
+    def refresh_metrics(self) -> None:
+        """Recompute tab font + height from the global font scale."""
+        from thermal_monitor.ui.theme.fonts import (
+            current_font_scale,
+            scaled_point_size,
+        )
+
+        font = self.font()
+        font.setPointSize(
+            scaled_point_size(PANEL_TAB_FONT_SIZE_PT, current_font_scale())
+        )
+        self.setFont(font)
         metrics = self.fontMetrics()
         self.setFixedHeight(
             min(
                 PANEL_TAB_MAX_HEIGHT,
-                max(PANEL_TAB_MIN_HEIGHT, metrics.horizontalAdvance(title) + 18),
+                max(
+                    PANEL_TAB_MIN_HEIGHT,
+                    metrics.horizontalAdvance(self._tab_title) + 18,
+                ),
             )
         )
 
@@ -567,7 +583,6 @@ class ConfigurationModeWidget(QWidget):
         # LEFT: Image Acquisition panel (instrument panel, owns camera
         # selection + feed display mode + Connect/Start/Stop/Focus/NUC).
         self._acq_panel = ImageAcquisitionPanel(self._theme)
-        self._acq_panel.camera_selection_changed.connect(self._on_camera_selected)
         self._acq_panel.feed_mode_changed.connect(self.set_irvl_mode)
         self._acq_panel.connect_requested.connect(self._on_connect)
         self._acq_panel.disconnect_requested.connect(self._on_disconnect)
@@ -707,6 +722,8 @@ class ConfigurationModeWidget(QWidget):
         # Restore pins/open panels/widths/IR-VL/zoom. Panel widgets
         # themselves are never recreated.
         self._restore_shelf_state()
+        # Apply the persisted global font scale to shelf/header metrics.
+        self.refresh_font_metrics()
 
         # --- Bottom: Status bar ---
         self._create_status_bar(main_layout)
@@ -866,6 +883,13 @@ class ConfigurationModeWidget(QWidget):
         wrapper = QFrame()
         wrapper.setObjectName(f"cfg_panel_{key}")
         wrapper.setMinimumWidth(200)
+        # Vertically Preferred: multiple open panels stack at their natural
+        # heights (the host's trailing stretch absorbs the rest), while a
+        # lone open panel is forced to fill via host stretch factor 1
+        # (see _rebalance_side_host).
+        wrapper.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
         wrapper_layout = QVBoxLayout(wrapper)
         wrapper_layout.setContentsMargins(0, 0, 0, 0)
         wrapper_layout.setSpacing(0)
@@ -880,7 +904,16 @@ class ConfigurationModeWidget(QWidget):
         title_label.setObjectName(f"cfg_panel_title_{key}")
         title_label.setWordWrap(False)
         title_font = title_label.font()
-        title_font.setPointSize(PANEL_HEADER_FONT_SIZE_PT)
+        from thermal_monitor.ui.theme.fonts import (
+            current_font_scale as _current_scale,
+        )
+        from thermal_monitor.ui.theme.fonts import (
+            scaled_point_size as _scaled_pt,
+        )
+
+        title_font.setPointSize(
+            _scaled_pt(PANEL_HEADER_FONT_SIZE_PT, _current_scale())
+        )
         title_font.setBold(True)
         title_label.setFont(title_font)
         header_layout.addWidget(title_label, 1)
@@ -892,7 +925,7 @@ class ConfigurationModeWidget(QWidget):
         from PyQt6.QtCore import QSize as _QSize
 
         pin.setIconSize(_QSize(PANEL_PIN_ICON_SIZE, PANEL_PIN_ICON_SIZE))
-        pin.setToolTip("Pin panel (keep open)")
+        pin.setToolTip("Pin panel")
         set_variant(pin, "ghost")
         pin.clicked.connect(
             lambda _checked=False, panel_key=key: self._toggle_pin(panel_key)
@@ -911,6 +944,11 @@ class ConfigurationModeWidget(QWidget):
         content.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         scroll.setWidget(content)
         scroll.setMinimumHeight(80)
+        # Wheel-lock: scrolling over an unfocused spin/combo scrolls the
+        # panel instead of silently rewriting the value (see wheel_guard).
+        from thermal_monitor.ui.widgets.wheel_guard import install_wheel_guards
+
+        install_wheel_guards(content)
         wrapper_layout.addWidget(scroll, 1)
         wrapper.setVisible(False)
         record.wrapper = wrapper
@@ -1007,7 +1045,7 @@ class ConfigurationModeWidget(QWidget):
         record.pin_button.setIcon(_make_pin_icon(bool(record.pinned)))
         set_variant(record.pin_button, "accent" if record.pinned else "ghost")
         record.pin_button.setToolTip(
-            "Unpin panel (auto-hide)" if record.pinned else "Pin panel (keep open)"
+            "Unpin panel" if record.pinned else "Pin panel"
         )
 
     def _update_side_container(self, side: str) -> None:
@@ -1019,6 +1057,70 @@ class ConfigurationModeWidget(QWidget):
             if record.side == side
         )
         container.setVisible(any_open)
+        self._rebalance_side_host(side)
+
+    def refresh_font_metrics(self) -> None:
+        """Recompute shelf/tab/header fonts from the global font scale.
+
+        Called once after setup (so a persisted non-100% scale applies at
+        startup) and after every Settings -> Font Size change (via
+        ui.theme.fonts). Layouts + scroll areas absorb the growth; no
+        fixed heights are introduced here.
+        """
+        from thermal_monitor.ui.theme.fonts import (
+            current_font_scale,
+            scaled_point_size,
+        )
+
+        scale = current_font_scale()
+        header_pt = scaled_point_size(PANEL_HEADER_FONT_SIZE_PT, scale)
+        for record in self._side_panels.values():
+            try:
+                if record.tab is not None:
+                    record.tab.refresh_metrics()
+            except (RuntimeError, AttributeError):
+                continue
+            try:
+                if record.wrapper is not None:
+                    title = record.wrapper.findChild(
+                        QLabel, f"cfg_panel_title_{record.key}"
+                    )
+                    if title is not None:
+                        font = title.font()
+                        font.setPointSize(header_pt)
+                        font.setBold(True)
+                        title.setFont(font)
+            except (RuntimeError, AttributeError):
+                continue
+
+    def _rebalance_side_host(self, side: str) -> None:
+        """Give a lone open panel the whole side height.
+
+        Exactly one open panel on a side stretches to occupy essentially
+        the entire side-panel area (no wasted empty space); with several
+        open panels each keeps its natural height at the top and the side
+        container scrolls. Pure layout factors — no state is changed.
+        """
+        host = self._side_host(side)
+        layout = host.layout()
+        if layout is None:
+            return
+        open_wrappers = {
+            id(record.wrapper)
+            for record in self._side_panels.values()
+            if record.side == side and record.is_open()
+        }
+        lone = len(open_wrappers) == 1
+        for record in self._side_panels.values():
+            if record.side != side or record.wrapper is None:
+                continue
+            try:
+                layout.setStretchFactor(
+                    record.wrapper,
+                    1 if (lone and id(record.wrapper) in open_wrappers) else 0,
+                )
+            except RuntimeError:
+                continue
 
     def _collapse_unpinned(self) -> None:
         """Auto-hide: collapse every open, unpinned panel (state kept)."""
@@ -1279,33 +1381,28 @@ class ConfigurationModeWidget(QWidget):
         if self._selected_camera_id:
             self._load_camera_config(self._selected_camera_id)
         else:
-            # Select first camera if available
+            # Select first camera if available (single selection funnel).
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
-                self._acq_panel.select_camera_by_id(cameras[0].identity.camera_id)
+                self._on_camera_selected(cameras[0].identity.camera_id)
 
     def _refresh_camera_list(self) -> None:
-        """Refresh the camera list in Camera Control (sole selector).
+        """Refresh camera-derived views (no selector list lives here anymore).
 
-        Also refreshes the open Acquisition Setup dialog summary, since a
-        discovery selection can introduce a brand-new configured camera.
+        Camera selection flows exclusively through Connect -> Acquisition
+        Setup -> Camera Selection; this only reloads the selected camera's
+        panels and the open setup-dialog summary.
         """
-        cameras = self._config_service.get_all_camera_configs()
-        camera_list = []
-        for config in cameras:
-            identity = config.identity
-            display = f"{identity.serial_number} — {identity.model}"
-            if config.name and config.name != identity.camera_id:
-                display = f"{config.name} ({display})"
-            if not config.enabled:
-                display = f"[Disabled] {display}"
-            camera_list.append((identity.camera_id, display, identity, config.enabled))
-
-        self._acq_panel.set_camera_list(camera_list)
+        if self._selected_camera_id:
+            self._load_camera_config(self._selected_camera_id)
         self._refresh_setup_dialog()
 
     def _on_camera_selected(self, camera_id: str) -> None:
-        """Handle camera selection change with dirty state check."""
+        """Handle camera selection change with dirty state check.
+
+        Single programmatic selection funnel (used at startup, by mode
+        activation, and by tests driving the dirty-check/switch pipeline).
+        """
         if self._has_unsaved_changes(camera_id):
             self._pending_camera_switch = camera_id
             self._show_unsaved_changes_dialog(camera_id)
@@ -1339,7 +1436,7 @@ class ConfigurationModeWidget(QWidget):
             self._switch_camera(target_camera_id)
         else:  # Cancel
             if self._selected_camera_id:
-                self._acq_panel.sync_camera_selection(self._selected_camera_id)
+                self._load_camera_config(self._selected_camera_id)
 
     def _save_current_camera_config(self) -> None:
         """Save current camera configuration."""
@@ -1507,41 +1604,31 @@ class ConfigurationModeWidget(QWidget):
             logger.debug("View finder update failed", exc_info=True)
 
     def _selection_mismatch(self, camera_id: str) -> str | None:
-        """Check selected == Camera Control combo == panel identity.
+        """Check selected == Camera Control panel identity (invariant).
 
-        Returns None when every view agrees with the authority
+        Returns None when the panel view agrees with the authority
         (``self._selected_camera_id``), else a description of the
-        mismatch. Reads are non-blocking Qt property/combo lookups.
+        mismatch. Reads are non-blocking Qt property lookups. There is
+        exactly one selection view: the Camera Control identity label,
+        fed by the single Connect -> Acquisition Setup -> Camera
+        Selection flow.
         """
-        try:
-            combo_id = self._acq_panel.selected_combo_camera_id
-        except Exception:
-            combo_id = "<unreadable>"
         try:
             panel_identity = self._acq_panel._selected_camera_identity
             panel_id = getattr(panel_identity, "camera_id", None)
         except Exception:
             panel_id = "<unreadable>"
-        parts = []
-        if combo_id != camera_id:
-            parts.append(f"combo={combo_id}")
         if panel_id != camera_id:
-            parts.append(f"panel={panel_id}")
-        if not parts:
-            return None
-        return f"authority={camera_id} " + " ".join(parts)
+            return f"authority={camera_id} panel={panel_id}"
+        return None
 
     def _resync_selection_views(self, camera_id: str) -> None:
         """Re-assert Camera Control views from the selection authority.
 
-        Used only after an invariant refusal: the combo is moved back to
-        the authoritative camera silently and the panel identity reloaded.
-        Never invents a new selection.
+        Used only after an invariant refusal: the panel identity is
+        reloaded from the authoritative camera. Never invents a new
+        selection.
         """
-        try:
-            self._acq_panel.sync_camera_selection(camera_id)
-        except Exception:
-            logger.debug("Selection resync (combo) failed", exc_info=True)
         try:
             if self._selected_camera_id:
                 self._load_camera_config(self._selected_camera_id)
@@ -1751,14 +1838,6 @@ class ConfigurationModeWidget(QWidget):
             return  # nothing to do
         if connect:
             self._log_camera_diagnostics("CONNECT REQUEST", camera_id)
-
-        # The Camera Control combo is a pure view of the selection
-        # authority. Move it silently (no phantom switch) so no path can
-        # leave the visible selection behind the activated camera.
-        try:
-            self._acq_panel.sync_camera_selection(camera_id)
-        except Exception:
-            logger.debug("Camera selection sync failed", exc_info=True)
 
         old_camera_id = self._selected_camera_id
         needs_teardown = (
@@ -2702,13 +2781,10 @@ class ConfigurationModeWidget(QWidget):
                 )
             )
 
-        # Select this camera in Camera Control silently (the safe
-        # _activate_camera pipeline below owns the transition, including
-        # tearing down the previously selected camera — never two active
-        # pipelines).
-        self._acq_panel.sync_camera_selection(camera_id)
-
         # CONNECT: establish control + acquisition in one serialized
+        # background operation through the single _activate_camera
+        # pipeline (including tearing down the previously selected
+        # camera — never two active pipelines).
         # background operation. The GUI shows CONNECTING/DISCONNECTING
         # immediately; failures land in ERROR with partial resources
         # cleaned up and the user informed.
@@ -2794,9 +2870,9 @@ class ConfigurationModeWidget(QWidget):
         except Exception:
             panel_id = panel_serial = "<unreadable>"
         try:
-            toolbar_id = self._acq_panel.selected_combo_camera_id
+            setup_summary = self._setup_camera_summary()
         except Exception:
-            toolbar_id = "<unreadable>"
+            setup_summary = "<unreadable>"
         try:
             if self._runtime_service is not None:
                 runtime_ids = sorted(self._runtime_service.running_camera_ids())
@@ -2810,7 +2886,7 @@ class ConfigurationModeWidget(QWidget):
             observer_id = "<unreadable>"
         logger.info(
             "START CLICK: ui_selected_id=%s ui_selected_serial=%s ui_selected_name=%s "
-            "panel_camera_id=%s panel_serial=%s combo_camera_id=%s "
+            "panel_camera_id=%s panel_serial=%s setup=%s "
             "widget_camera_id=%s lifecycle=%s session_camera_id=%s "
             "runtime_camera_ids=%s generation=%s observer_camera_id=%s",
             ui_id,
@@ -2818,7 +2894,7 @@ class ConfigurationModeWidget(QWidget):
             ui_name,
             panel_id,
             panel_serial,
-            toolbar_id,
+            setup_summary,
             self._selected_camera_id,
             self._lifecycle.value,
             self._session.camera_id,
@@ -3255,7 +3331,7 @@ class ConfigurationModeWidget(QWidget):
         else:
             cameras = self._config_service.get_all_camera_configs()
             if cameras:
-                self._acq_panel.select_camera_by_id(cameras[0].identity.camera_id)
+                self._switch_camera(cameras[0].identity.camera_id)
         # Correct any lifecycle drift from while inactive (e.g. observer
         # detached on mode switch while transport kept running), then
         # resume the status ticker stopped on deactivation.

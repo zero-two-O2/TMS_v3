@@ -18,7 +18,6 @@ import pytest
 
 from PyQt6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -171,11 +170,11 @@ def test_pin_states_are_distinct(widget, qapp) -> None:
     widget.set_panel_pinned("roi", False)
     qapp.processEvents()
     record = widget.side_panels()["roi"]
-    assert "Pin panel (keep open)" in record.pin_button.toolTip()
+    assert record.pin_button.toolTip() == "Pin panel"
     record.pin_button.click()
     qapp.processEvents()
     assert record.pinned
-    assert "Unpin panel" in record.pin_button.toolTip()
+    assert record.pin_button.toolTip() == "Unpin panel"
     record.pin_button.click()
     qapp.processEvents()
     assert not record.pinned
@@ -300,14 +299,20 @@ def test_no_top_camera_selector(widget) -> None:
     assert "_get_next_camera_id" not in source
 
 
-def test_camera_control_owns_selection(widget, qapp) -> None:
+def test_camera_control_has_no_selector(widget, qapp) -> None:
+    """No CAMERA selector inside Camera Control (single dialog flow)."""
+    from PyQt6.QtWidgets import QGroupBox
+
     panel = widget._acq_panel
-    assert isinstance(panel._camera_combo, QComboBox)
-    assert panel._camera_combo.count() == 2
-    panel.select_camera_by_id("camB")
+    assert getattr(panel, "_camera_combo", None) is None
+    assert getattr(panel, "camera_selection_changed", None) is None
+    groups = [box.title() for box in panel.findChildren(QGroupBox)]
+    assert not any(title.strip().upper() == "CAMERA" for title in groups)
+    # Selection still works through the single funnel.
+    widget._on_camera_selected("camB")
     qapp.processEvents()
     assert widget._selected_camera_id == "camB"
-    panel.select_camera_by_id("camA")
+    widget._on_camera_selected("camA")
     qapp.processEvents()
     assert widget._selected_camera_id == "camA"
 
@@ -470,6 +475,54 @@ def test_side_panel_widths_bounded(widget) -> None:
     assert widget._left_container.maximumWidth() <= 600
     assert widget._right_container.minimumWidth() >= 100
     assert widget._right_container.maximumWidth() <= 600
+
+
+def _left_host_geometry(widget):
+    from PyQt6.QtWidgets import QScrollArea
+
+    container = widget.findChild(QWidget, "cfg_left_panels")
+    scroll = container.findChild(QScrollArea, "cfg_side_scroll")
+    host = container.findChild(QWidget, "cfg_side_host")
+    return scroll, host
+
+
+def test_single_open_panel_expands_to_side_height(widget, qapp) -> None:
+    """One open panel occupies essentially the whole side area."""
+    for key in ("camera_control", "image_info"):
+        widget.set_panel_open(key, False, persist=False)
+    widget.set_panel_open("camera_control", True, persist=False)
+    widget.resize(1500, 900)
+    widget.show()
+    qapp.processEvents()
+    qapp.processEvents()
+    scroll, host = _left_host_geometry(widget)
+    wrapper = widget.side_panels()["camera_control"].wrapper
+    assert wrapper.isVisible()
+    # Lone panel fills the side height (small tolerance for spacing).
+    assert wrapper.height() >= scroll.viewport().height() - 12
+
+
+def test_multiple_open_panels_stack_with_side_scroll(widget, qapp) -> None:
+    """Several open panels keep natural heights; the side stack scrolls."""
+    from PyQt6.QtWidgets import QScrollArea
+
+    for key in ("camera_control", "image_info"):
+        widget.set_panel_open(key, True, persist=False)
+    widget.resize(1500, 900)
+    widget.show()
+    qapp.processEvents()
+    qapp.processEvents()
+    scroll, host = _left_host_geometry(widget)
+    first = widget.side_panels()["camera_control"].wrapper
+    assert first.height() < scroll.viewport().height()
+    assert isinstance(scroll, QScrollArea)
+
+
+def test_side_panel_editors_are_wheel_guarded(widget) -> None:
+    """Every registered panel content carries the wheel-lock filter."""
+    for key, record in widget.side_panels().items():
+        filt = getattr(record.content, "_wheel_guard_filter", None)
+        assert filt is not None, f"{key}: no wheel guard installed"
 
 
 # ---------------------------------------------------------------------------

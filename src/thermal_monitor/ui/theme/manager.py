@@ -151,7 +151,27 @@ class ThemeManager:
         self._explicit_theme: str | None = None
         self._colors_cache: dict[str, ThemeColors] = {}
         self._live_tile_colors: LiveTileColors | None = None
+        # Global font scale (Settings -> Font Size), persisted separately
+        # from the theme; read once here so a fresh apply() honors it.
+        from thermal_monitor.ui.theme.fonts import current_font_scale
+
+        self._font_scale_pct = current_font_scale()
         self._resolve_theme_colors()
+
+    @property
+    def font_scale_pct(self) -> int:
+        """Active global font scale percentage (default 100)."""
+        return self._font_scale_pct
+
+    def set_font_scale(self, pct: int) -> int:
+        """Set the stylesheet font scale (call apply/apply_and_refresh next).
+
+        Clamped to the supported range. Returns the clamped value.
+        """
+        from thermal_monitor.ui.theme.fonts import clamp_font_scale
+
+        self._font_scale_pct = clamp_font_scale(pct)
+        return self._font_scale_pct
 
     # ------------------------------------------------------------------
     # Theme registry / selection
@@ -575,17 +595,25 @@ class ThemeManager:
     # --- Stylesheet generation ---
 
     def base_stylesheet(self) -> str:
-        """Generate the base application stylesheet for the active theme."""
+        """Generate the base application stylesheet for the active theme.
+
+        Font/metric tokens scale with the global font-size setting; the
+        stylesheet structure itself never changes.
+        """
         definition = self.theme_definition()
         if definition is not None:
-            return build_stylesheet(definition)
+            return build_stylesheet(definition, self._font_scale_pct)
         c = self.colors()
+        from thermal_monitor.ui.theme.fonts import scaled_font_px
+
+        legacy_base = scaled_font_px(13, self._font_scale_pct)
+        legacy_btn_h = scaled_font_px(24, self._font_scale_pct)
         return f"""
             QWidget {{
                 color: {c.text_primary};
                 background-color: {c.background};
                 font-family: "Segoe UI", "Arial", sans-serif;
-                font-size: 13px;
+                font-size: {legacy_base}px;
             }}
             QMainWindow {{
                 background-color: {c.background};
@@ -612,7 +640,7 @@ class ThemeManager:
                 border: 1px solid {c.border};
                 border-radius: 4px;
                 padding: 6px 12px;
-                min-height: 24px;
+                min-height: {legacy_btn_h}px;
             }}
             QPushButton:hover {{
                 background-color: {c.border};

@@ -1026,22 +1026,21 @@ def test_runtime_observer_delivers_first_frame() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Stale-ID hunt: real combo selection + real button clicks (section 10)
+# Stale-ID hunt: single-funnel selection + real button clicks (section 10)
 # ---------------------------------------------------------------------------
 
 
 def _combo_select(widget: ConfigurationModeWidget, camera_id: str) -> None:
-    """Drive the Camera Control combo exactly like a user click (emits)."""
-    assert widget._acq_panel.select_camera_by_id(camera_id), camera_id
+    """Drive selection through the single funnel (dirty-check + switch)."""
+    widget._on_camera_selected(camera_id)
+    assert widget._selected_camera_id == camera_id, camera_id
 
 
 def _assert_selection_invariant(widget: ConfigurationModeWidget) -> None:
-    """selected == Camera Control combo == panel identity (invariant)."""
+    """selected == Camera Control panel identity (the invariant)."""
     selected = widget._selected_camera_id
-    combo = widget._acq_panel.selected_combo_camera_id
     panel_identity = widget._acq_panel._selected_camera_identity
     panel_id = getattr(panel_identity, "camera_id", None)
-    assert combo == selected, f"combo={combo} selected={selected}"
     assert panel_id == selected, f"panel={panel_id} selected={selected}"
 
 
@@ -1179,17 +1178,16 @@ def test_queued_switch_window_never_starts_old_camera(qapp) -> None:
 
 
 def test_no_phantom_switch_on_config_refresh(qapp) -> None:
-    """Rebuilding the camera list never moves a non-first selection.
+    """Config churn never moves the selection or starts a transition.
 
-    Regression for the proven stale-ID source: populating the combo
-    used to auto-select index 0 mid-rebuild and emit a phantom
-    camera_selected, hijacking the widget selection (and Start) to the
-    wrong camera. Config churn must be selection-neutral.
+    There is no selector widget left to rebuild: refreshing only reloads
+    the selected camera's panels, so a non-first selection can never be
+    hijacked and no background operation may start.
     """
     runtime = FakeRuntime()
     widget = _make_widget(qapp, runtime, camera_ids=("camA", "camB", "camC"))
     try:
-        _combo_select(widget, "camC")  # non-first entry: phantom would jump to camA
+        _combo_select(widget, "camC")
         generation = widget._session.generation
         for _ in range(3):
             widget._refresh_camera_list()
@@ -1204,20 +1202,19 @@ def test_no_phantom_switch_on_config_refresh(qapp) -> None:
 
 
 def test_start_refused_on_identity_mismatch(qapp) -> None:
-    """Camera Control combo/panel divergence from authority: refuse, correct."""
+    """Panel-identity divergence from authority: refuse, log, correct."""
+    from thermal_monitor.core.models import CameraIdentity
+
     runtime = FakeRuntime()
     widget = _make_widget(qapp, runtime, camera_ids=("camA", "camB"))
     try:
         _combo_select(widget, "camA")
         _connect_selected(widget, qapp, runtime)
         # Force a view divergence without touching the authority.
-        widget._acq_panel.blockSignals(True)
-        try:
-            assert widget._acq_panel.select_camera_by_id("camB")
-        finally:
-            widget._acq_panel.blockSignals(False)
+        widget._acq_panel._selected_camera_identity = CameraIdentity(
+            camera_id="camB", serial_number="SN-B"
+        )
         assert widget._selected_camera_id == "camA"
-        assert widget._acq_panel.selected_combo_camera_id == "camB"
 
         widget._acq_panel._start_btn.click()
         qapp.processEvents()
@@ -1227,7 +1224,6 @@ def test_start_refused_on_identity_mismatch(qapp) -> None:
         assert widget._lifecycle == CameraConnectionState.CONNECTED
         assert "mismatch" in widget._status_label.text()
         # Corrected: views re-asserted from the authority.
-        assert widget._acq_panel.selected_combo_camera_id == "camA"
         _assert_selection_invariant(widget)
     finally:
         _close_widget(widget)

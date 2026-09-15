@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 SETTINGS_MENU_TITLE = "Settings"
 THEME_MENU_TITLE = "Theme"
+FONT_SIZE_MENU_TITLE = "Font Size"
 
 THEME_MENU_ORDER: tuple[str, ...] = (
     "industrial_dark",
@@ -56,6 +57,7 @@ class ThemeMenuController(QObject):
     """
 
     theme_applied = pyqtSignal(str)
+    font_scale_applied = pyqtSignal(int)
 
     def __init__(
         self,
@@ -74,6 +76,9 @@ class ThemeMenuController(QObject):
         self._group = None
         self._theme_menu: QMenu | None = None
         self._settings_menu: QMenu | None = None
+        self._font_actions: dict[int, QAction] = {}
+        self._font_group = None
+        self._font_menu: QMenu | None = None
 
     @property
     def theme_manager(self):
@@ -120,16 +125,61 @@ class ThemeMenuController(QObject):
             logger.debug("Theme menu refresh on show not connected")
         return theme_menu
 
+    def create_font_size_menu(self, parent_widget) -> QMenu:
+        """Build the exclusive Font Size submenu with checked state."""
+        from PyQt6.QtGui import QActionGroup
+
+        from thermal_monitor.ui.theme.fonts import (
+            FONT_SCALE_LABELS,
+            FONT_SCALE_OPTIONS,
+            current_font_scale,
+        )
+
+        if self._font_menu is not None:
+            return self._font_menu
+        font_menu = QMenu(FONT_SIZE_MENU_TITLE, parent_widget)
+        group = QActionGroup(font_menu)
+        group.setExclusive(True)
+        current = current_font_scale()
+        for pct in FONT_SCALE_OPTIONS:
+            action = QAction(FONT_SCALE_LABELS[pct], font_menu)
+            action.setCheckable(True)
+            action.setChecked(pct == current)
+            action.setData(pct)
+            action.triggered.connect(
+                lambda checked=False, scale=pct: self.select_font_scale(scale)
+            )
+            group.addAction(action)
+            font_menu.addAction(action)
+            self._font_actions[pct] = action
+        self._font_group = group
+        self._font_menu = font_menu
+        try:
+            font_menu.aboutToShow.connect(self.refresh_font_checked)
+        except Exception:
+            logger.debug("Font menu refresh on show not connected")
+        return font_menu
+
     def create_settings_menu(self, parent_widget) -> QMenu:
-        """Build the top-level Settings menu containing the Theme submenu."""
+        """Build the top-level Settings menu (Theme + Font Size submenus)."""
         if self._settings_menu is not None:
+            # Late font-menu adoption for menus built before this feature.
+            if self._font_menu is None:
+                try:
+                    self._settings_menu.addMenu(
+                        self.create_font_size_menu(self._settings_menu)
+                    )
+                except Exception:
+                    logger.debug("Font menu late adoption skipped")
             return self._settings_menu
         settings = QMenu(SETTINGS_MENU_TITLE, parent_widget)
         theme_menu = self.create_theme_menu(settings)
         settings.addMenu(theme_menu)
+        settings.addMenu(self.create_font_size_menu(settings))
         self._settings_menu = settings
         try:
             settings.aboutToShow.connect(self.refresh_checked)
+            settings.aboutToShow.connect(self.refresh_font_checked)
         except Exception:
             logger.debug("Settings menu refresh on show not connected")
         return settings
@@ -199,6 +249,43 @@ class ThemeMenuController(QObject):
             except RuntimeError:
                 continue
 
+    def refresh_font_checked(self) -> None:
+        """Update Font Size check marks from the persisted scale."""
+        from thermal_monitor.ui.theme.fonts import current_font_scale
+
+        try:
+            current = current_font_scale()
+        except Exception:
+            return
+        for pct, action in self._font_actions.items():
+            try:
+                action.setChecked(pct == current)
+            except RuntimeError:
+                continue
+
+    def select_font_scale(self, pct: int) -> int:
+        """Apply a font scale live, persist it, update checks.
+
+        Same contract as select_theme: shared-manager regenerate +
+        repolish, persist via QSettings, refresh checks, emit
+        font_scale_applied. Persistence failures never undo the apply.
+        Returns the clamped scale applied.
+        """
+        from thermal_monitor.ui.theme.fonts import apply_font_scale
+
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        applied = apply_font_scale(
+            pct, theme_manager=self._theme_manager, app=app
+        )
+        self.refresh_font_checked()
+        try:
+            self.font_scale_applied.emit(applied)
+        except Exception:
+            logger.debug("Font scale signal emission skipped")
+        return applied
+
     def select_theme(self, name: str) -> str:
         """Apply a theme live, persist the preference, update checks.
 
@@ -241,6 +328,7 @@ class ThemeMenuController(QObject):
 __all__ = [
     "SETTINGS_MENU_TITLE",
     "THEME_MENU_TITLE",
+    "FONT_SIZE_MENU_TITLE",
     "THEME_MENU_ORDER",
     "ThemeMenuController",
     "available_menu_themes",

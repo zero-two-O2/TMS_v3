@@ -9,6 +9,11 @@ from thermal_monitor.ui.widgets.statistics_panel import StatisticsPanel
 from thermal_monitor.ui.widgets.camera_selection_dialog import CameraSelectionDialog
 from thermal_monitor.ui.widgets.acquisition_setup_dialog import AcquisitionSetupDialog
 from thermal_monitor.ui.widgets.image_acquisition_panel import ImageAcquisitionPanel
+from thermal_monitor.ui.widgets.wheel_guard import (
+    WheelForwardFilter,
+    enclosing_scroll_area,
+    install_wheel_guards,
+)
 
 __all__ = [
     "ConfigCameraHeader",
@@ -20,4 +25,7 @@ __all__ = [
     "CameraSelectionDialog",
     "AcquisitionSetupDialog",
     "ImageAcquisitionPanel",
+    "WheelForwardFilter",
+    "enclosing_scroll_area",
+    "install_wheel_guards",
 ]

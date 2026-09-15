@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QSpinBox,
-    QComboBox,
     QFrame,
     QSizePolicy,
 )
@@ -70,7 +69,6 @@ class ImageAcquisitionPanel(QWidget):
     focus_set_requested = pyqtSignal(int)
     focus_refresh_requested = pyqtSignal()
     nuc_requested = pyqtSignal()
-    camera_selection_changed = pyqtSignal(str)  # camera_id
     feed_mode_changed = pyqtSignal(str)  # "ir" | "both" | "vl" (display only)
 
     def __init__(self, theme_manager: Optional[ThemeManager] = None) -> None:
@@ -90,22 +88,10 @@ class ImageAcquisitionPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        # --- CAMERA SELECTION GROUP (sole camera selector in Config mode) ---
-        select_group = QGroupBox("CAMERA")
-        select_layout = QVBoxLayout(select_group)
-        select_layout.setContentsMargins(8, 12, 8, 8)
-        select_layout.setSpacing(6)
-
-        self._camera_combo = QComboBox()
-        self._camera_combo.setMinimumHeight(24)
-        self._camera_combo.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
-        self._camera_combo.currentIndexChanged.connect(self._on_camera_combo_changed)
-        self._apply_input_style(self._camera_combo)
-        select_layout.addWidget(self._camera_combo)
-        layout.addWidget(select_group)
-
+        # NOTE: there is deliberately NO camera selector here. Camera
+        # selection flows through exactly one path: Connect ->
+        # Acquisition Setup -> Connect... -> Camera Selection. The panel
+        # shows the selected camera identity (read-only view).
         # --- IMAGE ACQUISITION GROUP ---
         group = QGroupBox("IMAGE ACQUISITION")
         group_layout = QVBoxLayout(group)
@@ -377,74 +363,6 @@ class ImageAcquisitionPanel(QWidget):
         self._run_controls.setEnabled(connected)
 
     # Public API
-
-    def _on_camera_combo_changed(self, index: int) -> None:
-        camera_id = self._camera_combo.itemData(index)
-        if camera_id:
-            self.camera_selection_changed.emit(camera_id)
-
-    def set_camera_list(
-        self, cameras: list[tuple[str, str, CameraIdentity | None, bool]]
-    ) -> None:
-        """Replace the camera list silently (no phantom selection emit).
-
-        Exactly one deliberate emit happens, and only when the effective
-        selection genuinely changed — same contract the old top toolbar
-        provided, now owned by Camera Control.
-        """
-        combo = self._camera_combo
-        current_id = combo.currentData()
-        combo.blockSignals(True)
-        try:
-            combo.clear()
-            for camera_id, display_name, _identity, _enabled in cameras:
-                combo.addItem(display_name, camera_id)
-            restored_idx = -1
-            if current_id:
-                restored_idx = combo.findData(current_id)
-            if restored_idx < 0 and cameras:
-                restored_idx = 0
-            if restored_idx >= 0:
-                combo.setCurrentIndex(restored_idx)
-        finally:
-            combo.blockSignals(False)
-        new_id = combo.currentData()
-        if new_id != current_id and new_id:
-            self._on_camera_combo_changed(combo.currentIndex())
-
-    def select_camera_by_id(self, camera_id: str) -> bool:
-        """User-equivalent selection (emits when the selection changes)."""
-        idx = self._camera_combo.findData(camera_id)
-        if idx >= 0:
-            self._camera_combo.setCurrentIndex(idx)
-            return True
-        return False
-
-    def sync_camera_selection(self, camera_id: str) -> None:
-        """Silent authority sync: move the combo without emitting."""
-        self._camera_combo.blockSignals(True)
-        try:
-            self.select_camera_by_id_no_emit(camera_id)
-        finally:
-            self._camera_combo.blockSignals(False)
-
-    def select_camera_by_id_no_emit(self, camera_id: str) -> bool:
-        idx = self._camera_combo.findData(camera_id)
-        if idx >= 0:
-            self._camera_combo.blockSignals(True)
-            try:
-                self._camera_combo.setCurrentIndex(idx)
-            finally:
-                self._camera_combo.blockSignals(False)
-            return True
-        return False
-
-    @property
-    def selected_combo_camera_id(self) -> str | None:
-        try:
-            return self._camera_combo.currentData()
-        except Exception:
-            return None
 
     def _on_feed_button(self, mode: str) -> None:
         if mode == self._feed_mode:
