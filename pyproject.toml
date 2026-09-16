@@ -19,6 +19,9 @@ ui = [
 database = [
     "pyodbc>=5.0",
 ]
+ptz = [
+    "asyncua>=1.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
