@@ -255,9 +255,29 @@ class CameraSelectionDialog(QDialog):
             self.accept()
 
     def closeEvent(self, event) -> None:
-        if self._discovery_worker is not None and self._discovery_worker.isRunning():
-            self._discovery_worker.quit()
-            self._discovery_worker.wait()
+        # Deterministic shutdown: never destroy a running QThread (that
+        # aborts the process with no traceback). Bounded wait with a loud
+        # warning; on expiry the thread is left to quit itself and cleans
+        # up via its finished signal.
+        worker = self._discovery_worker
+        if worker is not None:
+            try:
+                running = worker.isRunning()
+            except RuntimeError:
+                running = False
+            if running:
+                worker.quit()
+                if not worker.wait(10000):
+                    import logging as _logging
+
+                    _logging.getLogger(__name__).warning(
+                        "Discovery worker still running after 10000 ms; "
+                        "deferring deleteLater to its finished signal"
+                    )
+                    try:
+                        worker.finished.connect(worker.deleteLater)
+                    except RuntimeError:
+                        pass
         super().closeEvent(event)
 
     def get_selected_camera(self) -> DiscoveredCamera | None:

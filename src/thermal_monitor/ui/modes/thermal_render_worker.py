@@ -122,6 +122,14 @@ class ThermalRenderWorker(QThread):
             self._condition.notify()
 
     def stop(self) -> None:
+        """Request renderer shutdown and wait for the thread to finish.
+
+        Waits indefinitely: widget ``destroyed`` handlers connect to this
+        slot directly, and Qt's ``destroyed(QObject*)`` signal must never
+        deliver its argument into a wait call (that raises TypeError
+        inside teardown and can cascade into a native crash). Use
+        :meth:`stop_bounded` when an explicit timeout is required.
+        """
         with self._condition:
             self._stopping = True
             self._pending = None
@@ -129,6 +137,28 @@ class ThermalRenderWorker(QThread):
             self._latest_notification_pending = False
             self._condition.notify()
         self.wait()
+
+    def stop_bounded(self, timeout_ms: int) -> bool:
+        """Request shutdown and wait at most ``timeout_ms``.
+
+        Returns True when the thread finished. A timeout expiry is logged
+        loudly and never silent; the thread is left to quit itself on
+        render completion. Never connect this to ``destroyed`` directly.
+        """
+        with self._condition:
+            self._stopping = True
+            self._pending = None
+            self._latest_output = None
+            self._latest_notification_pending = False
+            self._condition.notify()
+        if self.wait(timeout_ms):
+            return True
+        logger.warning(
+            "Thermal renderer thread still running after %d ms; "
+            "leaving it to quit itself on render completion",
+            timeout_ms,
+        )
+        return False
 
     def take_latest_output(self):
         """Take the newest completed render without queuing old images."""

@@ -141,6 +141,13 @@ class ThermalMonitorApp:
 
     def run(self) -> int:
         """Run the application event loop."""
+        import faulthandler
+        import logging as _logging
+
+        _logging.getLogger(__name__).info(
+            "Crash diagnostics: faulthandler enabled=%s",
+            faulthandler.is_enabled(),
+        )
         try:
             return self._app.exec()
         finally:
@@ -179,6 +186,35 @@ class ThermalMonitorApp:
 
 def main() -> int:
     """Application entry point."""
+    # Native-crash diagnostics (diagnostic only; acquisition untouched):
+    # dump the Python traceback on segfault/abort instead of vanishing
+    # silently. Respects TMS_FAULT_FILE when set (fault log path).
+    import faulthandler
+    import os
+
+    fault_file = os.environ.get("TMS_FAULT_FILE")
+    if fault_file:
+        try:
+            _fault_fp = open(fault_file, "w", encoding="utf-8")  # noqa: PTH123
+            faulthandler.enable(file=_fault_fp)
+        except OSError:
+            faulthandler.enable()
+    else:
+        faulthandler.enable()
+    import atexit
+    import threading
+
+    def _shutdown_marker() -> None:
+        try:
+            print(
+                f"SHUTDOWN MARKER reached main-thread={threading.get_ident()} "
+                f"alive_threads={threading.active_count()}",
+                flush=True,
+            )
+        except Exception:
+            pass
+
+    atexit.register(_shutdown_marker)
     app = ThermalMonitorApp()
     app.initialize()
     return app.run()

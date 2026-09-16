@@ -1395,24 +1395,47 @@ class LiveModeWidget(QWidget):
         return bool(running) and camera_id in self._connected_observers
 
     def _take_down_startup_worker(self) -> None:
+        """Stop the camera-startup worker deterministically.
+
+        Sets the abort flag (checked between cameras), disconnects GUI
+        slots FIRST so late queued results cannot reach them, then waits
+        (bounded) for the thread to finish BEFORE deleteLater. Deleting
+        a running QThread aborts the process with no Python traceback,
+        so the wait-then-delete order here is load-bearing.
+        """
         worker, self._startup_worker = self._startup_worker, None
-        if worker is not None:
+        if worker is None:
+            return
+        try:
+            self._startup_abort.set()
+        except Exception:
+            pass
+        for signal_name in ("camera_started", "camera_failed", "finished"):
             try:
-                worker.camera_started.disconnect()
+                getattr(worker, signal_name).disconnect()
             except Exception:
                 pass
-            try:
-                worker.camera_failed.disconnect()
-            except Exception:
-                pass
-            try:
-                worker.finished.disconnect()
-            except Exception:
-                pass
-            try:
-                worker.deleteLater()
-            except RuntimeError:
-                pass
+        try:
+            running = worker.isRunning()
+        except RuntimeError:
+            return  # C++ object already gone; nothing to reap
+        if running:
+            # One in-flight start_camera (3 s timeout) at most: the abort
+            # flag stops the queue between cameras.
+            if not worker.wait(8000):
+                logger.warning(
+                    "Startup worker still running after 8000 ms; "
+                    "deferring deleteLater to its finished signal"
+                )
+                try:
+                    worker.finished.connect(worker.deleteLater)
+                except RuntimeError:
+                    pass
+                return
+        try:
+            worker.deleteLater()
+        except RuntimeError:
+            pass
 
     @pyqtSlot(str)
     def _on_startup_camera_ready(self, camera_id: str, token: int) -> None:

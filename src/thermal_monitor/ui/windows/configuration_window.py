@@ -2139,6 +2139,19 @@ class ConfigurationModeWidget(QWidget):
 
         # Phase 1: observer + processing consumer (defensive; the GUI
         # thread already detached the widget observer).
+        #
+        # SHM reader inventory (why this order is the crash-safety order):
+        # - ProcessingConsumer threads copy pinned SHM views into private
+        #   memory and are JOINED by observer stop below. After this phase
+        #   no thread holds a live SHM view or pin.
+        # - Thermal/VL render workers NEVER touch SHM: their inputs are GUI
+        #   copies (see _on_processing_result / VlImageWidget.set_frame), so
+        #   session gating (set_session, done on the GUI thread before this
+        #   op starts) suffices during switch/disconnect. At window
+        #   destruction the widgets stop their render workers via
+        #   destroyed/closeEvent handlers with the SHM still mapped
+        #   (runtime shutdown runs after window close in AppController).
+        # Only after every reader is joined may the owner close/unlink.
         phase = time.perf_counter()
         observer_ok = True
         if runtime is not None:
@@ -2162,21 +2175,19 @@ class ConfigurationModeWidget(QWidget):
 
         # Phase 3: verify the old process is actually gone (bounded poll
         # on process state — no sleeps-to-drain, no global event flush).
+        # Uses the handle's own serialized helpers: wait_for_exit() never
+        # touches pipes/SHM (safe after stop closed them) and terminate()
+        # is a no-op unless the child is still alive. Direct
+        # old_handle.process.is_alive()/terminate()/join() calls are
+        # forbidden here: stop_camera() above already closed this handle.
         phase = time.perf_counter()
         exited = True
         if old_handle is not None:
             try:
-                deadline = time.monotonic() + _TEARDOWN_VERIFY_TIMEOUT_S
-                while old_handle.process.is_alive() and time.monotonic() < deadline:
-                    time.sleep(0.02)
-                exited = not old_handle.process.is_alive()
+                exited = old_handle.wait_for_exit(_TEARDOWN_VERIFY_TIMEOUT_S)
                 if not exited:
-                    try:
-                        old_handle.process.terminate()
-                        old_handle.process.join(1.0)
-                    except Exception:
-                        pass
-                    exited = not old_handle.process.is_alive()
+                    old_handle.terminate()
+                    exited = old_handle.wait_for_exit(1.0)
                     timings.escalated = True
             except Exception:
                 logger.debug("Process exit verification failed", exc_info=True)
@@ -2264,6 +2275,12 @@ class ConfigurationModeWidget(QWidget):
                 self._runtime_service.stop_observer(old_camera_id)
             except Exception:
                 pass
+        # Crash-safety (same contract as _on_disconnect): no stats probes
+        # once a teardown owns the pipeline; control workers quit now and
+        # are reaped deterministically after the background op starts.
+        self._stats_timer.stop()
+        self._stop_focus_worker()
+        self._stop_nuc_worker(timeout_ms=0)
         generation = self._begin_session(camera_id)
 
         if config is None and connect and self._runtime_service is not None:
@@ -2301,6 +2318,12 @@ class ConfigurationModeWidget(QWidget):
                 )
             if not started:  # lost a race with another op; queue instead
                 self._pending_switch = (camera_id, connect, config)
+            else:
+                # Deterministic control-worker shutdown (bounded waits);
+                # in-flight requests abort on handle STOPPING (see
+                # _on_disconnect for the contract).
+                self._stop_focus_worker(timeout_ms=8000)
+                self._stop_nuc_worker(timeout_ms=8000)
             return
 
         # No pipeline to tear down and no connect requested: pure reselect.
@@ -2325,6 +2348,14 @@ class ConfigurationModeWidget(QWidget):
             self._on_bg_result(tag, result)
         else:
             self._on_bg_error(tag, message)
+        # Teardown/connect owns the pipeline only while in flight: resume
+        # stats polling now (a pending switch/disconnect below stops it
+        # again before its own background op starts).
+        try:
+            if not self._stats_timer.isActive():
+                self._stats_timer.start(1000)
+        except RuntimeError:
+            pass  # widget teardown; nothing left to poll
         self._process_pending_camera_request()
 
     def _on_bg_result(self, tag: str | None, result: object) -> None:
@@ -3207,7 +3238,8 @@ class ConfigurationModeWidget(QWidget):
         Disconnecting a running camera automatically performs the full
         safe shutdown sequence (observer -> consumer -> acquisition ->
         child process -> SHM detach) in a background operation. The GUI
-        shows DISCONNECTING immediately and never blocks.
+        shows DISCONNECTING immediately; control-worker shutdown uses
+        bounded waits so a running QThread is never destroyed.
         """
         if not self._selected_camera_id or not self._runtime_service:
             return
@@ -3232,10 +3264,14 @@ class ConfigurationModeWidget(QWidget):
         self._acq_panel.set_acquisition_running(False)
 
         # Focus + NUC no longer available once the camera stops.
+        # Non-blocking quit here (live feed protection); the deterministic
+        # bounded wait happens below, AFTER the background teardown has
+        # started, so an in-flight focus/NUC request aborts as soon as the
+        # handle reaches STOPPING instead of settling to completion.
         self._stop_focus_worker()
         self._focus_camera_id = None
         self._acq_panel.set_focus_enabled(False, "Camera not running")
-        self._stop_nuc_worker()
+        self._stop_nuc_worker(timeout_ms=0)
         self._nuc_camera_id = None
         self._acq_panel.set_nuc_enabled(False, "Camera not running")
 
@@ -3247,6 +3283,11 @@ class ConfigurationModeWidget(QWidget):
         self._vl_widget.clear()
         self._set_finder_thumbnail(None)
 
+        # Crash-safety: stop stats polling BEFORE the background teardown
+        # starts so no queued QTimer callback can enter camera_stats()
+        # (pipe/SHM reads) after teardown begins. Restarted in _on_bg_done.
+        self._stats_timer.stop()
+
         self._set_lifecycle(CameraConnectionState.DISCONNECTING)
         self._status_label.setText(f"Disconnecting {camera_id}...")
         started = self._run_background(
@@ -3255,6 +3296,13 @@ class ConfigurationModeWidget(QWidget):
         )
         if not started:
             self._pending_disconnect = True
+
+        # Deterministic control-worker shutdown (bounded waits). The
+        # teardown above drives the handle to STOPPING, which aborts any
+        # in-flight focus/NUC request quickly; these waits then return
+        # fast and guarantee no QThread is destroyed while running.
+        self._stop_focus_worker(timeout_ms=8000)
+        self._stop_nuc_worker(timeout_ms=8000)
 
     def _log_start_click(self) -> None:
         """Section-1 physical Start-button snapshot (no inference).
@@ -3685,7 +3733,15 @@ class ConfigurationModeWidget(QWidget):
         states are never touched (a background operation owns them), and
         driver-level RECONNECTING keeps the transport alive, so recovery
         in progress is left alone. All probes are non-blocking.
+
+        Crash-safety: while ANY background camera operation owns the
+        pipeline (connect/switch/disconnect/teardown), no transport probe
+        runs here. The teardown thread closes pipes/SHM; even though the
+        handle serializes those against polls, skipping probes during
+        teardown removes the GUI thread from the shutdown path entirely.
         """
+        if self._bg_busy():
+            return
         if (
             self._runtime_service is not None
             and self._selected_camera_id is not None
