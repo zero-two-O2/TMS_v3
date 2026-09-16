@@ -8,9 +8,12 @@ Enforces mutual exclusion between Live and Configuration modes.
 from __future__ import annotations
 
 import logging
+import threading
+import time
+from enum import Enum
 from typing import Optional
 
-from PyQt6.QtCore import QObject, Qt, pyqtSlot
+from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import QMessageBox
 from PyQt6.sip import isdeleted
 
@@ -36,6 +39,15 @@ from thermal_monitor.ui.theme import ThemeManager
 
 
 logger = logging.getLogger(__name__)
+
+
+class TransitionState(str, Enum):
+    """Visible UI transition state (prevents reentrant navigation)."""
+
+    IDLE = "idle"
+    ENTERING_MODE = "entering_mode"
+    ACTIVE = "active"
+    LEAVING_MODE = "leaving_mode"
 
 
 class AppController(QObject):
@@ -88,6 +100,26 @@ class AppController(QObject):
         # (e.g. touching launcher buttons whose C++ objects are already
         # gone) or resurrect UI via _show_launcher().
         self._shutting_down = False
+
+        # --- Visible-transition orchestration (seamless Launcher <-> mode) ---
+        # The Launcher is a persistent application-level window: it is
+        # hidden/shown for ordinary navigation, never destroyed/recreated.
+        # Mode teardown (camera/process/SHM/worker joins) always runs
+        # BEHIND the visible transition — the GUI thread never waits for
+        # it. Monotonic generation drops stale destroyed callbacks from
+        # asynchronously closed modes.
+        self._transition_state = TransitionState.IDLE
+        self._transition_generation = 0
+        self._transition_t0_ns = 0
+        self._transition_label = ""
+        self._transition_visible_ns = 0
+        self._pending_mode: ApplicationMode | None = None
+        # Event-loop gap watchdog: while a transition is in flight a
+        # 25 ms heartbeat records the worst GUI-thread stall so any
+        # >50 ms freeze is attributed to the stage window it fell in.
+        self._gap_timer: QTimer | None = None
+        self._gap_last_ns = 0
+        self._gap_max_ms = 0.0
 
         # Connect mode service for mutual exclusion enforcement
         self._mode_service.add_observer(self._on_mode_changed)
@@ -388,62 +420,289 @@ class AppController(QObject):
 
     def _request_live_mode(self) -> None:
         """Request to open Live mode with mutual exclusion check."""
-        if self._mode_service.is_configuration_active():
-            QMessageBox.warning(
-                None,
-                "Configuration Mode Active",
-                "Configuration Mode is currently active.\n\n"
-                "Please close Configuration Mode before opening Live Mode.",
-                QMessageBox.StandardButton.Ok
-            )
+        if self._mode_service.is_configuration_active() or self._config_open:
+            # Exclusive hardware: leave Configuration first WITHOUT
+            # freezing, then enter Live automatically once the visible
+            # transition has handed control back. The Launcher shell
+            # stays responsive throughout.
+            self._queue_mode_after_leave(ApplicationMode.LIVE)
             return
 
+        t0 = self._transition_begin("Launcher -> Live")
         self._ensure_launcher_hidden()
         live_window = self._create_live_window()
         live_window.on_mode_activated()
+        self._transition_state = TransitionState.ACTIVE
         live_window.showMaximized()
         self._live_open = True
         self._mode_service.set_live_active(True)
         self._update_launcher_buttons()
+        self._transition_visible_ns = time.perf_counter_ns()
+        self._transition_mark("live_visible")
+        self._transition_end()
 
     def _request_configuration_mode(self) -> None:
         """Request to open Configuration mode with mutual exclusion check."""
-        if self._mode_service.is_live_active():
-            QMessageBox.warning(
-                None,
-                "Live Mode Active",
-                "Live Mode is currently active.\n\n"
-                "Please close Live Mode before opening Configuration Mode.",
-                QMessageBox.StandardButton.Ok
-            )
+        if self._mode_service.is_live_active() or self._live_open:
+            # Exclusive hardware: leave Live first WITHOUT freezing,
+            # then enter Configuration automatically. See above.
+            self._queue_mode_after_leave(ApplicationMode.CONFIGURATION)
             return
 
+        t0 = self._transition_begin("Launcher -> Configuration")
         self._ensure_launcher_hidden()
         config_window = self._create_config_window()
         config_window.on_mode_activated()
+        self._transition_state = TransitionState.ACTIVE
         config_window.showMaximized()
         self._config_open = True
         self._mode_service.set_configuration_active(True)
         self._update_launcher_buttons()
+        self._transition_visible_ns = time.perf_counter_ns()
+        self._transition_mark("configuration_visible")
+        self._transition_end()
 
     def _request_offline_mode(self) -> None:
         """Request to open Offline mode (independent, no mutual exclusion)."""
+        t0 = self._transition_begin("Launcher -> Offline")
         offline_window = self._create_offline_window()
         offline_window.on_mode_activated()
         offline_window.showMaximized()
+        self._transition_visible_ns = time.perf_counter_ns()
+        self._transition_mark("offline_visible")
+        self._transition_end()
+
+    def _queue_mode_after_leave(self, mode: ApplicationMode) -> None:
+        """Leave the current exclusive mode, then enter ``mode`` seamlessly.
+
+        Used for direct Configuration <-> Live switches: the current
+        mode is hidden and its teardown starts in the background while
+        the Launcher shell is already interactive; the destination mode
+        is entered as soon as the source window is destroyed (its
+        resources are released by then). The GUI thread never waits.
+        """
+        self._pending_mode = mode
+        if self._config_open and self._config_window is not None:
+            self._leave_mode_to_launcher("Configuration", self._config_window)
+        elif self._live_open and self._live_window is not None:
+            self._leave_mode_to_launcher("Live", self._live_window)
+        else:
+            # Flags disagree with reality: enter directly.
+            pending, self._pending_mode = self._pending_mode, None
+            if pending is not None:
+                self._on_mode_requested(pending)
 
     def _ensure_launcher_hidden(self) -> None:
         """Hide launcher window if visible."""
-        if self._launcher_window and self._launcher_window.isVisible():
-            self._launcher_window.hide()
+        if self._launcher_alive():
+            try:
+                if self._launcher_window.isVisible():
+                    self._launcher_window.hide()
+            except RuntimeError:
+                pass
 
     def _show_launcher(self) -> None:
-        """Show launcher window maximized."""
+        """Show the persistent Launcher immediately (never blocks).
+
+        The window is shown, raised and activated FIRST so it paints
+        without delay; camera discovery refreshes asynchronously behind
+        it (see ``LauncherWindow.refresh_discovery_async``) instead of
+        stalling the first paint with a multi-second GVCP broadcast.
+        """
         if not self._launcher_alive():
             self._create_launcher_window()
-        self._launcher_window.showMaximized()
-        self._launcher_window.refresh_discovery()
+        try:
+            self._launcher_window.showMaximized()
+        except RuntimeError:
+            return  # torn down mid-show; shutdown owns the rest
+        self._transition_visible_ns = time.perf_counter_ns()
+        self._transition_mark("launcher_visible")
+        try:
+            self._launcher_window.notify_transition_shown()
+        except RuntimeError:
+            pass
         self._update_launcher_buttons()
+        try:
+            self._launcher_window.refresh_discovery_async()
+        except RuntimeError:
+            pass
+
+    # -- Seamless-transition orchestration ----------------------------------
+    #
+    # Ordering (the whole point): USER CLICKS BACK/CLOSE -> detach mode
+    # from the active UI -> show the Launcher IMMEDIATELY -> continue
+    # camera/process/SHM/worker teardown asynchronously. The GUI thread
+    # never waits for teardown, and the Launcher never gets
+    # destroyed/recreated for ordinary navigation.
+
+    def _transition_begin(self, label: str) -> int:
+        """Start transition instrumentation; returns the request timestamp."""
+        self._transition_generation += 1
+        self._transition_label = label
+        self._transition_t0_ns = time.perf_counter_ns()
+        self._transition_visible_ns = 0
+        self._gap_max_ms = 0.0
+        self._gap_last_ns = self._transition_t0_ns
+        logger.info("[MODE-TRANSITION] %s requested t_ns=%d", label, self._transition_t0_ns)
+        try:
+            if self._gap_timer is None:
+                self._gap_timer = QTimer(self)
+                self._gap_timer.setInterval(25)
+                self._gap_timer.timeout.connect(self._gap_heartbeat)
+            self._gap_timer.start()
+        except RuntimeError:
+            pass  # headless/test harness without event loop
+        return self._transition_t0_ns
+
+    def _gap_heartbeat(self) -> None:
+        """Record the worst GUI event-loop stall during a transition."""
+        now = time.perf_counter_ns()
+        gap_ms = (now - self._gap_last_ns) / 1e6
+        self._gap_last_ns = now
+        if gap_ms > self._gap_max_ms:
+            self._gap_max_ms = gap_ms
+
+    def _transition_mark(self, stage: str) -> None:
+        """Log one transition stage with its request-relative offset."""
+        if not self._transition_t0_ns:
+            return
+        logger.info(
+            "[MODE-TRANSITION] %s %s +%0.1fms",
+            self._transition_label,
+            stage,
+            (time.perf_counter_ns() - self._transition_t0_ns) / 1e6,
+        )
+
+    def _transition_end(self) -> None:
+        """Stop the gap watchdog and log the transition summary."""
+        if not self._transition_t0_ns:
+            return
+        try:
+            if self._gap_timer is not None:
+                self._gap_timer.stop()
+        except RuntimeError:
+            pass
+        now = time.perf_counter_ns()
+        total_ms = (now - self._transition_t0_ns) / 1e6
+        visible_ms = (
+            (self._transition_visible_ns - self._transition_t0_ns) / 1e6
+            if self._transition_visible_ns
+            else -1.0
+        )
+        logger.info(
+            "[MODE-TRANSITION] %s transition_complete total=%0.1fms "
+            "request_to_visible=%0.1fms max_event_loop_gap=%0.1fms",
+            self._transition_label,
+            total_ms,
+            visible_ms,
+            self._gap_max_ms,
+        )
+        if self._gap_max_ms > 50.0:
+            logger.warning(
+                "[MODE-TRANSITION] %s GUI event-loop gap %0.1fms exceeded "
+                "50 ms budget (see stage timestamps above for the cause)",
+                self._transition_label,
+                self._gap_max_ms,
+            )
+        self._transition_state = TransitionState.IDLE
+        self._transition_t0_ns = 0
+        self._transition_label = ""
+
+    def _leave_mode_to_launcher(self, kind: str, window) -> None:
+        """Leave ``kind`` mode for the Launcher WITHOUT blocking.
+
+        1. The Launcher is shown FIRST (already painted before the mode
+           hides, so no blank/grey intermediate frame is exposed).
+        2. The mode window is hidden immediately (fast, no teardown).
+        3. Ownership flags and the ModeService are updated
+           synchronously so mutual exclusion stays exact even while
+           background teardown still runs.
+        4. The actual ``close()`` (fast closeEvent + ``WA_DeleteOnClose``
+           destruction) is deferred to the event loop; the ``destroyed``
+           handler only clears the reference and completes the
+           transition — it never re-blocks the GUI.
+        """
+        self._transition_begin(f"{kind} -> Launcher")
+        self._transition_state = TransitionState.LEAVING_MODE
+        generation = self._transition_generation
+        # 1. Launcher first: visible before the mode disappears.
+        self._show_launcher()
+        # 2. Detach the mode from the active UI immediately.
+        try:
+            window.hide()
+        except RuntimeError:
+            pass  # C++ object already gone
+        self._transition_mark("mode_hidden")
+        # 3. Synchronous ownership handoff (fast, in-memory only).
+        if kind == "Live":
+            self._live_open = False
+            try:
+                self._mode_service.set_live_active(False)
+            except Exception:
+                pass
+        elif kind == "Configuration":
+            self._config_open = False
+            try:
+                self._mode_service.set_configuration_active(False)
+            except Exception:
+                pass
+        self._update_launcher_buttons()
+        # 4. Deferred close: the window's own fast closeEvent detaches
+        # workers/observers without waiting; heavy teardown continues in
+        # background threads owned by the mode widgets.
+        try:
+            QTimer.singleShot(
+                0, lambda _w=window, _k=kind, _g=generation: self._finish_mode_close(_w, _k, _g)
+            )
+        except RuntimeError:
+            self._transition_end()
+
+    def _finish_mode_close(self, window, kind: str, generation: int) -> None:
+        """Deferred ``close()`` for a hidden mode window (event-loop turn).
+
+        Stale generations (a newer transition already owns the UI) still
+        close their window — resource cleanup must be deterministic —
+        but never disturb the visible Launcher.
+        """
+        if generation != self._transition_generation:
+            logger.debug(
+                "[MODE-TRANSITION] %s stale close (gen %d != %d); closing quietly",
+                kind,
+                generation,
+                self._transition_generation,
+            )
+        try:
+            already_gone = isdeleted(window)
+        except Exception:
+            already_gone = False
+        if already_gone:
+            # The C++ object died without a destroyed delivery reaching
+            # us: clear the reference and complete the transition here so
+            # navigation (and any pending mode switch) can never stall.
+            self._transition_mark(f"{kind.lower()}_destroyed")
+            self._transition_end()
+            if kind == "Live":
+                self._live_window = None
+            elif kind == "Configuration":
+                self._config_window = None
+            self._enter_pending_mode()
+            return
+        self._transition_mark(f"{kind.lower()}_close_started")
+        try:
+            window.close()
+        except RuntimeError:
+            pass  # already destroyed
+        except Exception:
+            logger.debug("Mode window close failed", exc_info=True)
+
+    def _launcher_visible(self) -> bool:
+        """True when the persistent Launcher is currently on screen."""
+        if not self._launcher_alive():
+            return False
+        try:
+            return bool(self._launcher_window.isVisible())
+        except RuntimeError:
+            return False
 
     def _launcher_alive(self) -> bool:
         """True when the launcher window exists and its C++ object is alive.
@@ -487,24 +746,66 @@ class AppController(QObject):
         pass
 
     def _on_live_window_destroyed(self) -> None:
-        """Handle Live window close."""
+        """Handle Live window destruction (idempotent, never blocks).
+
+        Normal flow (Back/leave): the Launcher is already visible and
+        ownership was handed off synchronously — just clear the
+        reference and complete the transition. Direct-close flow (window
+        X button): perform the handoff here; the window's own fast
+        closeEvent already detached workers/observers without waiting,
+        so showing the Launcher stays instant.
+        """
         if self._shutting_down:
             return
-        self._live_open = False
-        self._mode_service.set_live_active(False)
         self._live_window = None
+        if self._live_open:
+            # Direct close: no leave-flow ran yet.
+            self._transition_begin("Live -> Launcher")
+        self._live_open = False
+        try:
+            self._mode_service.set_live_active(False)
+        except Exception:
+            pass
+        if not self._launcher_visible():
+            # Launcher is not on screen yet (direct X-close, or the
+            # leave-flow show was lost): bring it back now. When the
+            # leave-flow already showed it this is a no-op by design.
+            self._show_launcher()
         self._update_launcher_buttons()
-        self._show_launcher()
+        self._transition_mark("live_destroyed")
+        self._transition_end()
+        self._enter_pending_mode()
 
     def _on_config_window_destroyed(self) -> None:
-        """Handle Configuration window close."""
+        """Handle Configuration window destruction (see above)."""
         if self._shutting_down:
             return
-        self._config_open = False
-        self._mode_service.set_configuration_active(False)
         self._config_window = None
+        if self._config_open:
+            # Direct close: no leave-flow ran yet.
+            self._transition_begin("Configuration -> Launcher")
+        self._config_open = False
+        try:
+            self._mode_service.set_configuration_active(False)
+        except Exception:
+            pass
+        if not self._launcher_visible():
+            self._show_launcher()
         self._update_launcher_buttons()
-        self._show_launcher()
+        self._transition_mark("configuration_destroyed")
+        self._transition_end()
+        self._enter_pending_mode()
+
+    def _enter_pending_mode(self) -> None:
+        """Enter a mode queued by a direct Configuration <-> Live switch."""
+        pending, self._pending_mode = self._pending_mode, None
+        if pending is None or self._shutting_down:
+            return
+        if self._live_open or self._config_open:
+            # Source teardown has not landed yet; re-queue behind it.
+            self._pending_mode = pending
+            return
+        self._on_mode_requested(pending)
 
     def _on_offline_window_destroyed(self) -> None:
         """Handle Offline window close."""
@@ -512,19 +813,35 @@ class AppController(QObject):
             return
         self._offline_window = None
         # Offline is independent, launcher not affected
+        self._transition_mark("offline_destroyed")
 
     def shutdown(self) -> None:
         """Clean shutdown of all windows."""
         self._shutting_down = True
-        # Close mode windows first (they stop their runtimes)
-        if self._live_window:
-            self._live_window.close()
-        if self._config_window:
-            self._config_window.close()
-        if self._offline_window:
-            self._offline_window.close()
+        self._pending_mode = None
+        try:
+            if self._gap_timer is not None:
+                self._gap_timer.stop()
+        except RuntimeError:
+            pass
+        # Close mode windows first (their fast closeEvents detach the
+        # display path without waiting; determinism comes from the
+        # runtime shutdown below, not from GUI-thread joins).
+        for window in (self._live_window, self._config_window, self._offline_window):
+            try:
+                if window is not None:
+                    window.close()
+            except RuntimeError:
+                pass  # C++ object already gone
+            except Exception:
+                logger.debug("Mode window close failed during shutdown", exc_info=True)
         if self._launcher_alive():
-            self._launcher_window.close()
+            try:
+                self._launcher_window.close()
+            except RuntimeError:
+                pass
+            except Exception:
+                logger.debug("Launcher close failed during shutdown", exc_info=True)
 
         # Shutdown runtime service
         self._runtime_service.shutdown()

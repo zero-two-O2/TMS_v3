@@ -71,7 +71,9 @@ class LiveThermalWidget(QWidget):
         self._render_worker = ThermalRenderWorker(parent=self)
         self._render_worker.latest_ready.connect(self._on_latest_ready)
         self._render_worker.render_error.connect(self._on_render_error)
-        self.destroyed.connect(self._render_worker.stop)
+        # Bounded reap (never an unbounded wait, never a TypeError from
+        # the destroyed(QObject*) argument) — see ThermalRenderWorker.
+        self.destroyed.connect(self._render_worker._on_destroyed)
         self._render_worker.start()
         self._last_submitted_sequence = -1
         self._last_hw_sequence: int | None = None
@@ -421,21 +423,65 @@ class LiveThermalWidget(QWidget):
         self._display_array = None
         self.render_error.emit(message)
 
+    def prepare_for_transition(self) -> None:
+        """Detach this widget from the live frame path WITHOUT blocking.
+
+        Drops the camera session (stale queued frames can never paint
+        over the next mode) and requests renderer shutdown, returning
+        immediately. The thread quits itself; the ``destroyed`` handler
+        reaps it with a bounded wait. Called by the owning mode before
+        the window is hidden so the visible transition never waits for
+        render threads.
+        """
+        try:
+            self.set_session(None)
+        except RuntimeError:
+            pass  # already torn down
+        try:
+            self._render_worker.request_stop()
+        except RuntimeError:
+            pass
+
+    def wait_for_renderer(self, timeout_ms: int = 200) -> bool:
+        """Bounded reap of the render thread (transition second pass).
+
+        The first pass (:meth:`prepare_for_transition`) wakes every
+        renderer without waiting; this second pass joins them. Called
+        for all sibling widgets before any C++ object dies, so Qt can
+        never delete a still-running QThread (which aborts the process).
+        Returns True when the thread finished.
+        """
+        try:
+            return bool(self._render_worker.stop_bounded(timeout_ms))
+        except RuntimeError:
+            return True  # already stopped / C++ object gone
+
     def closeEvent(self, event) -> None:
-        self._render_worker.stop()
+        # Fast path: request stop, then reap bounded. The normal case
+        # exits in milliseconds; the bound only guards a mid-render
+        # thread. Never an unbounded wait on the GUI thread.
+        try:
+            self._render_worker.request_stop()
+            self._render_worker.stop_bounded(500)
+        except RuntimeError:
+            pass  # already stopped / C++ object gone
         super().closeEvent(event)
 
     def close(self) -> bool:
         """Stop the persistent renderer even for widgets never shown."""
-        if self._render_worker.isRunning():
-            self._render_worker.stop()
+        try:
+            if self._render_worker.isRunning():
+                self._render_worker.request_stop()
+                self._render_worker.stop_bounded(500)
+        except RuntimeError:
+            pass
         return super().close()
 
     def __del__(self) -> None:
         try:
             worker = getattr(self, "_render_worker", None)
             if worker is not None and worker.isRunning():
-                worker.stop()
+                worker.request_stop()
         except RuntimeError:
             pass
 

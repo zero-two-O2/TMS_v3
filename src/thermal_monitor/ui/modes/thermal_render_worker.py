@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 
 import numpy as np
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QThread, Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QImage
 
 from thermal_monitor.core.frame_latency import (
@@ -121,14 +121,49 @@ class ThermalRenderWorker(QThread):
             self._palette = palette
             self._condition.notify()
 
-    def stop(self) -> None:
+    def request_stop(self) -> None:
+        """Request renderer shutdown WITHOUT waiting (transition fast path).
+
+        Sets the stop flag and wakes the thread, then returns immediately
+        so the GUI thread never blocks behind a mode transition. The
+        thread quits itself on render completion; the widget's
+        ``destroyed`` handler reaps it with :meth:`stop_bounded`.
+        Safe to call from any thread, including ``destroyed`` handlers
+        (the extra ``QObject*`` argument is ignored).
+        """
+        try:
+            with self._condition:
+                self._stopping = True
+                self._pending = None
+                self._latest_output = None
+                self._latest_notification_pending = False
+                self._condition.notify()
+        except RuntimeError:
+            pass  # C++ object already gone; nothing to stop
+
+    def _on_destroyed(self, _obj: object = None) -> None:
+        """Safe ``destroyed``-signal target: bounded reap, never a hang.
+
+        ``destroyed(QObject*)`` must never deliver its argument into a
+        wait call (that raises TypeError inside teardown). This slot
+        accepts and ignores the argument and reaps with a bounded wait;
+        on timeout the thread is left to quit itself on render
+        completion. Never blocks the event loop beyond ``timeout_ms``.
+        """
+        try:
+            self.stop_bounded(500)
+        except RuntimeError:
+            pass  # C++ object already gone; nothing to reap
+
+    def stop(self, *args) -> None:
         """Request renderer shutdown and wait for the thread to finish.
 
-        Waits indefinitely: widget ``destroyed`` handlers connect to this
-        slot directly, and Qt's ``destroyed(QObject*)`` signal must never
-        deliver its argument into a wait call (that raises TypeError
-        inside teardown and can cascade into a native crash). Use
-        :meth:`stop_bounded` when an explicit timeout is required.
+        Waits indefinitely: prefer :meth:`request_stop` on the visible
+        transition path and :meth:`stop_bounded` from ``destroyed``
+        handlers (see :meth:`_on_destroyed`). Extra positional arguments
+        (e.g. the ``QObject*`` from ``destroyed``) are accepted and
+        ignored so a direct connection can never raise TypeError inside
+        teardown and cascade into a native crash.
         """
         with self._condition:
             self._stopping = True

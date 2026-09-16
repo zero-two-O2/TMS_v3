@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal 
+from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -44,6 +44,9 @@ class LauncherWindow(QMainWindow):
 
     # Signal emitted when user requests a mode change
     mode_requested = pyqtSignal(ApplicationMode)
+    # Carries background discovery outcomes to the GUI thread:
+    # (cameras, error_message). Empty error means success.
+    discovery_updated = pyqtSignal(list, str)
 
     def __init__(
         self,
@@ -68,6 +71,14 @@ class LauncherWindow(QMainWindow):
         self._setup_ui()
         self._setup_settings_menu()
         self._create_status_bar()
+        # Background discovery coordination (transition fast path): only
+        # one scan runs at a time; outcomes return via queued signal so
+        # the table is always updated on the GUI thread.
+        self._discovery_in_flight = False
+        # First-paint marker for mode-transition instrumentation; armed
+        # by notify_transition_shown() and consumed by paintEvent().
+        self._transition_paint_pending = False
+        self.discovery_updated.connect(self._apply_discovery_result)
         self._perform_initial_discovery()
 
     def _setup_settings_menu(self) -> None:
@@ -264,6 +275,83 @@ class LauncherWindow(QMainWindow):
     def refresh_discovery(self) -> None:
         """Public method to refresh discovery (e.g., after returning from other modes)."""
         self._perform_initial_discovery()
+
+    def refresh_discovery_async(self) -> None:
+        """Refresh discovery WITHOUT blocking the GUI thread.
+
+        Runs the (potentially multi-second GVCP broadcast) scan in a
+        daemon thread while the Launcher stays fully interactive; the
+        table updates via the queued ``discovery_updated`` signal when
+        the scan lands. Overlapping scans are coalesced: a refresh
+        requested while one is in flight is a no-op.
+        """
+        import logging as _logging
+        import threading as _threading
+
+        _logger = _logging.getLogger(__name__)
+        if self._discovery_in_flight:
+            _logger.debug("Launcher discovery refresh coalesced (scan in flight)")
+            return
+        self._discovery_in_flight = True
+        try:
+            self._status_bar_label.setText("Discovering cameras...")
+        except RuntimeError:
+            self._discovery_in_flight = False
+            return  # C++ object gone
+
+        discovery = self._discovery
+
+        def _scan() -> None:
+            try:
+                cameras = discovery.discover_cameras()
+            except Exception as exc:
+                try:
+                    self.discovery_updated.emit([], str(exc)[:300])
+                except RuntimeError:
+                    pass  # window torn down mid-scan
+            else:
+                try:
+                    self.discovery_updated.emit(list(cameras), "")
+                except RuntimeError:
+                    pass
+
+        _threading.Thread(target=_scan, name="LauncherDiscovery", daemon=True).start()
+
+    @pyqtSlot(list, str)
+    def _apply_discovery_result(self, cameras: list, error: str) -> None:
+        """Apply a background discovery outcome (GUI thread only)."""
+        self._discovery_in_flight = False
+        if error:
+            try:
+                self._status_bar_label.setText(f"Discovery failed: {error}")
+            except RuntimeError:
+                pass
+            return
+        self._discovered = list(cameras)
+        try:
+            self._refresh_camera_table()
+            self._update_status()
+            self._status_bar_label.setText(
+                f"Discovery complete: {len(self._discovered)} camera(s) found"
+            )
+        except RuntimeError:
+            pass  # torn down mid-update
+
+    def notify_transition_shown(self) -> None:
+        """Arm the first-paint marker for transition instrumentation."""
+        self._transition_paint_pending = True
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        if self._transition_paint_pending:
+            self._transition_paint_pending = False
+            import logging as _logging
+            import time as _time
+
+            _logging.getLogger(__name__).info(
+                "[MODE-TRANSITION] launcher_first_paint t_ns=%d",
+                _time.perf_counter_ns(),
+            )
+        super().paintEvent(event)
 
     def set_mode_buttons_enabled(self, live_enabled: bool, config_enabled: bool) -> None:
         """Enable/disable mode buttons based on mutual exclusion."""

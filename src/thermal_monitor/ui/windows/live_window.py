@@ -1142,34 +1142,191 @@ class LiveModeWidget(QWidget):
             pass
 
     def on_mode_deactivated(self) -> None:
-        """Stop live monitoring and tear down when leaving Live mode."""
+        """Stop live monitoring and tear down when leaving Live mode.
+
+        Visible-transition fast path: the GUI thread only detaches the
+        display path (signals, timers, render workers) and returns
+        immediately. Camera/process/SHM teardown runs in a background
+        daemon thread, so the Launcher (or the next mode) is already
+        interactive while the child processes exit. Lifecycle safety is
+        preserved: the startup token is bumped first (late queued
+        results are dropped as stale), the background thread reaps the
+        startup worker BEFORE stopping cameras (no orphan starts can
+        leak), and only this wall's own assigned cameras are stopped.
+        """
+        cameras, worker, legacy = self._begin_transition_detach()
+        self._stop_cameras_background(cameras, worker, legacy)
+
+    def _begin_transition_detach(self) -> tuple[list[str], object, object]:
+        """GUI-thread immediate part of leaving Live mode (never blocks).
+
+        Bumps the startup generation FIRST so any late queued
+        ``camera_started``/``camera_failed``/result signal is dropped as
+        stale, disconnects every observer/tile signal, stops timers and
+        render workers, and snapshots this wall's assigned cameras for
+        the background teardown. Returns ``(camera_ids, worker, legacy
+        observer)`` for :meth:`_stop_cameras_background`.
+        """
+        import time as _time
+
+        _t0 = _time.perf_counter_ns()
         self._startup_token += 1
-        self._startup_abort.set()
-        self._take_down_startup_worker()
+        try:
+            self._startup_abort.set()
+        except Exception:
+            pass
+        # Non-blocking startup-worker detach: signals are cut now; the
+        # thread itself is reaped by the background teardown (never
+        # wait() on the GUI thread).
+        worker = self._detach_startup_worker()
         self._stop_stats_timer()
-        self._disconnect_all_tiles()
-        if self._runtime_service is not None:
-            for camera_id in list(self._camera_to_slot.keys()):
-                try:
-                    self._runtime_service.stop_camera(camera_id)
-                except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception("Failed to stop camera %s on mode exit", camera_id)
-        elif self._legacy_observer is not None:
-            try:
-                self._legacy_observer.stop()
-            except Exception:
-                pass
-        # Reset tiles to not available
+        # Feed renderers, two passes: FIRST wake every renderer without
+        # waiting (session drop + stop request, so no stale frame can be
+        # accepted from this instant on), THEN join them all with a
+        # bounded wait. Joining before any C++ object dies guarantees Qt
+        # can never delete a still-running QThread (which aborts the
+        # process with no Python traceback). The wakes overlap, so the
+        # total cost is ~one renderer exit, not sixteen.
+        # (Pass 1 below wakes; pass 2 joins.)
+        feed_widgets = []
         for tile in self._tiles:
-            tile.clear_camera()
+            for widget in (
+                getattr(tile, "_image_widget", None),
+                getattr(tile, "_vl_widget", None),
+            ):
+                if widget is not None:
+                    feed_widgets.append(widget)
+        for widget in feed_widgets:
+            try:
+                widget.prepare_for_transition()
+            except RuntimeError:
+                pass  # C++ object already gone
+            except Exception:
+                logger.debug("Tile transition detach failed", exc_info=True)
+        for widget in feed_widgets:
+            try:
+                if not widget.wait_for_renderer(timeout_ms=200):
+                    logger.warning(
+                        "Render worker still running after 200 ms; "
+                        "leaving it to quit itself on render completion"
+                    )
+            except RuntimeError:
+                pass
+            except Exception:
+                logger.debug("Render reap failed", exc_info=True)
+        self._disconnect_all_tiles()
+        cameras = list(self._camera_to_slot.keys())
+        legacy, self._legacy_observer = self._legacy_observer, None
+        # Reset tiles to not available (fast: text + clear only, the
+        # renderers were already asked to stop above).
+        for tile in self._tiles:
+            try:
+                tile.clear_camera()
+            except RuntimeError:
+                pass
+            except Exception:
+                logger.debug("Tile clear failed", exc_info=True)
         self._camera_to_slot.clear()
         self._connected_observers.clear()
         self._hovered = None
-        if self._stats_panel is not None:
-            self._stats_panel.show_system()
-        self._set_summary("Stopped")
-        self._update_button_state()
+        try:
+            if self._stats_panel is not None:
+                self._stats_panel.show_system()
+        except RuntimeError:
+            pass
+        try:
+            self._set_summary("Stopped")
+            self._update_button_state()
+        except RuntimeError:
+            pass
+        logger.info(
+            "[MODE-TRANSITION] live_detach_complete cameras=%d detach_ms=%.1f",
+            len(cameras),
+            (_time.perf_counter_ns() - _t0) / 1e6,
+        )
+        return cameras, worker, legacy
+
+    def _stop_cameras_background(
+        self, cameras: list[str], worker: object, legacy: object
+    ) -> None:
+        """Tear down Live cameras off the GUI thread (lifecycle-safe).
+
+        Order: reap the orphaned startup worker FIRST (bounded wait —
+        its abort flag is already set, so at most one in-flight
+        ``start_camera`` can still be running), then ``stop_camera``
+        each of THIS wall's assigned cameras through the runtime's
+        hardened ``CameraProcessHandle`` state machine
+        (RUNNING -> STOPPING -> CHILD_STOPPED -> SHM_RELEASED ->
+        PIPES_CLOSED -> STOPPED). Only the snapshotted camera set is
+        touched: cameras owned by another mode sharing the runtime are
+        never stopped here.
+        """
+        import threading as _threading
+        import time as _time
+
+        runtime = self._runtime_service
+        if worker is None and not cameras and legacy is None:
+            return
+
+        def _teardown() -> None:
+            _t0 = _time.perf_counter_ns()
+            logger.info(
+                "[MODE-TRANSITION] background_teardown_started cameras=%d",
+                len(cameras),
+            )
+            if worker is not None:
+                try:
+                    running = worker.isRunning()
+                except RuntimeError:
+                    running = False
+                if running:
+                    try:
+                        finished = worker.wait(8000)
+                    except RuntimeError:
+                        finished = True
+                    if not finished:
+                        logger.warning(
+                            "Startup worker still running after 8000 ms; "
+                            "leaving it to quit itself on operation completion"
+                        )
+                        try:
+                            worker.finished.connect(worker.deleteLater)
+                        except RuntimeError:
+                            pass
+                    else:
+                        try:
+                            worker.deleteLater()
+                        except RuntimeError:
+                            pass
+                else:
+                    try:
+                        worker.deleteLater()
+                    except RuntimeError:
+                        pass
+            if runtime is not None:
+                for camera_id in cameras:
+                    try:
+                        runtime.stop_camera(camera_id)
+                    except Exception:
+                        logger.exception(
+                            "Failed to stop camera %s on mode exit", camera_id
+                        )
+            elif legacy is not None:
+                try:
+                    legacy.stop()
+                except Exception:
+                    pass
+            logger.info(
+                "[MODE-TRANSITION] background_teardown_complete "
+                "cameras=%d teardown_ms=%.1f",
+                len(cameras),
+                (_time.perf_counter_ns() - _t0) / 1e6,
+            )
+
+        thread = _threading.Thread(
+            target=_teardown, name="LiveModeTeardown", daemon=True
+        )
+        thread.start()
 
     def _log_live_config_diagnostics(self) -> None:
         """INFO-level trace of the exact configuration path Live sees.
@@ -1394,6 +1551,42 @@ class LiveModeWidget(QWidget):
             return False
         return bool(running) and camera_id in self._connected_observers
 
+    def _detach_startup_worker(self):
+        """Detach the camera-startup worker WITHOUT waiting (GUI fast path).
+
+        Disconnects GUI slots FIRST so late queued results cannot reach
+        them, sets the abort flag (checked between cameras), reparents
+        the worker OFF the wall (a parented QThread deleted by window
+        teardown while still running aborts the process with
+        ``QThread: Destroyed while thread is still running``), and
+        chains ``deleteLater`` to the thread's ``finished`` signal. The
+        thread itself is reaped by the background teardown (see
+        :meth:`_stop_cameras_background`), never by ``wait()`` here, so
+        the GUI thread never blocks. Returns the worker (or None).
+        """
+        worker, self._startup_worker = self._startup_worker, None
+        if worker is None:
+            return None
+        try:
+            self._startup_abort.set()
+        except Exception:
+            pass
+        for signal_name in ("camera_started", "camera_failed", "finished"):
+            try:
+                getattr(worker, signal_name).disconnect()
+            except Exception:
+                pass
+        try:
+            # Ownership leaves the dying window FIRST: window teardown
+            # must never delete this (possibly blocked in start_camera)
+            # thread. The finished -> deleteLater chain below owns it
+            # from here on, plus the background teardown's bounded wait.
+            worker.setParent(None)
+            worker.finished.connect(worker.deleteLater)
+        except RuntimeError:
+            return None  # C++ object already gone; nothing to reap
+        return worker
+
     def _take_down_startup_worker(self) -> None:
         """Stop the camera-startup worker deterministically.
 
@@ -1402,6 +1595,10 @@ class LiveModeWidget(QWidget):
         (bounded) for the thread to finish BEFORE deleteLater. Deleting
         a running QThread aborts the process with no Python traceback,
         so the wait-then-delete order here is load-bearing.
+
+        Blocks up to ~8 s: use only on the shutdown path (where no UI
+        must stay responsive), never on a visible mode transition (use
+        :meth:`_detach_startup_worker` there).
         """
         worker, self._startup_worker = self._startup_worker, None
         if worker is None:

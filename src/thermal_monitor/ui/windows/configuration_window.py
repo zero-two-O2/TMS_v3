@@ -676,6 +676,15 @@ class ConfigurationModeWidget(QWidget):
         self._nuc_thread: QThread | None = None
         self._nuc_worker: NucWorker | None = None
         self._nuc_camera_id: str | None = None
+        # Retiring control threads: non-blocking detach reparents a
+        # worker thread OFF the (possibly dying) window so teardown can
+        # never delete a running QThread (process abort). Unparenting
+        # alone is not enough — the Python wrapper refcount would drop
+        # to zero at return and SIP would delete the running C++ object
+        # immediately. This set keeps one Python reference per retiring
+        # thread until its finished signal fires, which chains the
+        # deleteLater and releases the reference.
+        self._retiring_threads: set = set()
 
         # Dirty state tracking for camera-specific configurations
         self._dirty_camera_configs: set[str] = set()
@@ -2072,6 +2081,72 @@ class ConfigurationModeWidget(QWidget):
                 logger.debug("Runtime observer detach failed", exc_info=True)
         return True
 
+    def _detach_observer_fast(self):
+        """Detach the widget's observer WITHOUT blocking (transition fast path).
+
+        Disconnects the Qt signals FIRST (in-flight queued results can no
+        longer reach the slot), renews the session epoch so any late
+        delivery is stale by token, and returns the detached observer
+        for :meth:`_stop_observer_background`. The consumer-thread join
+        and runtime-side detach happen off the GUI thread, so the
+        visible transition never waits for them.
+        """
+        observer, self._observer = self._observer, None
+        if observer is None:
+            return None
+        for signal_name, slot in (
+            ("result_ready", self._on_processing_result),
+            ("error_occurred", self._on_observer_error),
+        ):
+            try:
+                getattr(observer, signal_name).disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+        camera_id = getattr(observer, "camera_id", None) or self._selected_camera_id
+        try:
+            self._session.renew(camera_id or "")
+        except Exception:
+            pass
+        return observer
+
+    def _stop_observer_background(self, observer) -> None:
+        """Stop a detached observer off the GUI thread (lifecycle-safe).
+
+        Joins the processing-consumer thread (bounded) and clears the
+        runtime-side reference. The GUI thread already cut the display
+        path, so late results are dropped by signal disconnect +
+        session-epoch token even while this runs.
+        """
+        if observer is None:
+            return
+        import threading as _threading
+        import time as _time
+
+        camera_id = getattr(observer, "camera_id", None) or self._selected_camera_id
+        runtime = self._runtime_service
+
+        def _teardown() -> None:
+            _t0 = _time.perf_counter_ns()
+            logger.info("[MODE-TRANSITION] background_teardown_started cam=%s", camera_id)
+            try:
+                observer.stop(timeout=_OBSERVER_STOP_TIMEOUT_S)
+            except Exception:
+                logger.exception("Observer stop failed for camera %s", camera_id)
+            if runtime is not None and camera_id is not None:
+                try:
+                    runtime.stop_observer(camera_id)
+                except Exception:
+                    logger.debug("Runtime observer detach failed", exc_info=True)
+            logger.info(
+                "[MODE-TRANSITION] background_teardown_complete cam=%s teardown_ms=%.1f",
+                camera_id,
+                (_time.perf_counter_ns() - _t0) / 1e6,
+            )
+
+        _threading.Thread(
+            target=_teardown, name=f"ConfigObserverTeardown-{camera_id}", daemon=True
+        ).start()
+
     def _bg_busy(self) -> bool:
         """True while a background camera operation is undelivered.
 
@@ -2518,12 +2593,24 @@ class ConfigurationModeWidget(QWidget):
         except RuntimeError:
             return
         if timeout_ms <= 0:
-            # Non-blocking: Qt owns cleanup once the worker's queued
-            # finished/failed signal quits the thread's event loop.
+            # Non-blocking: ownership leaves the (possibly dying) window
+            # FIRST — window teardown must never delete this running
+            # QThread (that aborts the process) — then Qt owns cleanup
+            # once the worker's queued finished/failed signal quits the
+            # thread's event loop. The retiring set keeps one Python
+            # reference alive until finished fires: without it the
+            # wrapper refcount would hit zero at return and SIP would
+            # delete the still-running C++ object immediately (same
+            # abort, different owner).
             try:
+                thread.setParent(None)
+                self._retiring_threads.add(thread)
                 if worker is not None:
                     thread.finished.connect(worker.deleteLater)
                 thread.finished.connect(thread.deleteLater)
+                thread.finished.connect(
+                    lambda _t=thread: self._retire_thread_done(_t)
+                )
             except RuntimeError:
                 pass
             return
@@ -2534,11 +2621,25 @@ class ConfigurationModeWidget(QWidget):
         except RuntimeError:
             pass
         if not thread.wait(timeout_ms):
-                logger.warning(
-                    "Focus worker thread still running after %d ms; "
-                    "leaving it to quit itself on operation completion",
-                    timeout_ms,
-                )
+            logger.warning(
+                "Focus worker thread still running after %d ms; "
+                "leaving it to quit itself on operation completion",
+                timeout_ms,
+            )
+
+    def _retire_thread_done(self, thread) -> None:
+        """Release a retired control thread after it finished.
+
+        Runs on the GUI thread via the thread's own ``finished``
+        signal, AFTER the chained ``deleteLater`` was queued: the C++
+        object is already scheduled for deletion and the Python wrapper
+        may follow it at GC. Only discards the registry reference; never
+        touches the (possibly half-dead) thread object itself.
+        """
+        try:
+            self._retiring_threads.discard(thread)
+        except Exception:
+            pass
 
     def _start_focus_operation(self, camera_id: str, value_mm: "int | None") -> None:
         """Run one focus read (None) or write in a worker thread."""
@@ -2746,18 +2847,43 @@ class ConfigurationModeWidget(QWidget):
 
         Same contract as :meth:`_stop_focus_worker`: a timeout is logged,
         never silent, and the thread is left to quit itself rather than
-        destroyed while running.
+        destroyed while running. With ``timeout_ms<=0`` ownership leaves
+        the (possibly dying) window first so teardown can never delete
+        the running QThread (which aborts the process).
         """
         thread, self._nuc_thread = self._nuc_thread, None
-        self._nuc_worker = None
-        if thread is not None:
+        worker, self._nuc_worker = self._nuc_worker, None
+        if thread is None:
+            return
+        try:
             thread.quit()
-            if not thread.wait(timeout_ms):
-                logger.warning(
-                    "NUC worker thread still running after %d ms; "
-                    "leaving it to quit itself on operation completion",
-                    timeout_ms,
+        except RuntimeError:
+            return
+        if timeout_ms <= 0:
+            try:
+                thread.setParent(None)
+                self._retiring_threads.add(thread)
+                if worker is not None:
+                    thread.finished.connect(worker.deleteLater)
+                thread.finished.connect(thread.deleteLater)
+                thread.finished.connect(
+                    lambda _t=thread: self._retire_thread_done(_t)
                 )
+            except RuntimeError:
+                pass
+            return
+        try:
+            if worker is not None:
+                thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+        except RuntimeError:
+            pass
+        if not thread.wait(timeout_ms):
+            logger.warning(
+                "NUC worker thread still running after %d ms; "
+                "leaving it to quit itself on operation completion",
+                timeout_ms,
+            )
 
     def _refresh_nuc_panel(self) -> None:
         """Enable NUC when the selected camera runs; else disable."""
@@ -3838,27 +3964,90 @@ class ConfigurationModeWidget(QWidget):
             self._stats_timer.start(1000)
 
     def on_mode_deactivated(self) -> None:
-        """Called when configuration mode is deactivated."""
+        """Called when configuration mode is deactivated.
+
+        Visible-transition fast path: the GUI thread only cuts the
+        display path (observer signals, session epoch, timers, render
+        workers) and returns immediately. The observer/consumer join
+        runs in a background daemon thread. The camera child process
+        keeps running so a mode switch back (or Live mode sharing the
+        runtime) is fast.
+        """
+        import time as _time
+
+        _t0 = _time.perf_counter_ns()
         self._save_shelf_state()
         self._restore_connect_cursor()
         if self._camera_selection_dialog is not None:
-            self._camera_selection_dialog.close()
+            try:
+                self._camera_selection_dialog.close()
+            except RuntimeError:
+                pass
         if self._acq_setup_dialog is not None:
-            self._acq_setup_dialog.close()
+            try:
+                self._acq_setup_dialog.close()
+            except RuntimeError:
+                pass
         # Detach the display path; the camera child process keeps running
         # so a mode switch back (or Live mode sharing the runtime) is fast.
-        self._detach_observer()
-        self._stats_timer.stop()
+        detached = self._detach_observer_fast()
+        # Render workers, two passes (see LiveModeWidget): wake both
+        # without waiting, then join bounded — Qt must never delete a
+        # still-running QThread during window teardown.
+        _feed_widgets = [
+            widget
+            for widget in (
+                getattr(self, "_image_widget", None),
+                getattr(self, "_vl_widget", None),
+            )
+            if widget is not None
+        ]
+        for widget in _feed_widgets:
+            try:
+                widget.prepare_for_transition()
+            except RuntimeError:
+                pass
+            except Exception:
+                logger.debug("Render detach failed", exc_info=True)
+        for widget in _feed_widgets:
+            try:
+                if not widget.wait_for_renderer(timeout_ms=200):
+                    logger.warning(
+                        "Render worker still running after 200 ms; "
+                        "leaving it to quit itself on render completion"
+                    )
+            except RuntimeError:
+                pass
+            except Exception:
+                logger.debug("Render reap failed", exc_info=True)
+        try:
+            self._stats_timer.stop()
+        except RuntimeError:
+            pass
+        self._stop_observer_background(detached)
+        logger.info(
+            "[MODE-TRANSITION] config_detach_complete detach_ms=%.1f",
+            (_time.perf_counter_ns() - _t0) / 1e6,
+        )
 
     def closeEvent(self, event) -> None:
-        # Bounded waits: worker threads quit themselves on operation
-        # completion, so these return immediately in the normal case and
-        # only delay teardown while a control operation is mid-flight.
-        self._stop_focus_worker(timeout_ms=10000)
-        self._stop_nuc_worker(timeout_ms=15000)
+        # Transition fast path: NEVER block the GUI thread waiting for
+        # control workers here. Quit is requested (non-blocking) and the
+        # threads quit themselves on operation completion via their
+        # finished -> deleteLater chain; the observer detach above stops
+        # its consumer in the background. The Launcher is already visible
+        # while all of this drains.
+        try:
+            self._stop_focus_worker(timeout_ms=0)
+            self._stop_nuc_worker(timeout_ms=0)
+        except RuntimeError:
+            pass
         self.on_mode_deactivated()
-        self._config_service.remove_camera_change_callback(self._on_camera_config_changed)
-        self._config_service.remove_analysis_change_callback(self._on_analysis_config_changed)
+        try:
+            self._config_service.remove_camera_change_callback(self._on_camera_config_changed)
+            self._config_service.remove_analysis_change_callback(self._on_analysis_config_changed)
+        except Exception:
+            pass
         super().closeEvent(event)
 
 

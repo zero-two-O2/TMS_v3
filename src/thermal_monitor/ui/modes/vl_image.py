@@ -37,7 +37,9 @@ class VlImageWidget(QWidget):
         self._worker = VlRenderWorker(parent=self)
         self._worker.latest_ready.connect(self._on_latest_ready)
         self._worker.render_error.connect(self.render_error.emit)
-        self.destroyed.connect(self._worker.stop)
+        # Bounded reap (never an unbounded wait, never a TypeError from
+        # the destroyed(QObject*) argument) — see VlRenderWorker.
+        self.destroyed.connect(self._worker._on_destroyed)
         self._worker.start()
         # seq -> (camera_id, hw_sequence, acq_mono_ns), bounded by pruning.
         self._pending_meta: dict[int, tuple[str | None, int | None, int | None]] = {}
@@ -114,9 +116,38 @@ class VlImageWidget(QWidget):
         self._pending_meta.clear()
         self.update()
 
+    def prepare_for_transition(self) -> None:
+        """Detach this widget from the live frame path WITHOUT blocking.
+
+        Drops the camera session and requests renderer shutdown,
+        returning immediately (see LiveThermalWidget). The ``destroyed``
+        handler reaps the thread with a bounded wait.
+        """
+        try:
+            self.set_session(None)
+        except RuntimeError:
+            pass  # already torn down
+        try:
+            self._worker.request_stop()
+        except RuntimeError:
+            pass
+
+    def wait_for_renderer(self, timeout_ms: int = 200) -> bool:
+        """Bounded reap of the render thread (transition second pass).
+
+        See LiveThermalWidget.wait_for_renderer: all siblings are woken
+        first, then all are joined, so Qt can never delete a
+        still-running QThread during window teardown.
+        """
+        try:
+            return bool(self._worker.stop_bounded(timeout_ms))
+        except RuntimeError:
+            return True  # already stopped / C++ object gone
+
     def close(self) -> None:
         try:
-            self._worker.stop()
+            self._worker.request_stop()
+            self._worker.stop_bounded(500)
         except RuntimeError:
             pass  # already stopped / never started under test harnesses
 
@@ -124,7 +155,7 @@ class VlImageWidget(QWidget):
         worker = getattr(self, "_worker", None)
         if worker is not None:
             try:
-                worker.stop()
+                worker.request_stop()
             except RuntimeError:
                 pass
 

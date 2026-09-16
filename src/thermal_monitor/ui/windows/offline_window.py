@@ -511,18 +511,52 @@ class OfflineModeWidget(QWidget):
         # Process first frame
         self._request_frame_processing()
 
-    def _cleanup_worker(self) -> None:
-        """Stop and clean up the processing worker."""
+    def _cleanup_worker(self, *, blocking: bool = False) -> None:
+        """Stop and clean up the processing worker.
+
+        Transition fast path (``blocking=False``, the default): signals
+        are disconnected FIRST so no late ``result_ready`` can reach the
+        widget, the worker is asked to stop, and the thread is quit
+        WITHOUT ``wait()`` — cleanup finishes via its ``finished``
+        signal while the Launcher is already interactive. Pass
+        ``blocking=True`` only on the application-shutdown path, where
+        no UI must stay responsive and determinism matters.
+        """
         if self._worker:
-            self._worker.stop()
-            self._worker.result_ready.disconnect(self._on_processing_result)
-            self._worker.error_occurred.disconnect(self._on_processing_error)
+            try:
+                self._worker.stop()
+            except Exception:
+                pass
+            for signal_name, slot in (
+                ("result_ready", self._on_processing_result),
+                ("error_occurred", self._on_processing_error),
+            ):
+                try:
+                    getattr(self._worker, signal_name).disconnect(slot)
+                except (RuntimeError, TypeError):
+                    pass
             self._worker = None
-        if self._worker_thread:
-            if self._worker_thread.isRunning():
-                self._worker_thread.quit()
-                self._worker_thread.wait(1000)
-            self._worker_thread = None
+        thread, self._worker_thread = self._worker_thread, None
+        if thread is not None:
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    if blocking:
+                        thread.wait(1000)
+                    else:
+                        # Non-blocking reap: Qt owns deletion once the
+                        # thread's event loop drains.
+                        try:
+                            thread.finished.connect(thread.deleteLater)
+                        except RuntimeError:
+                            pass
+                else:
+                    try:
+                        thread.deleteLater()
+                    except RuntimeError:
+                        pass
+            except RuntimeError:
+                pass  # C++ object already gone
         self._worker_busy = False
 
     def close_recording(self) -> None:
@@ -838,14 +872,43 @@ class OfflineModeWidget(QWidget):
         """Called when offline mode becomes active."""
         pass
 
-    def closeEvent(self, event) -> None:
-        self._playback_timer.stop()
-        self._cleanup_worker()
+    def on_mode_deactivated(self) -> None:
+        """Called when offline mode is deactivated (transition fast path).
+
+        Stops playback and cuts the processing path WITHOUT blocking:
+        the worker thread drains in the background while the Launcher is
+        already interactive. Session bookkeeping is synchronous (fast,
+        in-memory only).
+        """
+        import time as _time
+
+        from thermal_monitor.core.logging import logger as _logger
+
+        _t0 = _time.perf_counter_ns()
+        try:
+            self._playback_timer.stop()
+        except RuntimeError:
+            pass
+        self._cleanup_worker(blocking=False)
         if self._current_session:
-            self._offline_service.remove_session_callback(
-                self._current_session.session_id, self._on_session_changed
-            )
-            self._offline_service.remove_session(self._current_session.session_id)
+            try:
+                self._offline_service.remove_session_callback(
+                    self._current_session.session_id, self._on_session_changed
+                )
+            except Exception:
+                pass
+            try:
+                self._offline_service.remove_session(self._current_session.session_id)
+            except Exception:
+                pass
+            self._current_session = None
+        _logger.info(
+            "[MODE-TRANSITION] offline_detach_complete detach_ms=%.1f",
+            (_time.perf_counter_ns() - _t0) / 1e6,
+        )
+
+    def closeEvent(self, event) -> None:
+        self.on_mode_deactivated()
         super().closeEvent(event)
 
 
