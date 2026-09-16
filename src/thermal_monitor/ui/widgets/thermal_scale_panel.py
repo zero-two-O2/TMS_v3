@@ -17,8 +17,19 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal, QRect
-from PyQt6.QtGui import QPainter, QColor, QLinearGradient, QFont, QPen, QBrush, QImage, QPixmap
+from PyQt6.QtCore import Qt, pyqtSignal, QRect, QSize
+from PyQt6.QtGui import (
+    QPainter,
+    QColor,
+    QLinearGradient,
+    QFont,
+    QFontMetrics,
+    QPen,
+    QBrush,
+    QImage,
+    QPixmap,
+    QIcon,
+)
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -31,10 +42,14 @@ from PyQt6.QtWidgets import (
     QLabel,
     QFrame,
     QHBoxLayout,
+    QStyledItemDelegate,
+    QStyle,
+    QStyleOptionViewItem,
 )
 
 import numpy as np
 
+from thermal_monitor.ui import palettes as _palettes
 from thermal_monitor.ui.theme import ThemeManager
 from thermal_monitor.ui.theme.properties import set_role, set_variant
 from thermal_monitor.ui.theme.themes import BUILTIN_THEMES
@@ -150,58 +165,175 @@ class ThermalScaleLegend(QWidget):
                 # below the controls.
 
     def _get_palette_colors(self) -> list[QColor]:
-        """Get color stops for the current palette."""
-        if self._palette == "temperature":
-            return [
-                QColor(0, 0, 128),    # Dark blue
-                QColor(0, 0, 255),    # Blue
-                QColor(0, 255, 255),  # Cyan
-                QColor(0, 255, 0),    # Green
-                QColor(255, 255, 0),  # Yellow
-                QColor(255, 128, 0),  # Orange
-                QColor(255, 0, 0),    # Red
-                QColor(128, 0, 0),    # Dark red
-            ]
-        elif self._palette == "iron":
-            return [
-                QColor(0, 0, 0),      # Black
-                QColor(64, 0, 0),     # Dark red
-                QColor(128, 0, 0),    # Red
-                QColor(255, 64, 0),   # Orange
-                QColor(255, 128, 0),  # Light orange
-                QColor(255, 255, 0),  # Yellow
-                QColor(255, 255, 128),# Light yellow
-                QColor(255, 255, 255),# White
-            ]
-        elif self._palette == "rainbow":
-            return [
-                QColor(128, 0, 128),  # Purple
-                QColor(0, 0, 255),    # Blue
-                QColor(0, 255, 255),  # Cyan
-                QColor(0, 255, 0),    # Green
-                QColor(255, 255, 0),  # Yellow
-                QColor(255, 128, 0),  # Orange
-                QColor(255, 0, 0),    # Red
-            ]
-        elif self._palette == "gray":
-            return [
-                QColor(0, 0, 0),
-                QColor(64, 64, 64),
-                QColor(128, 128, 128),
-                QColor(192, 192, 192),
-                QColor(255, 255, 255),
-            ]
-        elif self._palette == "hot":
-            return [
-                QColor(0, 0, 0),
-                QColor(128, 0, 0),
-                QColor(255, 0, 0),
-                QColor(255, 128, 0),
-                QColor(255, 255, 0),
-                QColor(255, 255, 128),
-                QColor(255, 255, 255),
-            ]
-        return [QColor(0, 0, 255), QColor(255, 0, 0)]
+        """Get color stops for the current palette.
+
+        Derived from the central registry (same definition as the
+        rendering LUT), so legend and image can never disagree.
+        """
+        return _palettes.get_qcolors(self._palette)
+
+
+class PaletteComboDelegate(QStyledItemDelegate):
+    """Dropdown delegate rendering ``[gradient preview] Name`` per row.
+
+    The gradient is sampled from the SAME 256-entry rendering LUT used
+    for thermal images (via :mod:`thermal_monitor.ui.palettes`), so the
+    preview always matches actual rendering.
+
+    The selection/hover background is painted first and the gradient is
+    drawn on top with its own thin border, so the preview stays visible
+    in normal, hovered, and selected states.
+    """
+
+    PREVIEW_WIDTH = 64
+    PREVIEW_HEIGHT = 10
+    LEFT_MARGIN = 8
+    GAP = 8
+    RIGHT_MARGIN = 8
+    TOP_BOTTOM = 4
+    _GRADIENT_SAMPLES = 32
+
+    def paint(
+        self,
+        painter: QPainter | None,
+        option: QStyleOptionViewItem,
+        index,
+    ) -> None:
+        if painter is None:
+            return
+        # Qt may invoke the delegate with an invalid/dangling index during
+        # stylesheet repolish or view layout (e.g. QApplication.setStyleSheet
+        # triggers a synchronous layout pass on the combo popup view).
+        # Dereferencing such an index crashes (access violation), so fall
+        # back to the default delegate rendering in that case.
+        try:
+            valid = index is not None and bool(index.isValid())
+        except RuntimeError:
+            valid = False
+        if not valid:
+            super().paint(painter, option, index)
+            return
+        painter.save()
+        try:
+            try:
+                display = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+                key = index.data(Qt.ItemDataRole.UserRole)
+            except RuntimeError:
+                super().paint(painter, option, index)
+                return
+            if not isinstance(key, str) or not key:
+                key = _palettes.display_to_key(display)
+
+            selected = bool(option.state & QStyle.StateFlag.State_Selected)
+            hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+
+            # --- Background (selection/hover aware, preview stays on top).
+            if selected:
+                painter.fillRect(option.rect, option.palette.highlight().color())
+                text_color = option.palette.highlightedText().color()
+            elif hovered:
+                hover = option.palette.highlight().color()
+                hover.setAlpha(48)
+                painter.fillRect(option.rect, hover)
+                text_color = option.palette.text().color()
+            else:
+                text_color = option.palette.text().color()
+
+            rect = option.rect
+            pw = self.PREVIEW_WIDTH
+            ph = self.PREVIEW_HEIGHT
+            preview_y = rect.center().y() - ph // 2
+            preview_rect = QRect(
+                rect.left() + self.LEFT_MARGIN, preview_y, pw, ph
+            )
+
+            # --- Gradient preview from the authoritative rendering LUT.
+            lut = _palettes.get_lut(key)
+            n = self._GRADIENT_SAMPLES
+            xs = np.linspace(0, 255, n).astype(int)
+            gradient = QLinearGradient(
+                float(preview_rect.left()), 0.0,
+                float(preview_rect.right() + 1), 0.0,
+            )
+            for pos, xi in enumerate(xs):
+                r, g, b = (int(v) for v in lut[int(xi)])
+                gradient.setColorAt(pos / (n - 1), QColor(r, g, b))
+            painter.fillRect(preview_rect, QBrush(gradient))
+            # Thin border keeps the strip visible on any background.
+            border = (
+                QColor(255, 255, 255, 200)
+                if selected
+                else QColor(0, 0, 0, 110)
+            )
+            painter.setPen(QPen(border, 1))
+            painter.drawRect(preview_rect.adjusted(0, 0, -1, -1))
+
+            # --- Label (existing app font; never shrunk for previews).
+            text_rect = QRect(
+                preview_rect.right() + 1 + self.GAP,
+                rect.top(),
+                rect.right() - (preview_rect.right() + 1 + self.GAP)
+                - self.RIGHT_MARGIN + 1,
+                rect.height(),
+            )
+            painter.setPen(QPen(text_color))
+            painter.setFont(option.font)
+            elided = QFontMetrics(option.font).elidedText(
+                display, Qt.TextElideMode.ElideRight, max(0, text_rect.width())
+            )
+            painter.drawText(
+                text_rect,
+                int(
+                    Qt.AlignmentFlag.AlignLeft
+                    | Qt.AlignmentFlag.AlignVCenter
+                ),
+                elided,
+            )
+        finally:
+            painter.restore()
+
+    def sizeHint(self, option: QStyleOptionViewItem, index) -> QSize:
+        fm = QFontMetrics(option.font)
+        fallback = QSize(
+            self.LEFT_MARGIN
+            + self.PREVIEW_WIDTH
+            + self.GAP
+            + fm.averageCharWidth() * 8
+            + self.RIGHT_MARGIN,
+            max(
+                fm.height() + 2 * self.TOP_BOTTOM,
+                self.PREVIEW_HEIGHT + 2 * self.TOP_BOTTOM,
+                22,
+            ),
+        )
+        # Same invalid-index hazard as paint(): stylesheet changes trigger
+        # synchronous sizeHint() calls with invalid indexes. Never
+        # dereference such an index (access violation); return a safe
+        # fallback size instead.
+        try:
+            valid = index is not None and bool(index.isValid())
+        except RuntimeError:
+            return fallback
+        if not valid:
+            return fallback
+        try:
+            display = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        except RuntimeError:
+            return fallback
+        text_w = fm.horizontalAdvance(display)
+        width = (
+            self.LEFT_MARGIN
+            + self.PREVIEW_WIDTH
+            + self.GAP
+            + text_w
+            + self.RIGHT_MARGIN
+        )
+        height = max(
+            fm.height() + 2 * self.TOP_BOTTOM,
+            self.PREVIEW_HEIGHT + 2 * self.TOP_BOTTOM,
+            22,
+        )
+        return QSize(width, height)
 
 
 class ThermalScalePanel(QWidget):
@@ -247,9 +379,15 @@ class ThermalScalePanel(QWidget):
         controls_layout.setSpacing(m.panel_form_spacing)
         controls_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
-        # Palette selector
+        # Palette selector: [gradient preview] Name per row, driven by
+        # the central registry. Icons cover the closed state; the custom
+        # delegate renders the richer gradient inside the dropdown.
         self._palette_combo = QComboBox()
-        self._palette_combo.addItems(["Temperature", "Iron", "Rainbow", "Gray", "Hot"])
+        self._populate_palette_combo()
+        self._palette_combo.setItemDelegate(
+            PaletteComboDelegate(self._palette_combo)
+        )
+        self._palette_combo.setIconSize(QSize(48, 12))
         self._palette_combo.currentTextChanged.connect(self._on_palette_changed)
         self._apply_input_style(self._palette_combo)
 
@@ -324,15 +462,20 @@ class ThermalScalePanel(QWidget):
         # Separators inherit the central QFrame border color.
         return
 
+    def _populate_palette_combo(self) -> None:
+        """Fill the combo from the central registry with preview icons."""
+        self._palette_combo.clear()
+        for key in _palettes.palette_keys():
+            display = _palettes.key_to_display(key)
+            icon = QIcon(_palettes.build_preview_pixmap(key, 48, 12))
+            self._palette_combo.addItem(icon, display)
+            idx = self._palette_combo.count() - 1
+            self._palette_combo.setItemData(
+                idx, key, Qt.ItemDataRole.UserRole
+            )
+
     def _on_palette_changed(self, text: str) -> None:
-        palette_map = {
-            "Temperature": "temperature",
-            "Iron": "iron",
-            "Rainbow": "rainbow",
-            "Gray": "gray",
-            "Hot": "hot",
-        }
-        palette = palette_map.get(text, "temperature")
+        palette = _palettes.display_to_key(text)
         self._legend.set_palette(palette)
         self.palette_changed.emit(palette)
 
@@ -349,14 +492,7 @@ class ThermalScalePanel(QWidget):
     # Public API
 
     def set_palette(self, palette: str) -> None:
-        palette_display = {
-            "temperature": "Temperature",
-            "iron": "Iron",
-            "rainbow": "Rainbow",
-            "gray": "Gray",
-            "hot": "Hot",
-        }
-        display = palette_display.get(palette, "Temperature")
+        display = _palettes.key_to_display(palette)
         idx = self._palette_combo.findText(display)
         if idx >= 0:
             self._palette_combo.setCurrentIndex(idx)
@@ -405,4 +541,4 @@ class ThermalScalePanel(QWidget):
         self.update_cursor_temperature(self._legend._cursor_temp, unit_symbol)
 
 
-__all__ = ["ThermalScalePanel", "ThermalScaleLegend"]
+__all__ = ["ThermalScalePanel", "ThermalScaleLegend", "PaletteComboDelegate"]

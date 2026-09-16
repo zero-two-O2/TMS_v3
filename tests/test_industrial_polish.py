@@ -242,12 +242,14 @@ def test_panel_headers_carry_header_property(widget) -> None:
 
 
 def test_temperature_scale_compact(qapp) -> None:
+    from thermal_monitor.ui.palettes import PALETTE_ORDER
+
     panel = ThermalScalePanel(None)
     try:
         assert panel._legend.minimumWidth() == 48
         assert panel._legend.maximumWidth() == 64
         # Controls still present and functional.
-        assert panel._palette_combo.count() == 5
+        assert panel._palette_combo.count() == len(PALETTE_ORDER)
         panel.set_palette("iron")
         assert panel._legend._palette == "iron"
         panel.set_manual_range(10.0, 50.0)

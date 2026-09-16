@@ -1220,9 +1220,11 @@ class ConfigurationEditor(QWidget):
         return editor
 
     def _create_display_editor(self) -> ConfigSectionEditor:
+        from thermal_monitor.ui.palettes import palette_keys
+
         editor = ConfigSectionEditor("Display", self._edit_config.ui.display, self._theme)
         editor.add_field(ConfigEditorField("default_palette", "Default Palette", str, "temperature",
-            options=["temperature", "iron", "rainbow", "gray", "hot"]))
+            options=palette_keys()))
         editor.add_field(ConfigEditorField("default_zoom", "Default Zoom", str, "Fit to Window",
             options=["Fit to Window", "50%", "100%", "200%", "400%"]))
         editor.add_field(ConfigEditorField("auto_range", "Auto Range", bool, True))

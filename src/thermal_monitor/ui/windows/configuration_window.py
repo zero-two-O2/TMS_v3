@@ -3916,8 +3916,9 @@ class ConfigurationWindow(QMainWindow):
         # Temperature menu
         temp_menu = menu_bar.addMenu("Temperature")
         palette_menu = temp_menu.addMenu("Palette")
-        for palette in ["temperature", "iron", "rainbow", "gray", "hot"]:
-            action = QAction(palette.capitalize(), self)
+        from thermal_monitor.ui.palettes import PALETTE_DISPLAY, PALETTE_ORDER
+        for palette in PALETTE_ORDER:
+            action = QAction(PALETTE_DISPLAY[palette], self)
             action.triggered.connect(lambda checked, p=palette: self._config_widget._image_widget.set_palette(p))
             palette_menu.addAction(action)
 

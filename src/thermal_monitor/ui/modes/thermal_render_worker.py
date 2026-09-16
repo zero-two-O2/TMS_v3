@@ -19,20 +19,10 @@ from thermal_monitor.core.frame_latency import (
 logger = logging.getLogger(__name__)
 
 
-def _lut(points: list[tuple[int, int, int]]) -> np.ndarray:
-    values = np.asarray(points, dtype=np.float32)
-    x = np.linspace(0.0, 1.0, len(values), dtype=np.float32)
-    indices = np.linspace(0.0, 1.0, 256, dtype=np.float32)
-    return np.rint(np.column_stack([np.interp(indices, x, values[:, channel]) for channel in range(3)])).astype(np.uint8)
-
-
-PALETTE_LUTS = {
-    "temperature": _lut([(0, 0, 128), (0, 255, 255), (0, 255, 0), (255, 255, 0), (255, 128, 0), (255, 0, 0), (128, 0, 0)]),
-    "iron": _lut([(0, 0, 0), (255, 0, 0), (255, 128, 0), (255, 255, 0), (255, 255, 128)]),
-    "rainbow": _lut([(128, 0, 128), (0, 0, 255), (0, 255, 255), (0, 255, 0), (255, 255, 0), (255, 0, 0)]),
-    "gray": np.repeat(np.arange(256, dtype=np.uint8)[:, None], 3, axis=1),
-    "hot": _lut([(0, 0, 0), (255, 0, 0), (255, 255, 0), (255, 255, 255)]),
-}
+# Authoritative palette LUTs live in thermal_monitor.ui.palettes (single
+# source of truth for rendering + previews). Re-exported here so existing
+# imports (observer_image, tests) keep working unchanged.
+from thermal_monitor.ui.palettes import PALETTE_LUTS
 
 
 @dataclass(frozen=True)
