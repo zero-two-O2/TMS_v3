@@ -654,11 +654,17 @@ class ConfigurationModeWidget(QWidget):
         self._config_editor: Optional[ConfigurationEditor] = None
         self._camera_selection_dialog: CameraSelectionDialog | None = None
         self._acq_setup_dialog: AcquisitionSetupDialog | None = None
-        # Startup acquisition parameters (FPS / averaging / history). Owned
-        # by the Acquisition Setup dialog; initialized from the selected
-        # camera's metadata and written back on dialog Start. The Start
-        # pipeline reads them from here (never from panel widgets).
-        self._acq_params: dict = {"fps": 9, "averaging": "Off", "history_frames": 100}
+        # Startup acquisition parameters (FPS / averaging / history /
+        # IR display sampling). Owned by the Acquisition Setup dialog;
+        # initialized from the selected camera's metadata and written back
+        # on dialog Start. The Start pipeline reads them from here (never
+        # from panel widgets).
+        self._acq_params: dict = {
+            "fps": 9,
+            "averaging": "Off",
+            "history_frames": 100,
+            "ir_scaling": "fast",
+        }
         # Focus worker thread (at most one in flight; stale results dropped
         # by camera-id token when the selection changes mid-operation).
         # The worker object is retained (never a bare local) so the Python
@@ -2425,11 +2431,16 @@ class ConfigurationModeWidget(QWidget):
             history_frames = int(metadata.get("history_frames", 100))
         except (TypeError, ValueError):
             history_frames = 100
+        ir_scaling = str(metadata.get("ir_display_scaling", "fast") or "fast").lower()
+        if ir_scaling not in ("fast", "smooth"):
+            ir_scaling = "fast"
         self._acq_params = {
             "fps": fps,
             "averaging": averaging,
             "history_frames": history_frames,
+            "ir_scaling": ir_scaling,
         }
+        self._apply_ir_scaling_to_views(ir_scaling)
 
         # Update panels
         self._roi_panel.set_camera(camera_id)
@@ -2980,6 +2991,7 @@ class ConfigurationModeWidget(QWidget):
             params.get("fps", 9),
             params.get("averaging", "Off"),
             params.get("history_frames", 100),
+            params.get("ir_scaling", "fast"),
         )
         self._acq_setup_dialog.show()
         self._acq_setup_dialog.raise_()
@@ -3081,7 +3093,8 @@ class ConfigurationModeWidget(QWidget):
             return
         values = self._acq_setup_dialog.values()
         self._apply_acquisition_params(
-            values["fps"], values["averaging"], values["history_frames"]
+            values["fps"], values["averaging"], values["history_frames"],
+            values.get("ir_scaling", "fast"),
         )
         self._acq_setup_dialog.accept()
         self._on_start_acquisition()
@@ -3366,6 +3379,8 @@ class ConfigurationModeWidget(QWidget):
         metadata["frame_rate"] = int(self._acq_params.get("fps", 9))
         metadata["averaging"] = str(self._acq_params.get("averaging", "Off"))
         metadata["history_frames"] = int(self._acq_params.get("history_frames", 100))
+        metadata["ir_display_scaling"] = str(self._acq_params.get("ir_scaling", "fast") or "fast")
+        self._apply_ir_scaling_to_views(metadata["ir_display_scaling"])
 
         updated_config = CameraConfig(
             identity=config.identity,
@@ -3501,18 +3516,27 @@ class ConfigurationModeWidget(QWidget):
         except Exception as exc:
             QMessageBox.warning(self, "Stop Failed", f"Failed to stop acquisition: {exc}")
 
-    def _apply_acquisition_params(self, fps: int, averaging: str, history_frames: int) -> None:
+    def _apply_acquisition_params(self, fps: int, averaging: str, history_frames: int,
+                                    ir_scaling: str = "fast") -> None:
         """Persist Acquisition Setup parameters to the selected camera config.
 
         Same metadata keys the Start pipeline has always used
         (``frame_rate``) plus ``averaging`` / ``history_frames`` carried
-        alongside (history preserves the previous buffer-length semantic).
+        alongside (history preserves the previous buffer-length semantic)
+        plus ``ir_display_scaling`` (display sampling only — thermal data,
+        calibration, palette and VL rendering untouched). The IR scaling
+        is applied to the IR views here, at connect/Start time only.
         """
+        mode = str(ir_scaling or "fast").lower()
+        if mode not in ("fast", "smooth"):
+            mode = "fast"
         self._acq_params = {
             "fps": int(fps),
             "averaging": str(averaging),
             "history_frames": int(history_frames),
+            "ir_scaling": mode,
         }
+        self._apply_ir_scaling_to_views(mode)
         if not self._selected_camera_id:
             return
         config = self._config_service.get_camera_config(self._selected_camera_id)
@@ -3522,6 +3546,7 @@ class ConfigurationModeWidget(QWidget):
         metadata["frame_rate"] = int(fps)
         metadata["averaging"] = str(averaging)
         metadata["history_frames"] = int(history_frames)
+        metadata["ir_display_scaling"] = mode
         updated_config = CameraConfig(
             identity=config.identity,
             name=config.name,
@@ -3535,6 +3560,25 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_camera_config(updated_config)
         self._status_label.setText("Acquisition parameters updated")
+
+    def _apply_ir_scaling_to_views(self, mode: str) -> None:
+        """Apply the connect-time IR display sampling to the IR views.
+
+        Display only: the central thermal widget and the View Finder. The
+        VL widget, render worker, acquisition, calibration, palette and
+        recording paths are untouched.
+        """
+        normalized = str(mode or "fast").lower()
+        if normalized not in ("fast", "smooth"):
+            normalized = "fast"
+        try:
+            self._image_widget.set_ir_scaling(normalized)
+        except AttributeError:
+            pass
+        try:
+            self._finder_widget.set_ir_scaling(normalized)
+        except AttributeError:
+            pass
 
     def _on_observer_error(self, message: str) -> None:
         sender = self.sender()

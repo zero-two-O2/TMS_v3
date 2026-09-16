@@ -590,7 +590,7 @@ def test_setup_dialog_params_round_trip(qapp) -> None:
     try:
         dialog.set_params(15, "4", 200)
         values = dialog.values()
-        assert values == {"fps": 15, "averaging": "4", "history_frames": 200}
+        assert values == {"fps": 15, "averaging": "4", "history_frames": 200, "ir_scaling": "fast"}
     finally:
         dialog.close()
 
@@ -613,7 +613,7 @@ def test_setup_start_applies_params_and_starts(widget, qapp) -> None:
     dialog._start_btn.click()
     qapp.processEvents()
     assert started == [True]
-    assert widget._acq_params == {"fps": 15, "averaging": "4", "history_frames": 200}
+    assert widget._acq_params == {"fps": 15, "averaging": "4", "history_frames": 200, "ir_scaling": "fast"}
     config = widget._config_service.get_camera_config(widget._selected_camera_id)
     metadata = dict(config.metadata or {})
     assert metadata["frame_rate"] == 15

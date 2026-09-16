@@ -17,12 +17,18 @@ from PyQt6.QtWidgets import QWidget
 class ViewFinderWidget(QWidget):
     """Clickable navigation thumbnail for the IR workspace."""
 
+    # IR display sampling modes (mirrors LiveThermalWidget; display only).
+    IR_SCALING_MODES = ("fast", "smooth")
+
     # Normalized image-center (0..1) requested by a finder drag.
     viewport_dragged = pyqtSignal(float, float)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._image: QImage | None = None
+        # Connect-time IR display sampling (follows the Acquisition Setup
+        # dialog choice; display only, thermal data untouched).
+        self._ir_scaling = "fast"
         # Normalized visible rect (x0, y0, x1, y1) or None (whole image).
         self._viewport: tuple[float, float, float, float] | None = None
         self._dragging = False
@@ -47,6 +53,23 @@ class ViewFinderWidget(QWidget):
         if rect != self._viewport:
             self._viewport = rect
             self.update()
+
+    @property
+    def ir_scaling(self) -> str:
+        """Current IR display sampling mode ('fast' or 'smooth')."""
+        return self._ir_scaling
+
+    def set_ir_scaling(self, mode: str) -> None:
+        """Set the IR display sampling mode (connect-time only, display only)."""
+        normalized = str(mode or "fast").lower()
+        self._ir_scaling = normalized if normalized in self.IR_SCALING_MODES else "fast"
+        self.update()
+
+    def _ir_transformation(self):
+        """Qt scaling mode matching the connect-time IR display setting."""
+        if self._ir_scaling == "smooth":
+            return Qt.TransformationMode.SmoothTransformation
+        return Qt.TransformationMode.FastTransformation
 
     @property
     def viewport(self):
@@ -98,11 +121,14 @@ class ViewFinderWidget(QWidget):
         if geometry is None:
             return
         draw_x, draw_y, draw_w, draw_h = geometry
+        # Pixel-preserving thumbnail by default (nearest-neighbor so
+        # thermal pixels stay identifiable like ThermoView); the
+        # connect-time "smooth" option selects bilinear instead.
         thumb = self._image.scaled(
             max(1, int(draw_w)),
             max(1, int(draw_h)),
             Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            self._ir_transformation(),
         )
         painter.drawImage(int(draw_x), int(draw_y), thumb)
         if self._viewport is None:

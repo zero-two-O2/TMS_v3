@@ -121,9 +121,11 @@ class OfflineImageWidget(QWidget):
         painter.fillRect(self.rect(), QColor(30, 30, 30))
 
         if self._display_image:
-            # Scale image to fit widget while maintaining aspect ratio
+            # Scale image to fit widget while maintaining aspect ratio.
+            # Pixel-preserving (nearest-neighbor) for thermal data so
+            # pixels stay identifiable like ThermoView.
             scaled = self._display_image.scaled(
-                self.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+                self.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation
             )
             x = (self.width() - scaled.width()) // 2
             y = (self.height() - scaled.height()) // 2

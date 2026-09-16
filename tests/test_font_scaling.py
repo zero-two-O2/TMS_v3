@@ -203,7 +203,7 @@ def test_dialogs_usable_at_large_scale(qapp, isolated_font_settings) -> None:
         assert dialog.isVisible()
         assert dialog.minimumWidth() >= 300
         values = dialog.values()
-        assert set(values) == {"fps", "averaging", "history_frames"}
+        assert set(values) == {"fps", "averaging", "history_frames", "ir_scaling"}
     finally:
         dialog.close()
 

@@ -3,7 +3,7 @@ ui.modes.observer_image -- Reusable live thermal image widget.
 
 ThermoView-style thermal image display with:
 - 640×480 aspect ratio preservation
-- Smooth scaling
+- Nearest-neighbor scaling (pixel-preserving, ThermoView-like)
 - ROI overlay support
 - Cursor temperature readout
 - Zoom and pan support
@@ -41,6 +41,11 @@ class ROIOverlay:
 
 class LiveThermalWidget(QWidget):
     """Displays the live thermal image with temperature display controls and ROI overlays."""
+
+    # IR display sampling modes (display only — thermal data untouched).
+    # "fast": nearest-neighbor / pixel-preserving (ThermoView-like, default).
+    # "smooth": bilinear smoothing for users who prefer the soft look.
+    IR_SCALING_MODES = ("fast", "smooth")
 
     # Signal emitted when mouse moves over image with temperature value
     cursor_temperature_changed = pyqtSignal(float)
@@ -87,6 +92,11 @@ class LiveThermalWidget(QWidget):
         self._auto_range = True
         self._manual_min = 20.0
         self._manual_max = 80.0
+        # Connect-time IR display sampling (Acquisition Setup dialog,
+        # below History). Display only: selects the Qt TransformationMode
+        # used when scaling the frame for presentation. Never touches
+        # thermal data, calibration, palette or VL rendering.
+        self._ir_scaling = "fast"
         # View-only zoom: None = fit-to-window (the minimum); otherwise an
         # absolute scale relative to 1:1 native pixels. The transform is
         # applied at paint time — the source thermal frame, conversion and
@@ -199,6 +209,29 @@ class LiveThermalWidget(QWidget):
         self._palette = palette
         self._render_worker.set_palette(palette)
         self.update()
+
+    @property
+    def ir_scaling(self) -> str:
+        """Current IR display sampling mode ('fast' or 'smooth')."""
+        return self._ir_scaling
+
+    def set_ir_scaling(self, mode: str) -> None:
+        """Set the IR display sampling mode (connect-time only).
+
+        ``"fast"`` = nearest-neighbor / pixel-preserving (ThermoView-like);
+        ``"smooth"`` = bilinear smoothing. Display sampling only — the
+        thermal source, temperature values and palette mapping are
+        untouched. Unknown values fall back to ``"fast"``.
+        """
+        normalized = str(mode or "fast").lower()
+        self._ir_scaling = normalized if normalized in self.IR_SCALING_MODES else "fast"
+        self.update()
+
+    def _ir_transformation(self) -> Qt.TransformationMode:
+        """Qt scaling mode matching the connect-time IR display setting."""
+        if self._ir_scaling == "smooth":
+            return Qt.TransformationMode.SmoothTransformation
+        return Qt.TransformationMode.FastTransformation
 
     def set_auto_range(self, enabled: bool) -> None:
         """Enable/disable automatic temperature range."""
@@ -414,7 +447,10 @@ class LiveThermalWidget(QWidget):
 
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        # Pixel-preserving IR presentation (ThermoView-like): never enable
+        # SmoothPixmapTransform here — the thermal image must keep crisp
+        # pixel blocks when enlarged. Antialiasing stays enabled only for
+        # vector overlays/text drawn afterwards, never for the image itself.
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         # Dark background
@@ -431,10 +467,14 @@ class LiveThermalWidget(QWidget):
 
         scale, draw_x, draw_y, scaled_w, scaled_h = transform
         # Uniform scale only (same factor both axes): 4:3 geometry preserved.
+        # Default (fast): nearest-neighbor — each source pixel becomes a
+        # crisp block instead of blending with its neighbours
+        # (ThermoView-like display). The connect-time "smooth" option
+        # selects bilinear instead; thermal data is identical either way.
         scaled = self._display_image.scaled(
             scaled_w, scaled_h,
             Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
+            self._ir_transformation(),
         )
         int_x, int_y = int(draw_x), int(draw_y)
         painter.drawImage(int_x, int_y, scaled)

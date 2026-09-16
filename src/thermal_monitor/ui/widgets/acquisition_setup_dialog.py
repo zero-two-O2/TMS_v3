@@ -44,10 +44,20 @@ from thermal_monitor.ui.theme.properties import set_role, set_variant
 #: Averaging options supported by the existing configuration path.
 AVERAGING_OPTIONS = ["Off", "2", "4", "8", "16"]
 
+#: IR display scaling options (display sampling only — thermal data untouched).
+#: "fast" = nearest-neighbor / pixel-preserving (ThermoView-like, default).
+#: "smooth" = bilinear smoothing for users who prefer the soft look.
+IR_SCALING_OPTIONS = ["fast", "smooth"]
+IR_SCALING_LABELS = {
+    "fast": "Crisp pixels (nearest-neighbor)",
+    "smooth": "Smooth (bilinear)",
+}
+
 #: Startup-parameter defaults (match the previous Camera Control defaults).
 DEFAULT_FPS = 9
 DEFAULT_AVERAGING = "Off"
 DEFAULT_HISTORY_FRAMES = 100
+DEFAULT_IR_SCALING = "fast"
 
 
 class AcquisitionSetupDialog(QDialog):
@@ -120,6 +130,7 @@ class AcquisitionSetupDialog(QDialog):
 
         params_layout.addRow("Averaging:", self._averaging_combo())
         params_layout.addRow("History:", self._history_spin())
+        params_layout.addRow("IR display:", self._ir_scaling_combo())
 
         layout.addWidget(params_group)
 
@@ -153,6 +164,23 @@ class AcquisitionSetupDialog(QDialog):
         self._history_spin_box.setSuffix(" frames")
         return self._history_spin_box
 
+    def _ir_scaling_combo(self) -> QComboBox:
+        """Connect-time IR display sampling (below History).
+
+        Display-only: chooses the Qt TransformationMode the IR views use
+        when scaling the 640x480 frame for presentation. Thermal uint16
+        data, temperature conversion, palette LUT and VL rendering are
+        untouched. Applied at connect/Start time, not mid-stream.
+        """
+        self._ir_scaling_combo_box = QComboBox()
+        for mode in IR_SCALING_OPTIONS:
+            self._ir_scaling_combo_box.addItem(IR_SCALING_LABELS[mode], mode)
+        self._ir_scaling_combo_box.setToolTip(
+            "IR display sampling: crisp pixels (nearest-neighbor) or smooth (bilinear). "
+            "Display only — thermal data unchanged. Applies at connect/Start."
+        )
+        return self._ir_scaling_combo_box
+
     # -- Public API (dumb view; the widget drives everything) --------------
 
     def set_camera_summary(self, text: str) -> None:
@@ -167,7 +195,8 @@ class AcquisitionSetupDialog(QDialog):
         """Enable Start only when acquisition can actually start."""
         self._start_btn.setEnabled(bool(enabled))
 
-    def set_params(self, fps: int, averaging: str, history_frames: int) -> None:
+    def set_params(self, fps: int, averaging: str, history_frames: int,
+                     ir_scaling: str = DEFAULT_IR_SCALING) -> None:
         """Populate the dialog from the selected camera's metadata."""
         try:
             self._fps_spin.setValue(int(fps))
@@ -180,13 +209,26 @@ class AcquisitionSetupDialog(QDialog):
             self._history_spin_box.setValue(int(history_frames))
         except (TypeError, ValueError):
             self._history_spin_box.setValue(DEFAULT_HISTORY_FRAMES)
+        mode = str(ir_scaling or DEFAULT_IR_SCALING).lower()
+        if mode not in IR_SCALING_OPTIONS:
+            mode = DEFAULT_IR_SCALING
+        idx = self._ir_scaling_combo_box.findData(mode)
+        if idx >= 0:
+            self._ir_scaling_combo_box.setCurrentIndex(idx)
+
+    def ir_scaling(self) -> str:
+        """Current IR display sampling mode ('fast' or 'smooth')."""
+        data = self._ir_scaling_combo_box.currentData()
+        mode = str(data or DEFAULT_IR_SCALING).lower()
+        return mode if mode in IR_SCALING_OPTIONS else DEFAULT_IR_SCALING
 
     def values(self) -> dict:
-        """Current dialog parameters (fps / averaging / history_frames)."""
+        """Current dialog parameters (fps / averaging / history_frames / ir_scaling)."""
         return {
             "fps": int(self._fps_spin.value()),
             "averaging": str(self._averaging_combo_box.currentText()),
             "history_frames": int(self._history_spin_box.value()),
+            "ir_scaling": self.ir_scaling(),
         }
 
 
@@ -196,4 +238,7 @@ __all__ = [
     "DEFAULT_FPS",
     "DEFAULT_AVERAGING",
     "DEFAULT_HISTORY_FRAMES",
+    "DEFAULT_IR_SCALING",
+    "IR_SCALING_LABELS",
+    "IR_SCALING_OPTIONS",
 ]
