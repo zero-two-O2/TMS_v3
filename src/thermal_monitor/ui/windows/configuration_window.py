@@ -636,6 +636,11 @@ class ConfigurationModeWidget(QWidget):
     _ptz_operation = pyqtSignal(str, int, object)  # camera_id, gen, PtzOperation
     _ptz_positions = pyqtSignal(str, int, object)  # camera_id, gen, list[PtzPosition]
     _ptz_notice = pyqtSignal(str, int, str)  # camera_id, gen, message
+    # REPLACE-import confirmation: (camera_id, gen, payload dict with
+    # "entries" list + threading.Event "done" + dict "answer").
+    _ptz_import_confirm = pyqtSignal(str, int, object)
+    # Active-position label: (camera_id, gen, position name or "").
+    _ptz_active = pyqtSignal(str, int, str)
 
     def __init__(
         self,
@@ -664,6 +669,12 @@ class ConfigurationModeWidget(QWidget):
         self._ptz_threads: set = set()
         self._ptz_panel = None
         self._pos_panel = None
+        # Phase 8 retarget state: one shared active-position registry,
+        # one coordinator per endpoint, latest-wins per camera.
+        from thermal_monitor.ptz.roi_activation import ActivePositionRegistry
+
+        self._ptz_registry = ActivePositionRegistry()
+        self._ptz_coordinators: dict[str, object] = {}
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
@@ -959,6 +970,8 @@ class ConfigurationModeWidget(QWidget):
             self._on_ptz_roi_associate_requested
         )
         self._pos_panel.refresh_requested.connect(self._on_ptz_refresh_requested)
+        self._pos_panel.export_requested.connect(self._on_ptz_export_requested)
+        self._pos_panel.import_requested.connect(self._on_ptz_import_requested)
         self._register_side_panel(
             "ptz_positions", "Position Table", self._pos_panel, "right"
         )
@@ -1847,6 +1860,10 @@ class ConfigurationModeWidget(QWidget):
             self._on_ptz_positions, Qt.ConnectionType.QueuedConnection
         )
         self._ptz_notice.connect(self._on_ptz_notice, Qt.ConnectionType.QueuedConnection)
+        self._ptz_import_confirm.connect(
+            self._on_ptz_import_confirm, Qt.ConnectionType.QueuedConnection
+        )
+        self._ptz_active.connect(self._on_ptz_active, Qt.ConnectionType.QueuedConnection)
 
         # Image widget range changes
         self._image_widget.range_changed.connect(self._scale_panel.update_range)
@@ -1991,6 +2008,12 @@ class ConfigurationModeWidget(QWidget):
         self._session.renew(camera_id)
         self._selected_camera_id = camera_id
         self._ptz_clear_panels()
+        # A new epoch invalidates any active PTZ position context for this
+        # camera: stale contexts must never gate fresh results.
+        try:
+            self._ptz_registry.clear(camera_id)
+        except Exception:
+            pass
         self._image_widget.set_session(camera_id)
         self._vl_widget.set_session(camera_id)
         self._display_rate.reset()
@@ -3050,6 +3073,202 @@ class ConfigurationModeWidget(QWidget):
             lambda: self._ptz_load_positions(camera_id, self._session.generation),
         )
 
+    def _on_ptz_export_requested(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._pos_panel is None:
+            return
+        entry = self._ptz_mapping_entry(camera_id)
+        ptz_id = (getattr(entry, "ptz_id", "") or "").strip()
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export PTZ Positions", f"{camera_id}_positions.json",
+            "JSON (*.json)",
+        )
+        if not path:
+            return
+        generation = self._session.generation
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            self._pos_panel.show_message("Position database unavailable.")
+            return
+
+        def _export() -> None:
+            from thermal_monitor.ptz.positions_io import export_positions
+
+            try:
+                result = repo.list_positions_for_camera(camera_id)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Export failed: {exc}")
+                return
+            if not result.success:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Export failed: {result.error}"
+                )
+                return
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(
+                        export_positions(
+                            list(result.data or []),
+                            camera_id=camera_id,
+                            ptz_id=ptz_id,
+                        )
+                    )
+            except OSError as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Export failed: {exc}")
+                return
+            self._ptz_notice.emit(
+                camera_id, generation,
+                f"Exported {len(result.data or [])} positions to {path}.",
+            )
+
+        self._ptz_run(f"pos-export-{camera_id}", _export)
+
+    def _on_ptz_import_requested(self) -> None:
+        from PyQt6.QtWidgets import QFileDialog
+
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._pos_panel is None:
+            return
+        entry = self._ptz_mapping_entry(camera_id)
+        ptz_id = (getattr(entry, "ptz_id", "") or "").strip()
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import PTZ Positions", "", "JSON (*.json)"
+        )
+        if not path:
+            return
+        generation = self._session.generation
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            self._pos_panel.show_message("Position database unavailable.")
+            return
+
+        def _import() -> None:
+            from thermal_monitor.ptz.positions_io import (
+                ConflictPolicy,
+                commit_import,
+                preview_import,
+            )
+
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read()
+            except OSError as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Import failed: {exc}")
+                return
+            try:
+                existing = repo.list_positions_for_camera(camera_id)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Import failed: {exc}")
+                return
+            if not existing.success:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Import failed: {existing.error}"
+                )
+                return
+            current = list(existing.data or [])
+            preview, parsed = preview_import(
+                text,
+                {p.position_id for p in current},
+                {(p.camera_id, p.name): p.position_id for p in current},
+                policy=ConflictPolicy.REJECT,
+                expected_camera_id=camera_id,
+                expected_ptz_id=ptz_id,
+            )
+            if not preview.valid:
+                # REPLACE path: when conflicts are the ONLY problem, ask
+                # for explicit confirmation instead of failing silently.
+                # Anything else is a hard rejection.
+                if preview.conflicts and all(
+                    "conflicts with existing record" in error
+                    for error in preview.errors
+                ):
+                    if not self._ptz_confirm_replace(
+                        camera_id, generation, preview.conflicts
+                    ):
+                        self._ptz_notice.emit(
+                            camera_id, generation,
+                            "Import cancelled: existing positions kept.",
+                        )
+                        return
+                    preview, parsed = preview_import(
+                        text,
+                        {p.position_id for p in current},
+                        {(p.camera_id, p.name): p.position_id for p in current},
+                        policy=ConflictPolicy.REPLACE,
+                        expected_camera_id=camera_id,
+                        expected_ptz_id=ptz_id,
+                    )
+                    if not preview.valid:
+                        self._ptz_notice.emit(
+                            camera_id, generation,
+                            f"Import rejected: {'; '.join(preview.errors[:3])}",
+                        )
+                        return
+                    result = commit_import(repo, parsed, policy=ConflictPolicy.REPLACE)
+                    self._ptz_finish_import(
+                        camera_id, generation, result, created_label="Replaced"
+                    )
+                    return
+                self._ptz_notice.emit(
+                    camera_id, generation,
+                    f"Import rejected: {'; '.join(preview.errors[:3])}",
+                )
+                return
+            result = commit_import(repo, parsed, policy=ConflictPolicy.REJECT)
+            self._ptz_finish_import(camera_id, generation, result)
+
+        self._ptz_run(f"pos-import-{camera_id}", _import)
+
+    def _ptz_confirm_replace(
+        self, camera_id: str, generation: int, conflicts: tuple
+    ) -> bool:
+        """Ask the operator to confirm REPLACE (GUI dialog, bg waits).
+
+        Returns False on cancel, stale session, teardown, or timeout.
+        Never blocks the GUI thread: the dialog runs there, the waiter
+        is the background importer.
+        """
+        done = threading.Event()
+        answer: dict = {}
+        try:
+            self._ptz_import_confirm.emit(
+                camera_id,
+                generation,
+                {"entries": list(conflicts), "done": done, "answer": answer},
+            )
+        except RuntimeError:
+            return False
+        while not done.wait(0.2):
+            try:
+                if not self._ptz_is_current_bg(camera_id, generation):
+                    return False
+            except Exception:
+                return False
+        return bool(answer.get("confirmed", False))
+
+    def _ptz_finish_import(self, camera_id: str, generation: int, result,
+                           created_label: str = "Imported") -> None:
+        if not result.committed:
+            self._ptz_notice.emit(
+                camera_id, generation,
+                f"Import rolled back: {'; '.join(result.errors[:2])}",
+            )
+            return
+        parts = []
+        if result.created:
+            parts.append(f"{created_label} {result.created}")
+        if result.replaced:
+            parts.append(f"replaced {result.replaced}")
+        if result.skipped:
+            parts.append(f"skipped {result.skipped}")
+        self._ptz_notice.emit(
+            camera_id, generation,
+            f"Import complete: {', '.join(parts) or 'nothing to do'}.",
+        )
+        self._ptz_load_positions(camera_id, generation)
+
     def _on_ptz_save_current_requested(self, name: str) -> None:
         camera_id = self._selected_camera_id
         if camera_id is None or self._pos_panel is None:
@@ -3214,56 +3433,129 @@ class ConfigurationModeWidget(QWidget):
                     camera_id, generation, "Position database unavailable."
                 )
                 return
-            from thermal_monitor.ptz.positions import check_position_binding
+            # Safe Go To + observer retarget (Phase 8): the coordinator
+            # moves through PtzService, requires authoritative reached,
+            # validates the ROI set, publishes the context to the
+            # observer, and commits the registry exactly once. Latest
+            # request wins per camera; failures keep prior context.
+            from thermal_monitor.ptz.retarget import ObserverRetargetCoordinator
+            from thermal_monitor.ptz.roi_activation import RoiActivationState
+            from thermal_monitor.ptz.station import resolve_endpoint as _resolve_ep
 
-            try:
-                check_position_binding(position, binding.ptz_id)
-            except Exception as exc:
-                self._ptz_notice.emit(camera_id, generation, str(exc))
-                return
             default_velocity = (
                 ptz_cfg.default_velocity if ptz_cfg is not None else 10.0
             )
-            try:
-                if (
-                    position.pan_velocity is not None
-                    and position.tilt_velocity is not None
-                ):
-                    op = service.move_absolute(
-                        camera_id,
-                        position.pan,
-                        position.tilt,
-                        velocity_mode="per_axis",
-                        pan_velocity=position.pan_velocity,
-                        tilt_velocity=position.tilt_velocity,
-                    )
-                else:
-                    op = service.move_absolute(
-                        camera_id,
-                        position.pan,
-                        position.tilt,
-                        velocity=position.velocity or default_velocity,
-                    )
-                self._ptz_operation.emit(camera_id, generation, op)
+            move_timeout = (
+                ptz_cfg.move_timeout_s if ptz_cfg is not None else 30.0
+            )
+            entry = self._ptz_mapping_entry(camera_id)
+            endpoint = _resolve_ep(
+                getattr(ptz_cfg, "endpoint", "") if ptz_cfg else "",
+                getattr(entry, "ptz_endpoint", "") or "" if entry else "",
+            )
+            coordinator = self._ptz_coordinators.get(endpoint)
+            if coordinator is None:
+                coordinator = ObserverRetargetCoordinator(
+                    service, registry=self._ptz_registry
+                )
+                self._ptz_coordinators[endpoint] = coordinator
+
+            def _observer_for_retarget():
+                observer = self._observer
                 try:
-                    status = service.get_status(camera_id)
-                    self._ptz_status.emit(
-                        camera_id, generation, binding.ptz_id, status
-                    )
+                    if observer is not None and getattr(
+                        observer, "camera_id", None
+                    ) == camera_id:
+                        return observer
                 except Exception:
                     pass
+                return None
+
+            try:
+                result = coordinator.retarget(
+                    camera_id,
+                    position,
+                    analysis_config_provider=(
+                        lambda cam: self._config_service.get_analysis_config(cam)
+                    ),
+                    observer_provider=_observer_for_retarget,
+                    session_generation_provider=lambda: self._session.generation,
+                    velocity=default_velocity,
+                    timeout_s=move_timeout,
+                )
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Go To failed: {exc}")
+                return
+            if result.operation is not None:
+                self._ptz_operation.emit(camera_id, generation, result.operation)
+            try:
+                status = service.get_status(camera_id)
+                self._ptz_status.emit(
+                    camera_id, generation, binding.ptz_id, status
+                )
+            except Exception:
+                pass
+            if result.state == RoiActivationState.COMPLETED:
+                self._ptz_active.emit(camera_id, generation, position.name)
                 if position.roi_set_ref:
                     self._ptz_notice.emit(
                         camera_id,
                         generation,
-                        f"Reached {position.name}. Associated ROI set "
-                        f"'{position.roi_set_ref}' is shown for reference; "
-                        "ROI application is manual in this phase.",
+                        f"Reached {position.name}; ROI set "
+                        f"'{position.roi_set_ref}' activated "
+                        f"({len(result.roi_ids)} ROIs).",
                     )
-            except Exception as exc:
-                self._ptz_notice.emit(camera_id, generation, f"Go To failed: {exc}")
+                else:
+                    self._ptz_notice.emit(
+                        camera_id, generation, f"Reached {position.name}."
+                    )
+            elif result.state == RoiActivationState.CANCELLED:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Go To {position.name} cancelled."
+                )
+            else:
+                detail = result.error.message if result.error is not None else "failed"
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Go To failed: {detail}"
+                )
 
         self._ptz_run(f"goto-{camera_id}", _goto)
+
+    def _ptz_is_current_bg(self, camera_id: str, generation: int) -> bool:
+        """Generation check safe to call from background threads."""
+        try:
+            return (
+                camera_id == self._selected_camera_id
+                and generation == self._session.generation
+            )
+        except Exception:
+            return False
+
+    def _ptz_reapply_context(self, camera_id: str) -> bool:
+        """Re-apply the retained registry context to a fresh observer.
+
+        Returns True when a context was re-applied. Safe to call from
+        the GUI thread; never raises.
+        """
+        try:
+            observer = self._observer
+            retained = self._ptz_registry.get(camera_id)
+            if (
+                observer is None
+                or retained is None
+                or retained.session_generation != self._session.generation
+            ):
+                return False
+            if getattr(observer, "camera_id", None) != camera_id:
+                return False
+            observer.set_active_position(
+                retained.roi_set_ref or "default",
+                retained.context_generation,
+            )
+            return True
+        except Exception:
+            logger.debug("PTZ context re-apply failed", exc_info=True)
+            return False
 
     # -- PTZ marshaled slots (GUI thread, generation-guarded) -------------
 
@@ -3313,6 +3605,51 @@ class ConfigurationModeWidget(QWidget):
         except RuntimeError:
             pass
         logger.info("PTZ notice cam=%s: %s", camera_id, message)
+
+    def _on_ptz_active(self, camera_id: str, generation: int, name: str) -> None:
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            if self._ptz_panel is not None:
+                self._ptz_panel.set_active_position(name)
+        except RuntimeError:
+            pass
+
+    def _on_ptz_import_confirm(
+        self, camera_id: str, generation: int, payload: object
+    ) -> None:
+        """GUI-thread REPLACE confirmation dialog for a waiting importer."""
+        from PyQt6.QtWidgets import QMessageBox
+
+        try:
+            entries = list((payload or {}).get("entries", []))
+            done = (payload or {}).get("done")
+            answer = (payload or {}).get("answer")
+        except Exception:
+            return
+        if not self._ptz_is_current(camera_id, generation):
+            try:
+                answer["confirmed"] = False
+                done.set()
+            except Exception:
+                pass
+            return
+        detail = "\n".join(f"• {entry}" for entry in entries[:12])
+        if len(entries) > 12:
+            detail += f"\n• …and {len(entries) - 12} more"
+        reply = QMessageBox.question(
+            self,
+            "Replace Existing Positions?",
+            "Import would OVERWRITE these existing positions:\n\n"
+            f"{detail}\n\nReplace them? (No keeps existing records.)",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        try:
+            answer["confirmed"] = reply == QMessageBox.StandardButton.Yes
+            done.set()
+        except Exception:
+            pass
 
     # -- Focus (UI -> runtime/service -> driver, never GVCP directly) --
 
@@ -3780,6 +4117,44 @@ class ConfigurationModeWidget(QWidget):
                 self._selected_camera_id,
             )
             return
+        # Phase 8 retarget guard: once a PTZ position context is active
+        # for this camera, results produced under any other context
+        # generation (in-flight frames from before the switch) are
+        # dropped so old ROI results can never overwrite the new
+        # display state. Results without context metadata (legacy path)
+        # pass through unchanged.
+        if frame_camera is not None:
+            try:
+                active = self._ptz_registry.get(frame_camera)
+            except Exception:
+                active = None
+            if active is not None:
+                try:
+                    analysis_meta = getattr(result, "analysis_result", None)
+                    result_meta = (
+                        getattr(analysis_meta, "metadata", None)
+                        if analysis_meta is not None
+                        else None
+                    )
+                    result_gen = (
+                        result_meta.get("context_generation")
+                        if result_meta is not None
+                        else None
+                    )
+                except Exception:
+                    result_gen = None
+                if (
+                    result_gen is not None
+                    and result_gen != active.context_generation
+                ):
+                    self._stale_results_dropped += 1
+                    logger.debug(
+                        "Result dropped (stale PTZ context %s != %s cam=%s)",
+                        result_gen,
+                        active.context_generation,
+                        frame_camera,
+                    )
+                    return
         if self._first_frame_at is None and self._session_started_at is not None:
             self._first_frame_at = time.perf_counter()
             logger.info(
@@ -4336,6 +4711,12 @@ class ConfigurationModeWidget(QWidget):
             self._observer = observer
             self._observer.result_ready.connect(self._on_processing_result, Qt.ConnectionType.QueuedConnection)
             self._observer.error_occurred.connect(self._on_observer_error, Qt.ConnectionType.QueuedConnection)
+            # Re-apply a retained PTZ position context to the fresh
+            # pipeline (observer restarts reset the override). The stored
+            # generation is re-applied exactly so in-flight consistency
+            # is preserved; a session mismatch means _begin_session
+            # already cleared it.
+            self._ptz_reapply_context(camera_id)
             logger.info(
                 "CHILD STREAMING VERIFIED cam=%s generation=%s OBSERVER ATTACHED",
                 camera_id,

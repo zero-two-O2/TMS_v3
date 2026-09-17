@@ -216,6 +216,27 @@ class ProcessingConsumer:
         """Statistics from the underlying processing pipeline."""
         return self._pipeline.stats
 
+    def set_active_position(
+        self, position_id: str, generation: int | None = None
+    ) -> int:
+        """Publish a new active PTZ position context (Phase 8 retarget).
+
+        Thread-safe; takes effect on the next processed frame. Only
+        supported on pipelines exposing the Phase 8 override API.
+        """
+        setter = getattr(self._pipeline, "set_active_position", None)
+        if setter is None:
+            raise RuntimeError("Pipeline does not support position retargeting")
+        return setter(position_id, generation)
+
+    @property
+    def active_position(self) -> tuple[str, int] | None:
+        """Current ``(position_id, context_generation)``, if supported."""
+        getter = getattr(self._pipeline, "active_position", None)
+        if getter is None:
+            return None
+        return getter
+
     def wait_for_frames(self, count: int, timeout: float = 5.0) -> bool:
         """Wait until at least `count` frames have been processed."""
         deadline = time.monotonic() + timeout

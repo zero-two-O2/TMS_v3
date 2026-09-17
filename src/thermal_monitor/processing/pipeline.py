@@ -7,6 +7,7 @@ The pipeline operates on the V3 Frame contract and produces AnalysisResults.
 
 from __future__ import annotations
 
+import threading
 import time
 import logging
 from abc import ABC, abstractmethod
@@ -188,6 +189,38 @@ class SimpleProcessingPipeline(ProcessingPipeline):
         self._roi_resolver = roi_resolver or CachedROIResolver()
         self._halcon_adapter = halcon_adapter or HalconROIAdapter()
         self._last_temperature_image: np.ndarray | None = None
+        # Active PTZ position override (Phase 8 retargeting). Acquisition
+        # frames never carry position_id, so the pipeline falls back to
+        # this tuple when frame metadata lacks one. Swapped atomically
+        # under a lock; each frame snapshots it once, so a retarget can
+        # never mix old/new context within a single frame. The generation
+        # is stamped onto every produced result for stale-result guards.
+        self._position_lock = threading.Lock()
+        self._active_position: tuple[str, int] = ("default", 0)
+
+    def set_active_position(
+        self, position_id: str, generation: int | None = None
+    ) -> int:
+        """Publish a new active position context. Returns its generation.
+
+        With ``generation=None`` the generation bumps (normal retarget).
+        Pass an explicit generation only to re-apply a known-good context
+        (e.g. after an observer restart) without invalidating in-flight
+        results that already carry it.
+        """
+        if not position_id:
+            raise ValueError("position_id is required")
+        with self._position_lock:
+            if generation is None:
+                generation = self._active_position[1] + 1
+            self._active_position = (position_id, generation)
+            return generation
+
+    @property
+    def active_position(self) -> tuple[str, int]:
+        """Current ``(position_id, context_generation)`` snapshot."""
+        with self._position_lock:
+            return self._active_position
 
     @property
     def calibration_provider(self) -> CalibrationProvider | None:
@@ -215,8 +248,20 @@ class SimpleProcessingPipeline(ProcessingPipeline):
         start_time = time.perf_counter()
         self._last_temperature_image = None
 
-        # Get applicable ROIs for the current frame's position
-        position_id = frame.descriptor.metadata.get("position_id", "default")
+        # Get applicable ROIs for the current frame's position.
+        # Snapshot the active context once: acquisition frames are
+        # position-agnostic, so the override applies; a retarget racing
+        # this frame cannot mix contexts mid-frame.
+        with self._position_lock:
+            override_position_id, context_generation = self._active_position
+        position_id = (
+            frame.descriptor.metadata.get("position_id")
+            or override_position_id
+            or "default"
+        )
+        result_context = MappingProxyType(
+            {"position_id": position_id, "context_generation": context_generation}
+        )
         rois = self._roi_resolver.resolve(self._config, frame.descriptor.camera_id, position_id)
 
         roi_results: dict[str, ROIStatistics] = {}
@@ -231,6 +276,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
                 frame_timestamp=frame.descriptor.timestamp,
                 roi_results=MappingProxyType({}),
                 processing_time_ms=(time.perf_counter() - start_time) * 1000,
+                metadata=result_context,
             )
 
         # Convert raw to temperature if converter available
@@ -317,6 +363,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
             overall_mean=overall_mean,
             unit=self._config.unit,
             processing_time_ms=processing_time_ms,
+            metadata=result_context,
         )
 
         # Update stats

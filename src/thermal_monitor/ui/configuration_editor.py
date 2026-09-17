@@ -420,6 +420,21 @@ class ConfigurationEditor(QWidget):
             limits=self._clone_dataclass(config.limits),
             default_position=self._clone_dataclass(config.default_position),
             speeds=self._clone_dataclass(config.speeds),
+            endpoint=config.endpoint,
+            tolerance_pan=config.tolerance_pan,
+            tolerance_tilt=config.tolerance_tilt,
+            velocity_mode=config.velocity_mode,
+            default_velocity=config.default_velocity,
+            default_pan_velocity=config.default_pan_velocity,
+            default_tilt_velocity=config.default_tilt_velocity,
+            move_timeout_s=config.move_timeout_s,
+            calibration_timeout_s=config.calibration_timeout_s,
+            monitor_interval_s=config.monitor_interval_s,
+            profile=config.profile,
+            security_mode=config.security_mode,
+            username=config.username,
+            password_env=config.password_env,
+            namespace_uri=config.namespace_uri,
         )
 
     def _clone_roi_config(self, config: ROIConfig) -> ROIConfig:
@@ -1094,6 +1109,22 @@ class ConfigurationEditor(QWidget):
     def _create_ptz_editor(self) -> ConfigSectionEditor:
         editor = ConfigSectionEditor("PTZ", self._edit_config.ptz, self._theme)
         editor.add_field(ConfigEditorField("enabled", "PTZ Enabled", bool, True))
+        editor.add_field(ConfigEditorField(
+            "profile", "Backend Profile", str, "simulator",
+            options=["simulator", "generic", "siemens"],
+            tooltip="simulator=localhost dev mapping; siemens stays blocked until verified PLC info exists",
+        ))
+        editor.add_field(ConfigEditorField("endpoint", "OPC UA Endpoint", str, ""))
+        editor.add_field(ConfigEditorField(
+            "security_mode", "Security Mode", str, "none",
+            options=["none", "username"],
+        ))
+        editor.add_field(ConfigEditorField("username", "Username", str, ""))
+        editor.add_field(ConfigEditorField(
+            "password_env", "Password Env Var", str, "TMS_PTZ_PASSWORD", readonly=True,
+            tooltip="Password is read from environment variable",
+        ))
+        editor.add_field(ConfigEditorField("namespace_uri", "Namespace URI", str, ""))
         # PTZ limits
         editor.add_field(ConfigEditorField("limits.min_pan", "Min Pan", float, -170.0))
         editor.add_field(ConfigEditorField("limits.max_pan", "Max Pan", float, 170.0))

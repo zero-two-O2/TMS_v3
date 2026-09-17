@@ -89,7 +89,42 @@ def resolve_endpoint(global_endpoint: str, override_endpoint: str) -> str:
     return (global_endpoint or "").strip()
 
 
+def build_service(
+    endpoint: str,
+    mapping,
+    service_config=None,
+    *,
+    connect_timeout_s: float = 5.0,
+    read_timeout_s: float = 2.0,
+    write_timeout_s: float = 3.0,
+):
+    """Construct a ``PtzService`` for one endpoint (any caller).
+
+    Shared helper so Live and Configuration modes build identically
+    configured services without duplicating session wiring. Raises the
+    underlying error (e.g. missing asyncua) to the caller.
+    """
+    from thermal_monitor.ptz.client import (
+        AsyncuaTransport,
+        OpcUaClientConfig,
+        OpcUaSession,
+    )
+    from thermal_monitor.ptz.service import PtzService
+
+    session = OpcUaSession(
+        OpcUaClientConfig(
+            endpoint=endpoint,
+            connect_timeout_s=connect_timeout_s,
+            read_timeout_s=read_timeout_s,
+            write_timeout_s=write_timeout_s,
+        ),
+        AsyncuaTransport(),
+    )
+    return PtzService(session, mapping, service_config)
+
+
 __all__ = [
+    "build_service",
     "build_service_config",
     "merge_limits",
     "resolve_binding",

@@ -300,6 +300,11 @@ class ConfigurationManager:
             "ptz": {
                 "enabled": True,
                 "endpoint": "",
+                "profile": "simulator",
+                "security_mode": "none",
+                "username": "",
+                "password_env": "TMS_PTZ_PASSWORD",
+                "namespace_uri": "",
                 "tolerance_pan": 0.5,
                 "tolerance_tilt": 0.5,
                 "velocity_mode": "single",
@@ -660,6 +665,13 @@ class ConfigurationManager:
             move_timeout_s=_parse_float(ptz_raw.get("move_timeout_s"), 30.0),
             calibration_timeout_s=_parse_float(ptz_raw.get("calibration_timeout_s"), 120.0),
             monitor_interval_s=_parse_float(ptz_raw.get("monitor_interval_s"), 0.5),
+            profile=str(ptz_raw.get("profile", "simulator") or "simulator"),
+            security_mode=str(ptz_raw.get("security_mode", "none") or "none"),
+            username=str(ptz_raw.get("username", "") or ""),
+            password_env=str(
+                ptz_raw.get("password_env", "TMS_PTZ_PASSWORD") or "TMS_PTZ_PASSWORD"
+            ),
+            namespace_uri=str(ptz_raw.get("namespace_uri", "") or ""),
         )
 
         # ROI

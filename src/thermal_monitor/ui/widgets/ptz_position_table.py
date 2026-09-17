@@ -39,6 +39,8 @@ class PtzPositionTablePanel(QWidget):
     rename_requested = pyqtSignal(str, str)  # position_id, new name
     roi_associate_requested = pyqtSignal(str, str)  # position_id, roi_set_ref
     refresh_requested = pyqtSignal()
+    export_requested = pyqtSignal()
+    import_requested = pyqtSignal()
 
     _COLUMNS = ("Name", "Pan", "Tilt", "Velocity", "ROI set", "Enabled")
 
@@ -98,6 +100,15 @@ class PtzPositionTablePanel(QWidget):
             row.addWidget(btn)
         layout.addLayout(row)
 
+        io_row = QHBoxLayout()
+        self._export_btn = QPushButton("Export…")
+        self._export_btn.clicked.connect(self.export_requested.emit)
+        self._import_btn = QPushButton("Import…")
+        self._import_btn.clicked.connect(self.import_requested.emit)
+        io_row.addWidget(self._export_btn)
+        io_row.addWidget(self._import_btn)
+        layout.addLayout(io_row)
+
         for btn, style in (
             (self._save_btn, "accent"),
             (self._goto_btn, "primary"),
@@ -105,6 +116,8 @@ class PtzPositionTablePanel(QWidget):
             (self._roi_btn, "outline"),
             (self._delete_btn, "danger"),
             (self._refresh_btn, "outline"),
+            (self._export_btn, "outline"),
+            (self._import_btn, "outline"),
         ):
             set_variant(btn, style)
         self._refresh_buttons()
@@ -240,3 +253,5 @@ class PtzPositionTablePanel(QWidget):
         self._rename_btn.setEnabled(has_selection)
         self._roi_btn.setEnabled(has_selection)
         self._delete_btn.setEnabled(has_selection)
+        self._export_btn.setEnabled(station_ready)
+        self._import_btn.setEnabled(station_ready)

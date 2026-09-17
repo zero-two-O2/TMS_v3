@@ -187,6 +187,27 @@ class ObserverService(QObject if _HAS_PYQT6 else object):
             return None
         return self._consumer.stats()
 
+    def set_active_position(
+        self, position_id: str, generation: int | None = None
+    ) -> int:
+        """Publish a new active PTZ position context (Phase 8 retarget).
+
+        GUI-thread callable; takes effect on the next processed frame.
+        Raises RuntimeError when no consumer is attached.
+        """
+        consumer = self._consumer
+        if consumer is None:
+            raise RuntimeError("Observer has no running consumer to retarget")
+        return consumer.set_active_position(position_id, generation)
+
+    @property
+    def active_position(self) -> tuple[str, int] | None:
+        """Current ``(position_id, context_generation)``, if available."""
+        consumer = self._consumer
+        if consumer is None:
+            return None
+        return consumer.active_position
+
     def take_latest_result(self):
         """Return the newest result coalesced since the last GUI dispatch."""
         with self._latest_result_lock:

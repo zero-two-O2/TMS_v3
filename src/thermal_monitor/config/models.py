@@ -357,6 +357,18 @@ class PTZConfig:
     move_timeout_s: float = 30.0
     calibration_timeout_s: float = 120.0
     monitor_interval_s: float = 0.5
+    # Backend profile: "simulator" (localhost development mapping),
+    # "generic" (user OPC UA endpoint, still needs a concrete mapping),
+    # "siemens" (explicitly blocked until verified PLC information exists).
+    profile: str = "simulator"
+    # Security posture. Secrets never live here: username is a plain
+    # identifier, the password is read from the named environment variable.
+    security_mode: str = "none"
+    username: str = ""
+    password_env: str = "TMS_PTZ_PASSWORD"
+    # Declared namespace URI for future mapping verification (compared
+    # against the server at diagnostics time; never trusted blindly).
+    namespace_uri: str = ""
 
     def __post_init__(self) -> None:
         if self.velocity_mode not in ("single", "per_axis"):
@@ -371,6 +383,29 @@ class PTZConfig:
         for name in ("move_timeout_s", "calibration_timeout_s", "monitor_interval_s"):
             if getattr(self, name) <= 0:
                 raise ValueError(f"ptz.{name} must be > 0; got {getattr(self, name)}")
+        if self.profile not in ("simulator", "generic", "siemens"):
+            raise ValueError(
+                "ptz.profile must be 'simulator', 'generic' or 'siemens'; "
+                f"got {self.profile!r}"
+            )
+        if self.security_mode not in ("none", "username"):
+            raise ValueError(
+                "ptz.security_mode must be 'none' or 'username'; "
+                f"got {self.security_mode!r}"
+            )
+        if self.security_mode == "username" and not self.username:
+            raise ValueError("ptz.username is required when security_mode is 'username'")
+        if self.profile == "simulator" and self.endpoint:
+            host = self.endpoint.strip().lower()
+            if "127.0.0.1" not in host and "localhost" not in host:
+                raise ValueError(
+                    "ptz.profile 'simulator' requires a localhost endpoint; "
+                    f"got {self.endpoint!r}"
+                )
+        if self.profile in ("generic", "siemens") and not self.endpoint:
+            raise ValueError(
+                f"ptz.profile {self.profile!r} requires ptz.endpoint to be set"
+            )
 
 
 @dataclass(frozen=True, slots=True)

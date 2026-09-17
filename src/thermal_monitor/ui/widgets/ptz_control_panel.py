@@ -73,9 +73,11 @@ class PtzControlPanel(QWidget):
         self._actual_label = QLabel("—")
         self._target_label = QLabel("—")
         self._reached_label = QLabel("—")
+        self._active_label = QLabel("—")
         pos_layout.addRow("Actual:", self._actual_label)
         pos_layout.addRow("Target:", self._target_label)
         pos_layout.addRow("Reached:", self._reached_label)
+        pos_layout.addRow("Active pos.:", self._active_label)
         layout.addWidget(pos_group)
 
         # Absolute movement group
@@ -241,6 +243,10 @@ class PtzControlPanel(QWidget):
         if operation.state == PtzOperationState.FAILED and operation.error is not None:
             self._error_label.setText(operation.error.message)
 
+    def set_active_position(self, name: str) -> None:
+        """Show the registry-confirmed active position (Phase 8)."""
+        self._active_label.setText(name or "—")
+
     def show_message(self, message: str) -> None:
         self._error_label.setText(message)
 
@@ -254,6 +260,7 @@ class PtzControlPanel(QWidget):
         self._actual_label.setText("—")
         self._target_label.setText("—")
         self._reached_label.setText("—")
+        self._active_label.setText("—")
         self._error_label.setText("")
         self._refresh_buttons(None)
 

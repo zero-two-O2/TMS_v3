@@ -271,6 +271,11 @@ class LiveCameraTile(QWidget):
         set_role(self._age_label, "mono")
         self._sequence_label = QLabel("--")
         set_role(self._sequence_label, "mono")
+        # PTZ readout: compact status text fed by the wall's read-only
+        # PTZ monitor (never commands anything). Clips like the rest.
+        self._ptz_label = QLabel("")
+        set_role(self._ptz_label, "mono")
+        self._ptz_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         # Metric readouts never drive tile width (feeds do); they clip
         # instead of stretching narrow tiles. The state badge keeps its
         # preferred width so LIVE/ERROR stays fully readable.
@@ -279,11 +284,13 @@ class LiveCameraTile(QWidget):
             self._temp_label,
             self._age_label,
             self._sequence_label,
+            self._ptz_label,
         ):
             readout.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         status.addWidget(self._state_label)
         status.addWidget(self._fps_label)
         status.addWidget(self._temp_label)
+        status.addWidget(self._ptz_label)
         status.addStretch(1)
         status.addWidget(self._age_label)
         status.addWidget(self._sequence_label)
@@ -576,6 +583,16 @@ class LiveCameraTile(QWidget):
         self._sequence_label.setToolTip("")
         self._temp_label.setText("--")
         self._age_label.setText("-- ms")
+        self._ptz_label.setText("")
+        self._ptz_label.setToolTip("")
+
+    def set_ptz_status(self, text: str, tooltip: str = "") -> None:
+        """Compact read-only PTZ readout (wall monitor only, no commands)."""
+        try:
+            self._ptz_label.setText(text)
+            self._ptz_label.setToolTip(tooltip)
+        except RuntimeError:
+            pass  # teardown race; tile already gone
 
     def set_feed_mode(self, mode: str) -> None:
         """Deprecated compatibility shim: the wall always shows IR and VL.
@@ -803,7 +820,6 @@ class _StartupWorker(QThread):
     camera_started = pyqtSignal(str)
     camera_failed = pyqtSignal(str, str)
     _LIVE_START_TIMEOUT_S = 3.0
-
     def __init__(self, runtime_service, configs: list, abort: threading.Event, parent=None) -> None:
         super().__init__(parent)
         self._runtime_service = runtime_service
@@ -836,6 +852,11 @@ class LiveModeWidget(QWidget):
     N is always tile N; disconnects never remove, reorder or resize.
     """
 
+    # Read-only PTZ readout delivery: (startup token, camera_id, text,
+    # tooltip). Emitted from a retained daemon poll thread; stale tokens
+    # and unassigned cameras are dropped by the slot.
+    _ptz_readout = pyqtSignal(int, str, str, str)
+
     def __init__(
         self,
         mode_service: ModeService,
@@ -866,6 +887,15 @@ class LiveModeWidget(QWidget):
         self._startup_token = 0
         self._stats_timer: QTimer | None = None
         self._last_poll: dict[str, tuple[int, float]] = {}
+        # Read-only Live PTZ monitor (Phase 7): own service/session built
+        # from configuration, slow poll timer, token-guarded delivery to
+        # tile readouts. Never issues movement commands and never touches
+        # Configuration Mode widgets.
+        self._ptz_service = None
+        self._ptz_timer: QTimer | None = None
+        self._ptz_poll_busy = False
+        self._ptz_threads: set = set()
+        self._ptz_readout.connect(self._on_ptz_readout)
 
         self._setup_ui()
         self._create_fixed_tiles()
@@ -1134,6 +1164,7 @@ class LiveModeWidget(QWidget):
         self._update_summary()
         self._update_button_state()
         self._start_stats_timer()
+        self._start_ptz_timer()
         # Post-activation summary for diagnostics
         try:
             counts = self._tile_counts()
@@ -1180,6 +1211,7 @@ class LiveModeWidget(QWidget):
         # wait() on the GUI thread).
         worker = self._detach_startup_worker()
         self._stop_stats_timer()
+        self._stop_ptz_timer()
         # Feed renderers, two passes: FIRST wake every renderer without
         # waiting (session drop + stop request, so no stale frame can be
         # accepted from this instant on), THEN join them all with a
@@ -1316,6 +1348,10 @@ class LiveModeWidget(QWidget):
                     legacy.stop()
                 except Exception:
                     pass
+            try:
+                self._shutdown_ptz_services()
+            except Exception:
+                pass
             logger.info(
                 "[MODE-TRANSITION] background_teardown_complete "
                 "cameras=%d teardown_ms=%.1f",
@@ -1852,6 +1888,188 @@ class LiveModeWidget(QWidget):
     def _stop_stats_timer(self) -> None:
         if self._stats_timer is not None:
             self._stats_timer.stop()
+
+    # -- Read-only Live PTZ monitor (Phase 7) ------------------------------
+    #
+    # A 2 s timer fans out to ONE retained daemon thread per tick (busy
+    # guard skips overlaps). The thread reads authoritative status
+    # through this wall's own PtzService -- get_status only, so Live can
+    # never command a PTZ -- and results return via _ptz_readout with the
+    # startup token. Stale tokens and unassigned cameras are dropped.
+
+    def _start_ptz_timer(self) -> None:
+        if self._ptz_timer is None:
+            self._ptz_timer = QTimer(self)
+            self._ptz_timer.timeout.connect(self._poll_ptz_status)
+            self._ptz_timer.setInterval(2000)
+        if not self._ptz_timer.isActive():
+            self._ptz_timer.start()
+
+    def _stop_ptz_timer(self) -> None:
+        if self._ptz_timer is not None:
+            try:
+                self._ptz_timer.stop()
+            except RuntimeError:
+                pass
+
+    def _live_ptz_service(self):
+        """Lazily build this wall's read-only PTZ service (bg thread).
+
+        Simulator profile only auto-connects; anything else leaves the
+        tiles blank with a logged reason (never a silent fallback).
+        """
+        if self._ptz_service is not None:
+            return self._ptz_service
+        try:
+            ptz_cfg = self._config_manager.get_config().ptz
+            mappings = self._config_manager.get_config().cameras.mapping
+        except Exception:
+            return None
+        from thermal_monitor.ptz.siemens import validate_profile
+
+        status = validate_profile(
+            getattr(ptz_cfg, "profile", "simulator"),
+            getattr(ptz_cfg, "endpoint", ""),
+            getattr(ptz_cfg, "security_mode", "none"),
+            getattr(ptz_cfg, "username", ""),
+        )
+        if not status.ready or status.mapping != "simulator":
+            logger.info("[PTZ-LIVE] monitor disabled: %s", status.reason)
+            return None
+        ptz_ids = tuple(
+            sorted(
+                {
+                    (getattr(m, "ptz_id", "") or "").strip()
+                    for m in (mappings or [])
+                    if (getattr(m, "ptz_id", "") or "").strip()
+                }
+            )
+        )
+        if not ptz_ids:
+            return None
+        try:
+            from thermal_monitor.ptz.mapping import SimulatorPtzMapping
+            from thermal_monitor.ptz.models import PtzLimits, PtzStationBinding
+            from thermal_monitor.ptz.station import build_service, build_service_config
+
+            service = build_service(
+                status.endpoint,
+                SimulatorPtzMapping(ptz_ids=ptz_ids),
+                build_service_config(
+                    limits=PtzLimits(
+                        min_pan=ptz_cfg.limits.min_pan,
+                        max_pan=ptz_cfg.limits.max_pan,
+                        min_tilt=ptz_cfg.limits.min_tilt,
+                        max_tilt=ptz_cfg.limits.max_tilt,
+                        min_velocity=0.1,
+                        max_velocity=360.0,
+                    ),
+                    tolerance_pan=ptz_cfg.tolerance_pan,
+                    tolerance_tilt=ptz_cfg.tolerance_tilt,
+                    move_timeout_s=ptz_cfg.move_timeout_s,
+                    calibration_timeout_s=ptz_cfg.calibration_timeout_s,
+                    monitor_interval_s=ptz_cfg.monitor_interval_s,
+                ),
+            )
+            for m in mappings or []:
+                ptz_id = (getattr(m, "ptz_id", "") or "").strip()
+                if ptz_id:
+                    try:
+                        service.register_binding(
+                            PtzStationBinding(
+                                camera_id=m.camera_id, ptz_id=ptz_id
+                            )
+                        )
+                    except Exception:
+                        pass
+            service.connect()
+        except Exception as exc:
+            logger.warning("[PTZ-LIVE] PTZ service unavailable: %s", exc)
+            return None
+        self._ptz_service = service
+        return service
+
+    def _poll_ptz_status(self) -> None:
+        token = self._startup_token
+        assigned = [
+            camera_id
+            for camera_id, slot in self._camera_to_slot.items()
+            if 0 <= slot < len(self._tiles)
+        ]
+        if not assigned or self._ptz_poll_busy:
+            return
+        self._ptz_poll_busy = True
+
+        def _bg() -> None:
+            try:
+                service = self._live_ptz_service()
+                for camera_id in assigned:
+                    if service is None:
+                        break
+                    try:
+                        text, tip = self._ptz_text_for(service, camera_id)
+                    except Exception:
+                        continue
+                    try:
+                        self._ptz_readout.emit(token, camera_id, text, tip)
+                    except RuntimeError:
+                        return  # teardown; wall already gone
+            finally:
+                self._ptz_poll_busy = False
+                self._ptz_threads.discard(thread)
+
+        thread = threading.Thread(target=_bg, name="LivePtzPoll", daemon=True)
+        self._ptz_threads.add(thread)
+        thread.start()
+
+    @staticmethod
+    def _ptz_text_for(service, camera_id: str) -> tuple[str, str]:
+        """Compact tile text + tooltip from authoritative status."""
+        try:
+            binding = service.binding_for_camera(camera_id)
+        except Exception:
+            return "", ""
+        try:
+            status = service.get_status(camera_id)
+        except Exception as exc:
+            return "PTZ --", f"{binding.ptz_id}: PTZ unavailable ({exc})"
+        head = f"{binding.ptz_id} {status.actual_pan:.1f},{status.actual_tilt:.1f}"
+        if status.error is not None:
+            return "PTZ !err", f"{head} ERROR {status.error.message}"
+        if status.calibration.value == "active":
+            return "PTZ cal", f"{head} calibrating"
+        if status.moving:
+            return f"PTZ {status.actual_pan:.1f},{status.actual_tilt:.1f}…", head
+        if not status.communication_ok or not status.plc_connected:
+            return "PTZ --", f"{head} disconnected"
+        if status.position_reached:
+            return f"PTZ {status.actual_pan:.1f},{status.actual_tilt:.1f} =", head
+        if not status.ready:
+            return "PTZ n/a", f"{head} not ready"
+        return f"PTZ {status.actual_pan:.1f},{status.actual_tilt:.1f}", head
+
+    def _on_ptz_readout(
+        self, token: int, camera_id: str, text: str, tooltip: str
+    ) -> None:
+        """Apply a readout only for the current wall generation."""
+        if token != self._startup_token:
+            return
+        slot = self._camera_to_slot.get(camera_id)
+        if slot is None or not 0 <= slot < len(self._tiles):
+            return
+        try:
+            self._tiles[slot].set_ptz_status(text, tooltip)
+        except RuntimeError:
+            pass
+
+    def _shutdown_ptz_services(self) -> None:
+        service, self._ptz_service = self._ptz_service, None
+        if service is None:
+            return
+        try:
+            service.shutdown(timeout_s=5.0)
+        except Exception:
+            pass
 
     def _poll_stats(self) -> None:
         if self._runtime_service is not None:
