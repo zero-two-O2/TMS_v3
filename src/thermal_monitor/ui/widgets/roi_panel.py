@@ -513,17 +513,15 @@ class ROIPanel(QWidget):
         if not geometry:
             return
 
-        limits = TemperatureLimits(
-            unit=TemperatureUnit(self._editor_unit_combo.currentText()),
-            min_warning=self._editor_min_warning.value() if self._editor_min_warning.value() > -273.15 else None,
-            max_warning=self._editor_max_warning.value() if self._editor_max_warning.value() > -273.15 else None,
-            min_critical=self._editor_min_critical.value() if self._editor_min_critical.value() > -273.15 else None,
-            max_critical=self._editor_max_critical.value() if self._editor_max_critical.value() > -273.15 else None,
-            rate_of_change_limit=self._editor_rate_limit.value() if self._editor_rate_limit.value() > 0.0 else None,
-        )
-
         try:
-            limits.__post_init__()
+            limits = TemperatureLimits(
+                unit=TemperatureUnit(self._editor_unit_combo.currentText()),
+                min_warning=self._editor_min_warning.value() if self._editor_min_warning.value() > -273.15 else None,
+                max_warning=self._editor_max_warning.value() if self._editor_max_warning.value() > -273.15 else None,
+                min_critical=self._editor_min_critical.value() if self._editor_min_critical.value() > -273.15 else None,
+                max_critical=self._editor_max_critical.value() if self._editor_max_critical.value() > -273.15 else None,
+                rate_of_change_limit=self._editor_rate_limit.value() if self._editor_rate_limit.value() > 0.0 else None,
+            )
         except ValueError as e:
             QMessageBox.warning(self, "Invalid Limits", str(e))
             return

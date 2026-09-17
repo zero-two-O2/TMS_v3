@@ -109,6 +109,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.18
     device_identifier: gvcp:HB25100001
+    ptz_id: ''
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
 system:
   max_cameras: 8
   auto_save_config: true

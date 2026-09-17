@@ -36,6 +36,9 @@ from PyQt6.QtWidgets import (
 #: Editor types whose wheel input is locked until explicitly focused.
 _GUARDED_TYPES = (QAbstractSpinBox, QComboBox, QAbstractSlider)
 
+# Global guard for forwarded wheel events (cross-filter recursion prevention).
+_FORWARDED_IDS: set[int] = set()
+
 
 def enclosing_scroll_area(widget: QWidget) -> QScrollArea | None:
     """Nearest enclosing QScrollArea viewport host, if any."""
@@ -54,6 +57,10 @@ def enclosing_scroll_area(widget: QWidget) -> QScrollArea | None:
 class WheelForwardFilter(QObject):
     """Re-target wheel events from unfocused editors to their scroll area."""
 
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._forwarding = False
+
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 (Qt override)
         if event.type() == QEvent.Type.ChildAdded:
             # Lazily built editors (e.g. config-editor fields created on
@@ -67,6 +74,16 @@ class WheelForwardFilter(QObject):
             return False
         if event.type() != QEvent.Type.Wheel:
             return False
+        # Never re-process an event we just forwarded (cross-filter guard).
+        try:
+            eid = id(event)
+            if eid in _FORWARDED_IDS:
+                return False
+        except Exception:
+            pass
+        # Re-entrancy guard for the synchronous sendEvent below.
+        if self._forwarding:
+            return False
         if not isinstance(watched, QWidget):
             return False
         if watched.hasFocus():
@@ -78,6 +95,9 @@ class WheelForwardFilter(QObject):
             return False
         try:
             viewport = scroll.viewport()
+            # Viewport itself must never be forwarded (same-view loop).
+            if viewport is watched:
+                return False
             global_pos = watched.mapToGlobal(event.position().toPoint())
             local_pos = viewport.mapFromGlobal(global_pos)
             forwarded = QWheelEvent(
@@ -92,7 +112,14 @@ class WheelForwardFilter(QObject):
             )
         except Exception:
             return False
-        QApplication.sendEvent(viewport, forwarded)
+        self._forwarding = True
+        fid = id(forwarded)
+        _FORWARDED_IDS.add(fid)
+        try:
+            QApplication.sendEvent(viewport, forwarded)
+        finally:
+            self._forwarding = False
+            _FORWARDED_IDS.discard(fid)
         return True  # consumed: the editor value is untouched
 
     def _guard_subtree(self, node: QWidget) -> None:

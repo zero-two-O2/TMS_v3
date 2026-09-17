@@ -24,23 +24,23 @@ class _Logger:
         self._logger.addHandler(console_handler)
         self._logger.propagate = False
 
-    def debug(self, message: str) -> None:
-        self._logger.debug(message)
+    def debug(self, message: str, *args, **kwargs) -> None:
+        self._logger.debug(message, *args, **kwargs)
 
-    def info(self, message: str) -> None:
-        self._logger.info(message)
+    def info(self, message: str, *args, **kwargs) -> None:
+        self._logger.info(message, *args, **kwargs)
 
-    def warning(self, message: str) -> None:
-        self._logger.warning(message)
+    def warning(self, message: str, *args, **kwargs) -> None:
+        self._logger.warning(message, *args, **kwargs)
 
-    def error(self, message: str) -> None:
-        self._logger.error(message)
+    def error(self, message: str, *args, **kwargs) -> None:
+        self._logger.error(message, *args, **kwargs)
 
-    def critical(self, message: str) -> None:
-        self._logger.critical(message)
+    def critical(self, message: str, *args, **kwargs) -> None:
+        self._logger.critical(message, *args, **kwargs)
 
-    def exception(self, message: str) -> None:
-        self._logger.exception(message)
+    def exception(self, message: str, *args, **kwargs) -> None:
+        self._logger.exception(message, *args, **kwargs)
 
 
 logger = _Logger()
