@@ -668,7 +668,9 @@ class AsyncuaTransport:
     def subscribe(
         self, node: PtzNodeDescriptor, callback: ValueCallback, timeout_s: float
     ) -> SubscriptionHandle:
-        from asyncua import Subscription
+        # NOTE (Phase 4 integration fix): asyncua>=2 exposes Subscription
+        # at asyncua.common.subscription, not at the package top level.
+        from asyncua.common.subscription import Subscription  # noqa: F401
 
         opc_node = self._node(node)
 

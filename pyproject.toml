@@ -32,7 +32,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 markers = [
     "hardware: tests requiring a physical TV46L camera and HALCON",
 ]
