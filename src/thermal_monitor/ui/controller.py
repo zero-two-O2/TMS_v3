@@ -384,6 +384,7 @@ class AppController(QObject):
                 discovery_service=self._discovery_service,
                 theme_manager=self._theme_manager,
                 config_manager=self._config_manager,
+                database=self._database,
             )
             logger.info("CONTROLLER CONFIG CREATED: config_window config_service id=%s same_as_controller=%s live_same=%s", hex(id(self._config_window._config_service)), hex(id(self._config_window._config_service)) == hex(id(self._config_service)), hex(id(self._config_window._config_service)) == hex(id(self._live_window._config_service)) if self._live_window else "no_live")
             self._config_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)

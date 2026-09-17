@@ -299,6 +299,16 @@ class ConfigurationManager:
             },
             "ptz": {
                 "enabled": True,
+                "endpoint": "",
+                "tolerance_pan": 0.5,
+                "tolerance_tilt": 0.5,
+                "velocity_mode": "single",
+                "default_velocity": 10.0,
+                "default_pan_velocity": 10.0,
+                "default_tilt_velocity": 10.0,
+                "move_timeout_s": 30.0,
+                "calibration_timeout_s": 120.0,
+                "monitor_interval_s": 0.5,
                 "limits": {
                     "min_pan": -170.0,
                     "max_pan": 170.0,
@@ -519,9 +529,10 @@ class ConfigurationManager:
 
         mapping_raw = cam_raw.get("mapping", [])
         mapping = []
+        seen_camera_ids: set[str] = set()
         for m in mapping_raw:
             if isinstance(m, dict):
-                mapping.append(CameraMappingConfig(
+                entry = CameraMappingConfig(
                     camera_id=m.get("camera_id", ""),
                     serial_number=m.get("serial_number", ""),
                     enabled=m.get("enabled", True),
@@ -529,7 +540,19 @@ class ConfigurationManager:
                     target_fps=m.get("target_fps"),
                     ip_address=m.get("ip_address", ""),
                     device_identifier=m.get("device_identifier", ""),
-                ))
+                    ptz_id=m.get("ptz_id", ""),
+                    ptz_endpoint=m.get("ptz_endpoint", ""),
+                    ptz_min_pan=m.get("ptz_min_pan"),
+                    ptz_max_pan=m.get("ptz_max_pan"),
+                    ptz_min_tilt=m.get("ptz_min_tilt"),
+                    ptz_max_tilt=m.get("ptz_max_tilt"),
+                )
+                if entry.camera_id in seen_camera_ids:
+                    raise ConfigurationError(
+                        f"Duplicate cameras.mapping camera_id {entry.camera_id!r}"
+                    )
+                seen_camera_ids.add(entry.camera_id)
+                mapping.append(entry)
 
         cameras = CamerasConfig(
             discovery=discovery,
@@ -627,6 +650,16 @@ class ConfigurationManager:
             limits=limits,
             default_position=default_position,
             speeds=speeds,
+            endpoint=ptz_raw.get("endpoint", ""),
+            tolerance_pan=_parse_float(ptz_raw.get("tolerance_pan"), 0.5),
+            tolerance_tilt=_parse_float(ptz_raw.get("tolerance_tilt"), 0.5),
+            velocity_mode=ptz_raw.get("velocity_mode", "single"),
+            default_velocity=_parse_float(ptz_raw.get("default_velocity"), 10.0),
+            default_pan_velocity=_parse_float(ptz_raw.get("default_pan_velocity"), 10.0),
+            default_tilt_velocity=_parse_float(ptz_raw.get("default_tilt_velocity"), 10.0),
+            move_timeout_s=_parse_float(ptz_raw.get("move_timeout_s"), 30.0),
+            calibration_timeout_s=_parse_float(ptz_raw.get("calibration_timeout_s"), 120.0),
+            monitor_interval_s=_parse_float(ptz_raw.get("monitor_interval_s"), 0.5),
         )
 
         # ROI
@@ -859,6 +892,12 @@ class ConfigurationManager:
                 "target_fps": mapping.target_fps,
                 "ip_address": mapping.ip_address,
                 "device_identifier": mapping.device_identifier,
+                "ptz_id": mapping.ptz_id,
+                "ptz_endpoint": mapping.ptz_endpoint,
+                "ptz_min_pan": mapping.ptz_min_pan,
+                "ptz_max_pan": mapping.ptz_max_pan,
+                "ptz_min_tilt": mapping.ptz_min_tilt,
+                "ptz_max_tilt": mapping.ptz_max_tilt,
             }
             for index, existing in enumerate(mappings):
                 if (

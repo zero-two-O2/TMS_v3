@@ -46,19 +46,21 @@ from thermal_monitor.ui.windows.configuration_window import (
 )
 
 
-LEFT_KEYS = ("camera_control", "image_info")
+LEFT_KEYS = ("camera_control", "image_info", "ptz_control")
 RIGHT_KEYS = (
     "temp_scale",
     "view_finder",
     "roi",
     "alarms",
     "statistics",
+    "ptz_positions",
 )
 ALL_KEYS = LEFT_KEYS + RIGHT_KEYS
 
 LEFT_TITLES = {
     "camera_control": "Camera Control",
     "image_info": "Image Information",
+    "ptz_control": "PTZ Control",
 }
 RIGHT_TITLES = {
     "temp_scale": "Temperature Scale",
@@ -66,6 +68,7 @@ RIGHT_TITLES = {
     "roi": "ROI",
     "alarms": "Alarms",
     "statistics": "Statistics",
+    "ptz_positions": "Position Table",
 }
 
 

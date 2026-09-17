@@ -151,6 +151,17 @@ class CameraMappingConfig:
     target_fps: Optional[int] = None
     ip_address: str = ""
     device_identifier: str = ""
+    # PTZ station association. Empty ptz_id means "no PTZ configured"
+    # (distinct from "PTZ disconnected"); never silently defaulted.
+    ptz_id: str = ""
+    # Per-camera OPC UA endpoint override. Empty means "use the global
+    # ptz.endpoint". No credentials here; secrets come from env.
+    ptz_endpoint: str = ""
+    # Optional per-camera limit overrides (None = use global ptz.limits).
+    ptz_min_pan: Optional[float] = None
+    ptz_max_pan: Optional[float] = None
+    ptz_min_tilt: Optional[float] = None
+    ptz_max_tilt: Optional[float] = None
 
     def __post_init__(self) -> None:
         if not self.camera_id:
@@ -159,6 +170,28 @@ class CameraMappingConfig:
             raise ValueError("cameras.mapping[].serial_number is required")
         if self.target_fps is not None and self.target_fps <= 0:
             raise ValueError(f"cameras.mapping[].target_fps must be > 0; got {self.target_fps}")
+        if self.ptz_id is not None and not isinstance(self.ptz_id, str):
+            raise ValueError("cameras.mapping[].ptz_id must be a string")
+        for bound in (
+            self.ptz_min_pan,
+            self.ptz_max_pan,
+            self.ptz_min_tilt,
+            self.ptz_max_tilt,
+        ):
+            if bound is not None and not isinstance(bound, (int, float)):
+                raise ValueError("cameras.mapping[].ptz_* limit overrides must be numeric")
+        if (
+            self.ptz_min_pan is not None
+            and self.ptz_max_pan is not None
+            and not self.ptz_min_pan < self.ptz_max_pan
+        ):
+            raise ValueError("cameras.mapping[].ptz_min_pan must be < ptz_max_pan")
+        if (
+            self.ptz_min_tilt is not None
+            and self.ptz_max_tilt is not None
+            and not self.ptz_min_tilt < self.ptz_max_tilt
+        ):
+            raise ValueError("cameras.mapping[].ptz_min_tilt must be < ptz_max_tilt")
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,6 +339,38 @@ class PTZConfig:
     limits: PTZLimitsConfig = field(default_factory=PTZLimitsConfig)
     default_position: PTZDefaultPositionConfig = field(default_factory=PTZDefaultPositionConfig)
     speeds: PTZSpeedsConfig = field(default_factory=PTZSpeedsConfig)
+    # Default OPC UA endpoint for all PTZ stations. Empty means no
+    # endpoint configured (PTZ operations report "not configured",
+    # never attempt a connection). Simulator default for development
+    # is opc.tcp://127.0.0.1:4840; the real Siemens endpoint is unknown.
+    endpoint: str = ""
+    # Position-reached tolerance, degrees per axis. Simulator-tuned
+    # default; the real machine tolerance is unknown.
+    tolerance_pan: float = 0.5
+    tolerance_tilt: float = 0.5
+    # Default velocity mode: "single" or "per_axis".
+    velocity_mode: str = "single"
+    default_velocity: float = 10.0
+    default_pan_velocity: float = 10.0
+    default_tilt_velocity: float = 10.0
+    # Bounded operation timeouts (seconds).
+    move_timeout_s: float = 30.0
+    calibration_timeout_s: float = 120.0
+    monitor_interval_s: float = 0.5
+
+    def __post_init__(self) -> None:
+        if self.velocity_mode not in ("single", "per_axis"):
+            raise ValueError(f"ptz.velocity_mode must be 'single' or 'per_axis'; got {self.velocity_mode!r}")
+        if self.tolerance_pan < 0:
+            raise ValueError(f"ptz.tolerance_pan must be >= 0; got {self.tolerance_pan}")
+        if self.tolerance_tilt < 0:
+            raise ValueError(f"ptz.tolerance_tilt must be >= 0; got {self.tolerance_tilt}")
+        for name in ("default_velocity", "default_pan_velocity", "default_tilt_velocity"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"ptz.{name} must be > 0; got {getattr(self, name)}")
+        for name in ("move_timeout_s", "calibration_timeout_s", "monitor_interval_s"):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"ptz.{name} must be > 0; got {getattr(self, name)}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -35,11 +35,13 @@ from thermal_monitor.ui.windows.configuration_window import (
 EXPECTED_TITLES = {
     "camera_control": "Camera Control",
     "image_info": "Image Information",
+    "ptz_control": "PTZ Control",
     "temp_scale": "Temperature Scale",
     "view_finder": "View Finder",
     "roi": "ROI",
     "alarms": "Alarms",
     "statistics": "Statistics",
+    "ptz_positions": "Position Table",
 }
 
 

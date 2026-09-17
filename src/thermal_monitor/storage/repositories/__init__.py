@@ -9,6 +9,7 @@ from thermal_monitor.storage.repositories.roi import (
     ROIRepository,
 )
 from thermal_monitor.storage.repositories.alarm import AlarmEventRepository
+from thermal_monitor.storage.repositories.ptz import PtzPositionRepository, PtzPositionRow
 from thermal_monitor.storage.repositories.recording import RecordingRepository
 from thermal_monitor.storage.repositories.system import (
     SystemConfigRepository,
@@ -22,6 +23,8 @@ __all__ = [
     "BaseRepository",
     "CameraRepository",
     "PositionROIRepository",
+    "PtzPositionRepository",
+    "PtzPositionRow",
     "RecordingConfigRepository",
     "RecordingRepository",
     "RepositoryResult",

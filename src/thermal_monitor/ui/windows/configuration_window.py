@@ -629,6 +629,13 @@ class ConfigurationModeWidget(QWidget):
     # Marshals background camera-operation outcomes to the GUI thread:
     # (ok, tag, message, result). Emitted from a daemon worker thread.
     _bg_done = pyqtSignal(bool, str, str, object)
+    # PTZ marshaling signals (emitted from PTZ daemon threads, consumed on
+    # the GUI thread; every payload carries (camera_id, generation) so
+    # stale deliveries can never touch the wrong camera panel).
+    _ptz_status = pyqtSignal(str, int, str, object)  # camera_id, gen, ptz_id, PtzStatus
+    _ptz_operation = pyqtSignal(str, int, object)  # camera_id, gen, PtzOperation
+    _ptz_positions = pyqtSignal(str, int, object)  # camera_id, gen, list[PtzPosition]
+    _ptz_notice = pyqtSignal(str, int, str)  # camera_id, gen, message
 
     def __init__(
         self,
@@ -638,6 +645,7 @@ class ConfigurationModeWidget(QWidget):
         discovery_service: "CameraDiscoveryService | GvcpDiscoveryService | None" = None,
         theme_manager: Optional[ThemeManager] = None,
         config_manager: Optional[ConfigurationManager] = None,
+        database=None,
     ) -> None:
         super().__init__()
 
@@ -647,6 +655,15 @@ class ConfigurationModeWidget(QWidget):
         self._discovery_service = discovery_service
         self._theme = theme_manager
         self._config_manager = config_manager
+        self._database = database
+        # PTZ integration (Phase 6): services keyed by OPC UA endpoint so
+        # one session is shared per endpoint; panels always follow the
+        # selected camera via binding + generation guards. Daemon threads
+        # are retained until completion; results return via _ptz_* signals.
+        self._ptz_services: dict[str, object] = {}
+        self._ptz_threads: set = set()
+        self._ptz_panel = None
+        self._pos_panel = None
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
@@ -819,6 +836,25 @@ class ConfigurationModeWidget(QWidget):
             "image_info", "Image Information", self._frame_info_panel, "left"
         )
 
+        # LEFT: PTZ Control panel (Phase 6). Service-agnostic surface;
+        # this widget drives PtzService on background threads and feeds
+        # snapshots back via _ptz_* signals (generation-guarded).
+        from thermal_monitor.ui.widgets.ptz_control_panel import PtzControlPanel
+
+        self._ptz_panel = PtzControlPanel(self._theme)
+        self._ptz_panel.move_requested.connect(self._on_ptz_move_requested)
+        self._ptz_panel.relative_requested.connect(self._on_ptz_relative_requested)
+        self._ptz_panel.stop_requested.connect(self._on_ptz_stop_requested)
+        self._ptz_panel.clear_error_requested.connect(
+            self._on_ptz_clear_error_requested
+        )
+        self._ptz_panel.calibration_requested.connect(
+            self._on_ptz_calibration_requested
+        )
+        self._register_side_panel(
+            "ptz_control", "PTZ Control", self._ptz_panel, "left"
+        )
+
         # CENTER: Large thermal + VL display (primary workspace).
         # The painters letterbox with KeepAspectRatio, so side shelves
         # never stretch the 640x480 (4:3) image.
@@ -904,6 +940,27 @@ class ConfigurationModeWidget(QWidget):
         self._stats_panel = StatisticsPanel(self._theme)
         self._register_side_panel(
             "statistics", "Statistics", self._stats_panel, "right"
+        )
+
+        # RIGHT: Position Table panel (Phase 6). Renders persisted
+        # PtzPosition rows; CRUD/GoTo run on background threads.
+        from thermal_monitor.ui.widgets.ptz_position_table import (
+            PtzPositionTablePanel,
+        )
+
+        self._pos_panel = PtzPositionTablePanel(self._theme)
+        self._pos_panel.goto_requested.connect(self._on_ptz_goto_requested)
+        self._pos_panel.save_current_requested.connect(
+            self._on_ptz_save_current_requested
+        )
+        self._pos_panel.delete_requested.connect(self._on_ptz_delete_requested)
+        self._pos_panel.rename_requested.connect(self._on_ptz_rename_requested)
+        self._pos_panel.roi_associate_requested.connect(
+            self._on_ptz_roi_associate_requested
+        )
+        self._pos_panel.refresh_requested.connect(self._on_ptz_refresh_requested)
+        self._register_side_panel(
+            "ptz_positions", "Position Table", self._pos_panel, "right"
         )
 
         # Configuration Editor dock (deployment config)
@@ -1780,6 +1837,17 @@ class ConfigurationModeWidget(QWidget):
         # Background camera-operation outcomes arrive here (GUI thread).
         self._bg_done.connect(self._on_bg_done, Qt.ConnectionType.QueuedConnection)
 
+        # PTZ background outcomes arrive here (GUI thread, guarded by
+        # camera_id + generation so stale deliveries are dropped).
+        self._ptz_status.connect(self._on_ptz_status, Qt.ConnectionType.QueuedConnection)
+        self._ptz_operation.connect(
+            self._on_ptz_operation, Qt.ConnectionType.QueuedConnection
+        )
+        self._ptz_positions.connect(
+            self._on_ptz_positions, Qt.ConnectionType.QueuedConnection
+        )
+        self._ptz_notice.connect(self._on_ptz_notice, Qt.ConnectionType.QueuedConnection)
+
         # Image widget range changes
         self._image_widget.range_changed.connect(self._scale_panel.update_range)
 
@@ -1922,6 +1990,7 @@ class ConfigurationModeWidget(QWidget):
         """
         self._session.renew(camera_id)
         self._selected_camera_id = camera_id
+        self._ptz_clear_panels()
         self._image_widget.set_session(camera_id)
         self._vl_widget.set_session(camera_id)
         self._display_rate.reset()
@@ -2450,12 +2519,23 @@ class ConfigurationModeWidget(QWidget):
                 )
                 if self._selected_camera_id:
                     self._load_camera_config(self._selected_camera_id)
+                    self._ptz_attach_async(
+                        self._selected_camera_id, self._session.generation
+                    )
                 self._refresh_focus_panel()
                 self._refresh_nuc_panel()
             elif tag == "disconnect":
                 self._set_lifecycle(CameraConnectionState.DISCONNECTED)
                 if self._selected_camera_id:
                     self._load_camera_config(self._selected_camera_id)
+                    # PTZ stays connected at the session level, but the
+                    # panels return to binding-only display: no live PTZ
+                    # state is shown for a disconnected camera.
+                    self._ptz_refresh_binding(self._selected_camera_id)
+                    try:
+                        self._ptz_panel.set_status(None)
+                    except RuntimeError:
+                        pass
                 self._status_label.setText("Camera disconnected")
             elif tag == "connect":
                 connect_ms = float(result)
@@ -2466,6 +2546,9 @@ class ConfigurationModeWidget(QWidget):
                 )
                 if self._selected_camera_id:
                     self._load_camera_config(self._selected_camera_id)
+                    self._ptz_attach_async(
+                        self._selected_camera_id, self._session.generation
+                    )
                 self._refresh_focus_panel()
                 self._refresh_nuc_panel()
         finally:
@@ -2554,6 +2637,10 @@ class ConfigurationModeWidget(QWidget):
         self._stats_panel.clear()
         self._refresh_setup_dialog()
 
+        # PTZ binding display follows camera selection (no I/O here;
+        # attach/connect happens on the connect lifecycle path).
+        self._ptz_refresh_binding(camera_id)
+
         # Update ROI overlays
         self._update_roi_overlays()
 
@@ -2566,6 +2653,666 @@ class ConfigurationModeWidget(QWidget):
         # when the camera is not running).
         self._refresh_focus_panel()
         self._refresh_nuc_panel()
+
+    # -- PTZ integration (Phase 6: service-driven, never direct OPC UA) ----
+    #
+    # All PTZ I/O runs on retained daemon threads; outcomes return via
+    # the _ptz_* queued signals carrying (camera_id, generation) so stale
+    # deliveries from a previous camera/session can never touch panels.
+    # The camera lifecycle is never blocked: attach/connect/monitor all
+    # happen off the GUI thread, and no PTZ ever auto-moves on connect.
+
+    def _ptz_mapping_entry(self, camera_id: str):
+        """YAML mapping entry for a camera (None when unconfigured)."""
+        try:
+            mappings = self._config_manager.get_config().cameras.mapping
+        except Exception:
+            return None
+        for entry in mappings or []:
+            if getattr(entry, "camera_id", None) == camera_id:
+                return entry
+        return None
+
+    def _ptz_global_config(self):
+        try:
+            return self._config_manager.get_config().ptz
+        except Exception:
+            return None
+
+    def _ptz_refresh_binding(self, camera_id: str) -> None:
+        """Cheap binding display refresh (no I/O; safe anywhere)."""
+        if self._ptz_panel is None:
+            return
+        entry = self._ptz_mapping_entry(camera_id)
+        ptz_id = (getattr(entry, "ptz_id", "") or "").strip() or None
+        ptz_cfg = self._ptz_global_config()
+        endpoint = ""
+        if ptz_cfg is not None and ptz_id is not None:
+            from thermal_monitor.ptz.station import resolve_endpoint
+
+            endpoint = resolve_endpoint(
+                getattr(ptz_cfg, "endpoint", ""),
+                getattr(entry, "ptz_endpoint", "") or "",
+            )
+        try:
+            self._ptz_panel.set_binding(camera_id, ptz_id, bool(endpoint))
+            self._pos_panel.set_station(camera_id, ptz_id)
+        except RuntimeError:
+            pass  # teardown race; panels already gone
+
+    def _ptz_clear_panels(self) -> None:
+        try:
+            if self._ptz_panel is not None:
+                self._ptz_panel.clear()
+            if self._pos_panel is not None:
+                self._pos_panel.clear()
+        except RuntimeError:
+            pass
+
+    def _ptz_run(self, name: str, fn) -> None:
+        """Run ``fn`` on a retained daemon thread (never blocks GUI)."""
+
+        def _target() -> None:
+            try:
+                fn()
+            except Exception:
+                logger.exception("PTZ background operation %s failed", name)
+            finally:
+                self._ptz_threads.discard(thread)
+
+        thread = threading.Thread(target=_target, name=f"ConfigPtz-{name}", daemon=True)
+        self._ptz_threads.add(thread)
+        thread.start()
+
+    def _ptz_service_for(self, endpoint: str, ptz_ids: tuple):
+        """Get-or-create the shared service for one endpoint (bg only)."""
+        from thermal_monitor.ptz.client import (
+            AsyncuaTransport,
+            OpcUaClientConfig,
+            OpcUaSession,
+        )
+        from thermal_monitor.ptz.mapping import SimulatorPtzMapping
+        from thermal_monitor.ptz.service import PtzService
+        from thermal_monitor.ptz.station import build_service_config
+
+        service = self._ptz_services.get(endpoint)
+        if service is not None:
+            return service
+        ptz_cfg = self._ptz_global_config()
+        mapping = SimulatorPtzMapping(ptz_ids=tuple(ptz_ids))
+        session = OpcUaSession(
+            OpcUaClientConfig(
+                endpoint=endpoint,
+                connect_timeout_s=5.0,
+                read_timeout_s=2.0,
+                write_timeout_s=3.0,
+            ),
+            AsyncuaTransport(),
+        )
+        if ptz_cfg is not None:
+            from thermal_monitor.ptz.models import PtzLimits
+
+            service_config = build_service_config(
+                limits=PtzLimits(
+                    min_pan=ptz_cfg.limits.min_pan,
+                    max_pan=ptz_cfg.limits.max_pan,
+                    min_tilt=ptz_cfg.limits.min_tilt,
+                    max_tilt=ptz_cfg.limits.max_tilt,
+                    min_velocity=0.1,
+                    max_velocity=360.0,
+                ),
+                tolerance_pan=ptz_cfg.tolerance_pan,
+                tolerance_tilt=ptz_cfg.tolerance_tilt,
+                move_timeout_s=ptz_cfg.move_timeout_s,
+                calibration_timeout_s=ptz_cfg.calibration_timeout_s,
+                monitor_interval_s=ptz_cfg.monitor_interval_s,
+            )
+        else:
+            service_config = None
+        service = PtzService(session, mapping, service_config)
+        service.add_status_listener(self._ptz_on_service_status)
+        self._ptz_services[endpoint] = service
+        return service
+
+    def _ptz_on_service_status(self, ptz_id: str, status) -> None:
+        """Service monitor callback (background thread): re-emit guarded."""
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        try:
+            self._ptz_status.emit(camera_id, self._session.generation, ptz_id, status)
+        except RuntimeError:
+            pass  # teardown; nothing left to update
+
+    def _ptz_attach_async(self, camera_id: str, generation: int) -> None:
+        """Resolve binding and connect the PTZ service (background)."""
+
+        def _attach() -> None:
+            from thermal_monitor.ptz.station import (
+                resolve_binding,
+                resolve_endpoint,
+            )
+
+            entry = self._ptz_mapping_entry(camera_id)
+            ptz_id = (getattr(entry, "ptz_id", "") or "").strip() if entry else ""
+            binding = resolve_binding(camera_id, ptz_id) if entry else None
+            if binding is None:
+                return  # no PTZ configured; binding display already shows it
+            ptz_cfg = self._ptz_global_config()
+            endpoint = resolve_endpoint(
+                getattr(ptz_cfg, "endpoint", "") if ptz_cfg else "",
+                getattr(entry, "ptz_endpoint", "") or "",
+            )
+            if not endpoint:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"{binding.ptz_id}: OPC UA endpoint not configured"
+                )
+                return
+            try:
+                mappings = self._config_manager.get_config().cameras.mapping
+            except Exception:
+                mappings = []
+            ptz_ids = tuple(
+                sorted(
+                    {
+                        (getattr(m, "ptz_id", "") or "").strip()
+                        for m in (mappings or [])
+                        if (getattr(m, "ptz_id", "") or "").strip()
+                    }
+                )
+            ) or (binding.ptz_id,)
+            try:
+                service = self._ptz_service_for(endpoint, ptz_ids)
+            except Exception as exc:
+                logger.warning("PTZ service creation failed: %s", exc)
+                self._ptz_notice.emit(camera_id, generation, f"PTZ unavailable: {exc}")
+                return
+            try:
+                service.register_binding(binding)
+            except Exception as exc:
+                logger.warning("PTZ binding failed: %s", exc)
+                self._ptz_notice.emit(camera_id, generation, f"PTZ binding failed: {exc}")
+                return
+            try:
+                service.connect()
+                service.start_monitoring()
+            except Exception as exc:
+                logger.warning("PTZ connect failed: %s", exc)
+                self._ptz_notice.emit(camera_id, generation, f"PTZ connect failed: {exc}")
+                return
+            try:
+                status = service.get_status(camera_id)
+                self._ptz_status.emit(camera_id, generation, binding.ptz_id, status)
+            except Exception as exc:
+                logger.debug("PTZ status refresh failed", exc_info=True)
+            self._ptz_load_positions(camera_id, generation)
+
+        self._ptz_run(f"attach-{camera_id}", _attach)
+
+    def _ptz_positions_repo(self):
+        if self._database is None:
+            return None
+        from thermal_monitor.storage.repositories.ptz import PtzPositionRepository
+
+        try:
+            return PtzPositionRepository(self._database)
+        except Exception:
+            logger.debug("PTZ position repository unavailable", exc_info=True)
+            return None
+
+    def _ptz_load_positions(self, camera_id: str, generation: int) -> None:
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            return  # persistence unavailable; table stays empty, no error spam
+        try:
+            result = repo.list_positions_for_camera(camera_id)
+        except Exception as exc:
+            logger.debug("PTZ position load failed", exc_info=True)
+            return
+        if result.success and result.data is not None:
+            try:
+                self._ptz_positions.emit(camera_id, generation, list(result.data))
+            except RuntimeError:
+                pass
+
+    def _ptz_teardown_all_async(self) -> None:
+        """Shut down every PTZ service off the GUI thread (never blocks)."""
+
+        def _teardown() -> None:
+            services = list(self._ptz_services.values())
+            self._ptz_services.clear()
+            for service in services:
+                try:
+                    service.shutdown(timeout_s=5.0)
+                except Exception:
+                    pass
+
+        self._ptz_run("teardown-all", _teardown)
+        self._ptz_clear_panels()
+
+    # -- PTZ panel request handlers (GUI thread -> background) -------------
+
+    def _ptz_guarded_service(self, camera_id: str):
+        """Resolve (service, binding, generation) or show why not."""
+        entry = self._ptz_mapping_entry(camera_id)
+        ptz_id = (getattr(entry, "ptz_id", "") or "").strip() if entry else ""
+        if not ptz_id:
+            self._ptz_panel.show_message("No PTZ configured for this camera.")
+            return None
+        ptz_cfg = self._ptz_global_config()
+        from thermal_monitor.ptz.station import resolve_endpoint
+
+        endpoint = resolve_endpoint(
+            getattr(ptz_cfg, "endpoint", "") if ptz_cfg else "",
+            getattr(entry, "ptz_endpoint", "") or "",
+        )
+        service = self._ptz_services.get(endpoint) if endpoint else None
+        if service is None:
+            self._ptz_panel.show_message("PTZ not connected. Connect the camera first.")
+            return None
+        try:
+            binding = service.binding_for_camera(camera_id)
+        except Exception as exc:
+            self._ptz_panel.show_message(str(exc))
+            return None
+        return service, binding, self._session.generation
+
+    def _on_ptz_move_requested(
+        self, pan: float, tilt: float, velocity: float, mode: str
+    ) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._ptz_panel is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            return
+        service, binding, generation = resolved
+
+        def _move() -> None:
+            try:
+                if mode == "per_axis":
+                    op = service.move_absolute(
+                        camera_id, pan, tilt, velocity_mode="per_axis",
+                        pan_velocity=velocity, tilt_velocity=velocity,
+                    )
+                else:
+                    op = service.move_absolute(
+                        camera_id, pan, tilt, velocity=velocity
+                    )
+                self._ptz_operation.emit(camera_id, generation, op)
+                try:
+                    status = service.get_status(camera_id)
+                    self._ptz_status.emit(
+                        camera_id, generation, binding.ptz_id, status
+                    )
+                except Exception:
+                    pass
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Move failed: {exc}")
+
+        self._ptz_run(f"move-{camera_id}", _move)
+
+    def _on_ptz_relative_requested(
+        self, delta_pan: float, delta_tilt: float, velocity: float
+    ) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._ptz_panel is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            return
+        service, binding, generation = resolved
+
+        def _move() -> None:
+            try:
+                op = service.move_relative(
+                    camera_id, delta_pan, delta_tilt, velocity=velocity
+                )
+                self._ptz_operation.emit(camera_id, generation, op)
+                try:
+                    status = service.get_status(camera_id)
+                    self._ptz_status.emit(
+                        camera_id, generation, binding.ptz_id, status
+                    )
+                except Exception:
+                    pass
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Move failed: {exc}")
+
+        self._ptz_run(f"rel-{camera_id}", _move)
+
+    def _on_ptz_stop_requested(self) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            return
+        service, binding, generation = resolved
+
+        def _stop() -> None:
+            try:
+                op = service.stop(camera_id)
+                self._ptz_operation.emit(camera_id, generation, op)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"STOP failed: {exc}")
+
+        self._ptz_run(f"stop-{camera_id}", _stop)
+
+    def _on_ptz_clear_error_requested(self) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            return
+        service, binding, generation = resolved
+
+        def _clear() -> None:
+            try:
+                status = service.clear_error(camera_id)
+                self._ptz_status.emit(camera_id, generation, binding.ptz_id, status)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Clear failed: {exc}")
+
+        self._ptz_run(f"clear-{camera_id}", _clear)
+
+    def _on_ptz_calibration_requested(self) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            return
+        service, binding, generation = resolved
+
+        def _calibrate() -> None:
+            try:
+                self._ptz_notice.emit(camera_id, generation, "Calibration started…")
+                status = service.request_calibration(camera_id)
+                self._ptz_status.emit(camera_id, generation, binding.ptz_id, status)
+                self._ptz_notice.emit(camera_id, generation, "Calibration complete.")
+            except Exception as exc:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Calibration failed: {exc}"
+                )
+
+        self._ptz_run(f"cal-{camera_id}", _calibrate)
+
+    # -- PTZ position handlers (GUI thread -> background) ------------------
+
+    def _on_ptz_refresh_requested(self) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        self._ptz_run(
+            f"pos-load-{camera_id}",
+            lambda: self._ptz_load_positions(camera_id, self._session.generation),
+        )
+
+    def _on_ptz_save_current_requested(self, name: str) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._pos_panel is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            self._pos_panel.show_message("PTZ not connected.")
+            return
+        service, binding, generation = resolved
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            self._pos_panel.show_message("Position database unavailable.")
+            return
+        ptz_cfg = self._ptz_global_config()
+
+        def _save() -> None:
+            from thermal_monitor.ptz.positions import PtzPosition, generate_position_id
+
+            try:
+                status = service.get_status(camera_id)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Save failed: {exc}")
+                return
+            velocity = (
+                ptz_cfg.default_velocity if ptz_cfg is not None else 10.0
+            )
+            position = PtzPosition(
+                position_id=generate_position_id(),
+                camera_id=camera_id,
+                ptz_id=binding.ptz_id,
+                name=name,
+                pan=status.actual_pan,
+                tilt=status.actual_tilt,
+                velocity=velocity,
+            )
+            try:
+                result = repo.create_position(position)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Save failed: {exc}")
+                return
+            if not result.success:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Save failed: {result.error}"
+                )
+                return
+            self._ptz_load_positions(camera_id, generation)
+
+        self._ptz_run(f"pos-save-{camera_id}", _save)
+
+    def _on_ptz_delete_requested(self, position_id: str) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        generation = self._session.generation
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            return
+
+        def _delete() -> None:
+            try:
+                result = repo.delete_position(position_id)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Delete failed: {exc}")
+                return
+            if not result.success:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Delete failed: {result.error}"
+                )
+                return
+            self._ptz_load_positions(camera_id, generation)
+
+        self._ptz_run(f"pos-del-{camera_id}", _delete)
+
+    def _on_ptz_rename_requested(self, position_id: str, name: str) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        generation = self._session.generation
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            return
+
+        def _rename() -> None:
+            try:
+                current = repo.get_position(position_id)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Rename failed: {exc}")
+                return
+            if not current.success or current.data is None:
+                self._ptz_notice.emit(camera_id, generation, "Position not found.")
+                return
+            try:
+                updated = repo.update_position(
+                    current.data.with_updated(name=name)
+                )
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Rename failed: {exc}")
+                return
+            if not updated.success:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"Rename failed: {updated.error}"
+                )
+                return
+            self._ptz_load_positions(camera_id, generation)
+
+        self._ptz_run(f"pos-rename-{camera_id}", _rename)
+
+    def _on_ptz_roi_associate_requested(self, position_id: str, roi_set_ref: str) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None:
+            return
+        generation = self._session.generation
+        repo = self._ptz_positions_repo()
+        if repo is None:
+            return
+
+        def _associate() -> None:
+            try:
+                result = repo.associate_roi_set(position_id, roi_set_ref)
+            except Exception as exc:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"ROI association failed: {exc}"
+                )
+                return
+            if not result.success:
+                self._ptz_notice.emit(
+                    camera_id, generation, f"ROI association failed: {result.error}"
+                )
+                return
+            self._ptz_load_positions(camera_id, generation)
+
+        self._ptz_run(f"pos-roi-{camera_id}", _associate)
+
+    def _on_ptz_goto_requested(self, position_id: str) -> None:
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._pos_panel is None:
+            return
+        resolved = self._ptz_guarded_service(camera_id)
+        if resolved is None:
+            self._pos_panel.show_message("PTZ not connected.")
+            return
+        service, binding, generation = resolved
+        repo = self._ptz_positions_repo()
+        ptz_cfg = self._ptz_global_config()
+
+        def _goto() -> None:
+            position = None
+            if repo is not None:
+                try:
+                    current = repo.get_position(position_id)
+                except Exception as exc:
+                    self._ptz_notice.emit(
+                        camera_id, generation, f"Go To failed: {exc}"
+                    )
+                    return
+                if not current.success or current.data is None:
+                    self._ptz_notice.emit(camera_id, generation, "Position not found.")
+                    return
+                position = current.data
+            else:
+                self._ptz_notice.emit(
+                    camera_id, generation, "Position database unavailable."
+                )
+                return
+            from thermal_monitor.ptz.positions import check_position_binding
+
+            try:
+                check_position_binding(position, binding.ptz_id)
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, str(exc))
+                return
+            default_velocity = (
+                ptz_cfg.default_velocity if ptz_cfg is not None else 10.0
+            )
+            try:
+                if (
+                    position.pan_velocity is not None
+                    and position.tilt_velocity is not None
+                ):
+                    op = service.move_absolute(
+                        camera_id,
+                        position.pan,
+                        position.tilt,
+                        velocity_mode="per_axis",
+                        pan_velocity=position.pan_velocity,
+                        tilt_velocity=position.tilt_velocity,
+                    )
+                else:
+                    op = service.move_absolute(
+                        camera_id,
+                        position.pan,
+                        position.tilt,
+                        velocity=position.velocity or default_velocity,
+                    )
+                self._ptz_operation.emit(camera_id, generation, op)
+                try:
+                    status = service.get_status(camera_id)
+                    self._ptz_status.emit(
+                        camera_id, generation, binding.ptz_id, status
+                    )
+                except Exception:
+                    pass
+                if position.roi_set_ref:
+                    self._ptz_notice.emit(
+                        camera_id,
+                        generation,
+                        f"Reached {position.name}. Associated ROI set "
+                        f"'{position.roi_set_ref}' is shown for reference; "
+                        "ROI application is manual in this phase.",
+                    )
+            except Exception as exc:
+                self._ptz_notice.emit(camera_id, generation, f"Go To failed: {exc}")
+
+        self._ptz_run(f"goto-{camera_id}", _goto)
+
+    # -- PTZ marshaled slots (GUI thread, generation-guarded) -------------
+
+    def _ptz_is_current(self, camera_id: str, generation: int) -> bool:
+        return (
+            camera_id == self._selected_camera_id
+            and generation == self._session.generation
+        )
+
+    def _on_ptz_status(
+        self, camera_id: str, generation: int, ptz_id: str, status
+    ) -> None:
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            if self._ptz_panel is not None:
+                self._ptz_panel.set_status(status)
+        except RuntimeError:
+            pass
+
+    def _on_ptz_operation(self, camera_id: str, generation: int, operation) -> None:
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            if self._ptz_panel is not None:
+                self._ptz_panel.set_operation(operation)
+        except RuntimeError:
+            pass
+
+    def _on_ptz_positions(
+        self, camera_id: str, generation: int, positions
+    ) -> None:
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            if self._pos_panel is not None:
+                self._pos_panel.set_positions(list(positions or []))
+        except RuntimeError:
+            pass
+
+    def _on_ptz_notice(self, camera_id: str, generation: int, message: str) -> None:
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            if self._ptz_panel is not None:
+                self._ptz_panel.show_message(message)
+        except RuntimeError:
+            pass
+        logger.info("PTZ notice cam=%s: %s", camera_id, message)
 
     # -- Focus (UI -> runtime/service -> driver, never GVCP directly) --
 
@@ -4024,6 +4771,10 @@ class ConfigurationModeWidget(QWidget):
             self._stats_timer.stop()
         except RuntimeError:
             pass
+        # PTZ services shut down off the GUI thread (never blocks the
+        # visible transition); panels are cleared synchronously above
+        # via _ptz_clear_panels inside teardown, and re-attach on return.
+        self._ptz_teardown_all_async()
         self._stop_observer_background(detached)
         logger.info(
             "[MODE-TRANSITION] config_detach_complete detach_ms=%.1f",
@@ -4042,6 +4793,7 @@ class ConfigurationModeWidget(QWidget):
             self._stop_nuc_worker(timeout_ms=0)
         except RuntimeError:
             pass
+        # PTZ teardown runs inside on_mode_deactivated (async, non-blocking).
         self.on_mode_deactivated()
         try:
             self._config_service.remove_camera_change_callback(self._on_camera_config_changed)
@@ -4062,6 +4814,7 @@ class ConfigurationWindow(QMainWindow):
         discovery_service: "CameraDiscoveryService | GvcpDiscoveryService | None" = None,
         theme_manager: Optional[ThemeManager] = None,
         config_manager: Optional[ConfigurationManager] = None,
+        database=None,
     ) -> None:
         super().__init__()
 
@@ -4071,6 +4824,7 @@ class ConfigurationWindow(QMainWindow):
         self._discovery_service = discovery_service
         self._theme = theme_manager
         self._config_manager = config_manager
+        self._database = database
         self._settings_menu_controller = None
 
         self.setWindowTitle("Thermal Monitoring System V3 - Configuration Mode")
@@ -4094,6 +4848,7 @@ class ConfigurationWindow(QMainWindow):
             discovery_service=discovery_service,
             theme_manager=theme_manager,
             config_manager=config_manager,
+            database=self._database,
         )
         self.setCentralWidget(self._config_widget)
 

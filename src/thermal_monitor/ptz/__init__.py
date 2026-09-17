@@ -63,6 +63,17 @@ from thermal_monitor.ptz.models import (
     VelocityMode,
     within_tolerance,
 )
+from thermal_monitor.ptz.positions import (
+    PtzPosition,
+    check_position_binding,
+    generate_position_id,
+)
+from thermal_monitor.ptz.station import (
+    build_service_config,
+    merge_limits,
+    resolve_binding,
+    resolve_endpoint,
+)
 from thermal_monitor.ptz.state import (
     CalibrationState,
     PlcConnectionState,
@@ -94,8 +105,7 @@ __all__ = [
     "PlcConnectionState",
     "PtzCommand",
     "PtzCommandError",
-    "PtzController",
-    "PtzError",
+    "PtzController",    "PtzError",
     "PtzErrorCategory",
     "PtzLimits",
     "PtzMapping",
@@ -103,6 +113,7 @@ __all__ = [
     "PtzMovementState",
     "PtzOperation",
     "PtzOperationState",
+    "PtzPosition",
     "PtzService",
     "PtzServiceConfig",
     "PtzStateError",
@@ -120,11 +131,16 @@ __all__ = [
     "VelocityMode",
     "allowed_movement_transition",
     "allowed_plc_transition",
+    "build_service_config",
     "check_movement_transition",
     "check_plc_transition",
     "coerce_bool",
     "coerce_float",
     "command_to_fields",
+    "generate_position_id",
+    "merge_limits",
+    "resolve_binding",
+    "resolve_endpoint",
     "translate_error",
     "within_tolerance",
 ]
