@@ -318,7 +318,45 @@ class AppController(QObject):
             logger.exception("CONFIG SERVICE HYDRATION FAILED: %s", exc)
 
     def _configure_database(self, db_config) -> None:
-        """Configure Database with DatabaseConfig."""
+        """Configure Database with DatabaseConfig.
+
+        Phase 9B: ``type: sqlite`` selects the local file backend
+        (development default); ``type: sqlserver`` keeps the production
+        path. Failures never raise: the app runs DB-less and reports
+        the error in the status area.
+        """
+        import logging
+        from pathlib import Path
+
+        logger = logging.getLogger(__name__)
+        backend = str(getattr(db_config, "type", "sqlserver") or "sqlserver").lower()
+        if backend == "sqlite":
+            from thermal_monitor.storage.sqlite_database import (
+                SqliteConfig,
+                SqliteDatabase,
+            )
+
+            raw_path = str(getattr(db_config, "path", "") or "data/tms_local.db")
+            path = Path(raw_path)
+            if not path.is_absolute():
+                try:
+                    app_root = Path(self._config_manager.config_path).parent.parent
+                except Exception:
+                    app_root = Path.cwd()
+                path = (app_root / path).resolve()
+            try:
+                database = SqliteDatabase(SqliteConfig(path=str(path)))
+                database.connect()
+                migrations = Path(__file__).resolve().parents[3] / "database" / "migrations" / "sqlite"
+                if migrations.is_dir():
+                    database.run_migrations(migrations)
+                self._database = database
+                logger.info("Local SQLite database ready at %s", path)
+            except Exception as exc:
+                logger.warning("SQLite database unavailable (%s); running DB-less", exc)
+                self._database = None
+            return
+
         from thermal_monitor.storage.database import Database, DatabaseConfig
 
         # Get password from environment
@@ -334,8 +372,12 @@ class AppController(QObject):
             connection_timeout=db_config.connection_timeout,
             command_timeout=db_config.command_timeout,
         )
-        database = Database(database_config)
-        self._database = database
+        try:
+            database = Database(database_config)
+            self._database = database
+        except Exception as exc:
+            logger.warning("SQL Server database unavailable (%s); running DB-less", exc)
+            self._database = None
 
     def _create_launcher_window(self) -> None:
         """Create the launcher window (recreates if the C++ object died)."""

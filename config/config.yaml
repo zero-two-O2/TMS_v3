@@ -4,8 +4,8 @@ application:
   default_mode: CONFIGURATION
   start_maximized: true
 database:
-  enabled: false
-  type: sqlserver
+  enabled: true
+  type: sqlite
   driver: ODBC Driver 17 for SQL Server
   host: ''
   port: 1433
@@ -16,6 +16,7 @@ database:
   connection_timeout: 30
   command_timeout: 30
   trust_server_certificate: true
+  path: data/tms_local.db
 cameras:
   discovery:
     enabled: true
@@ -54,7 +55,7 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.11
     device_identifier: gvcp:HB25080009
-    ptz_id: ''
+    ptz_id: PTZ_01
     ptz_endpoint: ''
     ptz_min_pan: null
     ptz_max_pan: null
@@ -67,6 +68,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.12
     device_identifier: gvcp:HB25100004
+    ptz_id: ''
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25080011
     serial_number: HB25080011
     enabled: true
@@ -74,6 +81,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.13
     device_identifier: gvcp:HB25080011
+    ptz_id: PTZ_03
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25100002
     serial_number: HB25100002
     enabled: true
@@ -81,6 +94,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.14
     device_identifier: gvcp:HB25100002
+    ptz_id: PTZ_04
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25080001
     serial_number: HB25080001
     enabled: true
@@ -88,6 +107,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.15
     device_identifier: gvcp:HB25080001
+    ptz_id: PTZ_05
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25100010
     serial_number: HB25100010
     enabled: true
@@ -95,6 +120,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.16
     device_identifier: gvcp:HB25100010
+    ptz_id: PTZ_06
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25100007
     serial_number: HB25100007
     enabled: true
@@ -102,6 +133,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.17
     device_identifier: gvcp:HB25100007
+    ptz_id: PTZ_07
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25100001
     serial_number: HB25100001
     enabled: true
@@ -109,7 +146,7 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.18
     device_identifier: gvcp:HB25100001
-    ptz_id: ''
+    ptz_id: PTZ_08
     ptz_endpoint: ''
     ptz_min_pan: null
     ptz_max_pan: null
@@ -152,6 +189,9 @@ alarms:
   default_enabled: true
 ptz:
   enabled: true
+  endpoint: opc.tcp://127.0.0.1:4840
+  profile: simulator
+  namespace_uri: urn:tms:ptz:sim
   limits:
     min_pan: -170.0
     max_pan: 170.0

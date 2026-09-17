@@ -38,14 +38,22 @@ class DatabaseConfig:
     connection_timeout: int = 30
     command_timeout: int = 30
     trust_server_certificate: bool = True
+    # Local SQLite backend (Phase 9B, development default). File path is
+    # resolved relative to the application root when not absolute.
+    # No credentials are ever stored here.
+    path: str = ""
 
     def __post_init__(self) -> None:
+        if self.type not in ("sqlserver", "sqlite"):
+            raise ValueError(f"database.type must be 'sqlserver' or 'sqlite'; got {self.type!r}")
         if not 1 <= self.port <= 65535:
             raise ValueError(f"database.port must be between 1 and 65535; got {self.port}")
         if self.connection_timeout < 0:
             raise ValueError(f"database.connection_timeout must be >= 0; got {self.connection_timeout}")
         if self.command_timeout < 0:
             raise ValueError(f"database.command_timeout must be >= 0; got {self.command_timeout}")
+        if self.type == "sqlite" and self.enabled and not (self.path or "").strip():
+            raise ValueError("database.path is required when database.type is 'sqlite' and enabled")
 
 
 @dataclass(frozen=True, slots=True)

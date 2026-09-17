@@ -675,6 +675,17 @@ class ConfigurationModeWidget(QWidget):
 
         self._ptz_registry = ActivePositionRegistry()
         self._ptz_coordinators: dict[str, object] = {}
+        # Phase 9B top-status + alarm state: compact operator-visible
+        # snapshots, never fabricated (unknown renders as "—").
+        self._ptz_top_state: str = "Camera disconnected"
+        self._alarm_active_count: int = 0
+        self._active_alarm_events: dict[str, object] = {}
+        self._alarm_store = None  # lazy AlarmHistoryStore (worker owns DB I/O)
+        self._alarm_detail_window = None
+        self._alarm_history_window = None
+        self._top_ptz_label = None
+        self._top_alarm_label = None
+        self._top_db_label = None
         self._selected_camera_id: str | None = None
         self._observer: ObserverService | None = None
         self._latest_result: ProcessingResult | None = None
@@ -943,6 +954,8 @@ class ConfigurationModeWidget(QWidget):
         # Alarm panel
         self._alarm_panel = AlarmPanel(self._config_service, self._theme)
         self._alarm_panel.alarm_selected.connect(self._on_alarm_selected)
+        self._alarm_panel.alarm_activated.connect(self._on_alarm_activated)
+        self._alarm_panel.history_requested.connect(self._on_alarm_history_requested)
         self._register_side_panel(
             "alarms", "Alarms", self._alarm_panel, "right"
         )
@@ -1011,10 +1024,13 @@ class ConfigurationModeWidget(QWidget):
         self._create_status_bar(main_layout)
 
     def _build_top_bar(self) -> QWidget:
-        """Slim status/action strip: connection state + Snapshot/Save.
+        """Slim status/action strip: Camera/PTZ/Alarm/DB status + Snapshot.
 
-        Deliberately no camera selector and no navigation arrows — camera
-        selection/connection is owned by the Camera Control panel.
+        Phase 9B: the Save Config button was removed from this toolbar
+        (configuration saving stays available via File -> Save
+        Configuration, which calls the same ``_on_save_config`` handler).
+        The freed space carries a compact system status area in the
+        existing visual language (no extra colors, no redesign).
         """
         bar = QWidget()
         bar.setObjectName("cfg_top_bar")
@@ -1029,25 +1045,76 @@ class ConfigurationModeWidget(QWidget):
         set_role(self._top_conn_label, "strong")
         layout.addWidget(self._top_conn_indicator)
         layout.addWidget(self._top_conn_label)
+        self._top_ptz_label = QLabel("PTZ: —")
+        set_role(self._top_ptz_label, "status")
+        layout.addWidget(self._top_ptz_label)
+        self._top_alarm_label = QLabel("Alarms: 0")
+        set_role(self._top_alarm_label, "status")
+        layout.addWidget(self._top_alarm_label)
+        self._top_db_label = QLabel("DB: —")
+        set_role(self._top_db_label, "status")
+        layout.addWidget(self._top_db_label)
         layout.addStretch()
         self._snapshot_btn = QPushButton("Snapshot")
         self._snapshot_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         set_variant(self._snapshot_btn, "outline")
         self._snapshot_btn.clicked.connect(self._on_snapshot)
         layout.addWidget(self._snapshot_btn)
-        self._save_btn = QPushButton("Save Config")
-        self._save_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        set_variant(self._save_btn, "ghost")
-        self._save_btn.clicked.connect(self._on_save_config)
-        layout.addWidget(self._save_btn)
         return bar
 
     def _set_top_connection_state(self, state: CameraConnectionState) -> None:
         """Mirror the lifecycle state onto the slim top bar."""
         status = _TOP_CONNECTION_STATUS_MAP.get(state, "disconnected")
-        set_status(self._top_conn_indicator, status)
-        self._top_conn_label.setText(state.value.replace("_", " ").title())
-        set_status(self._top_conn_label, status)
+        try:
+            set_status(self._top_conn_indicator, status)
+            self._top_conn_label.setText(state.value.replace("_", " ").title())
+            set_status(self._top_conn_label, status)
+        except RuntimeError:
+            pass
+        self._refresh_top_status()
+
+    def _set_ptz_top_state(self, text: str) -> None:
+        """Update the compact PTZ status chip (Phase 9B)."""
+        self._ptz_top_state = text
+        self._refresh_top_status()
+
+    def _set_alarm_top_count(self, count: int) -> None:
+        """Update the compact alarm count chip (Phase 9B)."""
+        self._alarm_active_count = max(0, int(count))
+        self._refresh_top_status()
+
+    def _refresh_top_status(self) -> None:
+        """Render PTZ/Alarm/DB chips from current snapshots (no I/O)."""
+        try:
+            if self._top_ptz_label is not None:
+                self._top_ptz_label.setText(f"PTZ: {self._ptz_top_state}")
+            if self._top_alarm_label is not None:
+                self._top_alarm_label.setText(f"Alarms: {self._alarm_active_count}")
+            if self._top_db_label is not None:
+                self._top_db_label.setText(f"DB: {self._db_top_text()}")
+        except RuntimeError:
+            pass  # teardown race; labels already gone
+
+    def _db_top_text(self) -> str:
+        """Database chip text from real state only (never fabricated)."""
+        db = self._database
+        if db is None:
+            return "Off"
+        try:
+            status = db.status  # SqliteDatabase: (state, detail)
+        except AttributeError:
+            try:
+                return "On" if db.is_connected else "Off"
+            except Exception:
+                return "—"
+        except Exception:
+            return "—"
+        state = status[0] if isinstance(status, tuple) else str(status)
+        if state == "connected":
+            return "SQLite"
+        if state == "error":
+            return "Error"
+        return "—"
 
     def _create_status_bar(self, parent_layout: QVBoxLayout) -> None:
         """Create status bar at bottom."""
@@ -2533,6 +2600,7 @@ class ConfigurationModeWidget(QWidget):
                 if self._selected_camera_id:
                     self._load_camera_config(self._selected_camera_id)
                     self._status_label.setText(f"Camera: {self._selected_camera_id}")
+                self._clear_camera_scoped_state(self._selected_camera_id)
             elif tag == "switch_connect":
                 timings, connect_ms = result
                 self._set_lifecycle(CameraConnectionState.CONNECTED)
@@ -2557,8 +2625,11 @@ class ConfigurationModeWidget(QWidget):
                     self._ptz_refresh_binding(self._selected_camera_id)
                     try:
                         self._ptz_panel.set_status(None)
+                        self._ptz_panel.set_operation(None)
+                        self._ptz_panel.set_active_position("")
                     except RuntimeError:
                         pass
+                self._clear_camera_scoped_state(self._selected_camera_id)
                 self._status_label.setText("Camera disconnected")
             elif tag == "connect":
                 connect_ms = float(result)
@@ -2732,6 +2803,34 @@ class ConfigurationModeWidget(QWidget):
         except RuntimeError:
             pass
 
+    def _clear_camera_scoped_state(self, camera_id: str | None) -> None:
+        """Drop camera-scoped PTZ/alarm state on disconnect/switch.
+
+        Phase 9B: the active-position registry entry, the panel's active
+        label, and the tracked live alarm events belong to one camera
+        session. Clearing them here (with the session epoch already
+        renewed by the caller) guarantees no stale Camera A state can
+        appear under Camera B. Shared PTZ services/sessions are kept:
+        another camera may still need them.
+        """
+        if camera_id:
+            try:
+                self._ptz_registry.clear(camera_id)
+            except Exception:
+                pass
+        self._active_alarm_events.clear()
+        self._set_alarm_top_count(0)
+        self._set_ptz_top_state(
+            "Camera disconnected" if self._lifecycle.name == "DISCONNECTED"
+            else self._ptz_top_state
+        )
+        try:
+            if self._ptz_panel is not None:
+                self._ptz_panel.set_active_position("")
+                self._ptz_panel.set_operation(None)
+        except RuntimeError:
+            pass
+
     def _ptz_run(self, name: str, fn) -> None:
         """Run ``fn`` on a retained daemon thread (never blocks GUI)."""
 
@@ -2808,7 +2907,25 @@ class ConfigurationModeWidget(QWidget):
             pass  # teardown; nothing left to update
 
     def _ptz_attach_async(self, camera_id: str, generation: int) -> None:
-        """Resolve binding and connect the PTZ service (background)."""
+        """Resolve binding and connect the PTZ service (background).
+
+        Phase 9B: the panel immediately shows the connecting state on
+        the GUI thread (no blocking); the OPC UA connect/session/status
+        read happens on the daemon below. Failures arrive as actionable
+        notices, never tracebacks.
+        """
+        entry = self._ptz_mapping_entry(camera_id)
+        _pending_ptz = (getattr(entry, "ptz_id", "") or "").strip() if entry else ""
+        if _pending_ptz:
+            self._set_ptz_top_state(f"{_pending_ptz} (connecting)")
+            try:
+                if self._ptz_panel is not None:
+                    self._ptz_panel.set_binding(camera_id, _pending_ptz, True)
+                    self._ptz_panel.show_message("Connecting…")
+            except RuntimeError:
+                pass
+        else:
+            self._set_ptz_top_state("Not configured")
 
         def _attach() -> None:
             from thermal_monitor.ptz.station import (
@@ -3575,6 +3692,23 @@ class ConfigurationModeWidget(QWidget):
                 self._ptz_panel.set_status(status)
         except RuntimeError:
             pass
+        try:
+            if status is None:
+                self._set_ptz_top_state(f"{ptz_id} (unknown)")
+            elif getattr(status, "error", None) is not None:
+                self._set_ptz_top_state(f"{ptz_id} (error)")
+            elif not getattr(status, "communication_ok", False):
+                self._set_ptz_top_state(f"{ptz_id} (comm lost)")
+            elif getattr(status, "moving", False):
+                self._set_ptz_top_state(f"{ptz_id} (moving)")
+            elif str(getattr(getattr(status, "calibration", None), "value", "")) == "active":
+                self._set_ptz_top_state(f"{ptz_id} (calibrating)")
+            elif getattr(status, "ready", False):
+                self._set_ptz_top_state(f"{ptz_id} (ready)")
+            else:
+                self._set_ptz_top_state(f"{ptz_id} (not ready)")
+        except Exception:
+            pass
 
     def _on_ptz_operation(self, camera_id: str, generation: int, operation) -> None:
         if not self._ptz_is_current(camera_id, generation):
@@ -3604,6 +3738,18 @@ class ConfigurationModeWidget(QWidget):
                 self._ptz_panel.show_message(message)
         except RuntimeError:
             pass
+        lowered = (message or "").lower()
+        if "no ptz" in lowered or "not configured" in lowered:
+            self._set_ptz_top_state("Not configured")
+        elif (
+            "failed" in lowered
+            or "unavailable" in lowered
+            or "unreachable" in lowered
+            or "error" in lowered
+        ):
+            entry = self._ptz_mapping_entry(camera_id)
+            ptz_id = (getattr(entry, "ptz_id", "") or "").strip() if entry else ""
+            self._set_ptz_top_state(f"{ptz_id or 'PTZ'} (error)" if ptz_id else "Error")
         logger.info("PTZ notice cam=%s: %s", camera_id, message)
 
     def _on_ptz_active(self, camera_id: str, generation: int, name: str) -> None:
@@ -4212,6 +4358,12 @@ class ConfigurationModeWidget(QWidget):
             self._stats_panel.update_from_analysis(analysis)
             self._roi_panel.update_live_stats(analysis)
             self._alarm_panel.update_live_alarms(result.alarm_result, analysis)
+            # Phase 9B: track active alarms + persist trigger/clear edges
+            # (worker-owned DB I/O; acquisition/GUI never block).
+            try:
+                self._record_alarm_history(result.alarm_result)
+            except Exception:
+                pass
 
         # Update ROI overlays
         self._update_roi_overlays()
@@ -4961,6 +5113,183 @@ class ConfigurationModeWidget(QWidget):
         """Handle alarm selection."""
         pass
 
+    # -- Phase 9B: alarm detail / history / persistence -------------------
+
+    def _alarm_store_lazy(self):
+        """Get-or-create the threaded alarm-history writer (never on GUI I/O)."""
+        if self._alarm_store is not None:
+            return self._alarm_store
+        if self._database is None:
+            return None
+        try:
+            from thermal_monitor.storage.alarm_store import AlarmHistoryStore
+
+            store = AlarmHistoryStore(self._database)
+            store.start()
+            self._alarm_store = store
+            return store
+        except Exception:
+            logger.debug("Alarm history store unavailable", exc_info=True)
+            return None
+
+    def _record_alarm_history(self, alarm_result) -> None:
+        """Track live alarm events, update the top count, persist edges.
+
+        Called on the GUI thread per processed frame; only enqueues
+        evaluator transition events (trigger/clear) with station context
+        attached — repeated samples of an ACTIVE alarm never write.
+        """
+        if alarm_result is None:
+            return
+        try:
+            active = tuple(getattr(alarm_result, "active_alarms", ()) or ())
+            events = tuple(getattr(alarm_result, "events", ()) or ())
+        except Exception:
+            return
+        camera_id = self._selected_camera_id or getattr(alarm_result, "camera_id", "")
+        enriched: list = []
+        for event in events:
+            try:
+                eid = getattr(event, "event_id", "") or ""
+                rule_id = getattr(event, "rule_id", "") or ""
+                event = self._enrich_alarm_event(event, camera_id)
+                if eid.startswith("clear_"):
+                    self._active_alarm_events.pop(rule_id, None)
+                elif eid.startswith("alarm_"):
+                    self._active_alarm_events[rule_id] = event
+                else:
+                    continue
+                enriched.append(event)
+            except Exception:
+                continue
+        # Rules that vanished from active without a clear event (e.g. rule
+        # set emptied) leave tracking so the count mirrors the evaluator.
+        stale = [r for r in self._active_alarm_events if r not in active]
+        for rule_id in stale:
+            self._active_alarm_events.pop(rule_id, None)
+        self._set_alarm_top_count(len(self._active_alarm_events))
+        store = self._alarm_store_lazy()
+        if store is not None:
+            for event in enriched:
+                try:
+                    store.record_event(event)
+                except Exception:
+                    pass
+        self._refresh_top_status()
+
+    def _enrich_alarm_event(self, event, camera_id: str):
+        """Attach PTZ/position context (returns enriched copy; frozen-safe)."""
+        try:
+            meta = dict(getattr(event, "metadata", None) or {})
+        except Exception:
+            return event
+        if meta.get("ptz_id"):
+            return event  # producer already attached context
+        try:
+            import dataclasses
+
+            entry = self._ptz_mapping_entry(camera_id) if camera_id else None
+            ptz_id = (getattr(entry, "ptz_id", "") or "").strip() if entry else ""
+            position = None
+            try:
+                ctx = self._ptz_registry.get(camera_id) if camera_id else None
+                position = getattr(ctx, "roi_set_ref", None)
+            except Exception:
+                position = None
+            merged = dict(meta)
+            merged.update({"ptz_id": ptz_id, "position_id": position or ""})
+            return dataclasses.replace(event, metadata=merged)
+        except Exception:
+            return event
+
+    def _on_alarm_activated(self, rule_id: str) -> None:
+        """Double-click a rule -> open the read-only detail window."""
+        event = self._active_alarm_events.get(rule_id)
+        camera_id = self._selected_camera_id or ""
+        rule = None
+        try:
+            analysis = self._config_service.get_analysis_config(camera_id) if camera_id else None
+            rule = (analysis.alarm_rules.get(rule_id) if analysis else None)
+        except Exception:
+            rule = None
+        if event is None and rule is None:
+            return  # unknown rule; nothing to show (never fabricate)
+        try:
+            from thermal_monitor.ui.windows.alarm_detail_window import AlarmDetailWindow
+
+            meta = dict(getattr(event, "metadata", None) or {}) if event is not None else {}
+            window = AlarmDetailWindow(
+                event if event is not None else self._synthetic_rule_event(rule, camera_id),
+                rule=rule,
+                camera_id=camera_id,
+                ptz_id=str(meta.get("ptz_id") or self._live_ptz_id(camera_id)),
+                position_id=str(
+                    getattr(event, "position_id", None) or meta.get("position_id") or ""
+                ),
+                parent=self,
+            )
+            window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._alarm_detail_window = window
+            window.show()
+            window.raise_()
+            window.activateWindow()
+        except RuntimeError:
+            pass
+
+    def _synthetic_rule_event(self, rule, camera_id: str):
+        """Placeholder snapshot for a configured-but-inactive rule."""
+        from thermal_monitor.core.models import AlarmEvent, AlarmSeverity
+
+        return AlarmEvent(
+            event_id=f"rule_{rule.rule_id}",
+            rule_id=rule.rule_id,
+            camera_id=camera_id,
+            roi_id=rule.roi_id,
+            severity=rule.severity or AlarmSeverity.INFO,
+            measured_value=0.0,
+            threshold_value=rule.threshold or 0.0,
+            timestamp=0.0,
+            frame_sequence=0,
+            metadata={"status": "CONFIGURED (not active)"},
+        )
+
+    def _live_ptz_id(self, camera_id: str) -> str:
+        try:
+            entry = self._ptz_mapping_entry(camera_id) if camera_id else None
+            return (getattr(entry, "ptz_id", "") or "").strip() if entry else ""
+        except Exception:
+            return ""
+
+    def _on_alarm_history_requested(self) -> None:
+        """Open the bounded alarm-history window (worker-loaded)."""
+        try:
+            from thermal_monitor.ui.windows.alarm_history_window import AlarmHistoryWindow
+
+            if self._alarm_history_window is not None:
+                try:
+                    self._alarm_history_window.show()
+                    self._alarm_history_window.raise_()
+                    self._alarm_history_window.activateWindow()
+                    self._alarm_history_window.refresh()
+                    return
+                except RuntimeError:
+                    self._alarm_history_window = None
+            window = AlarmHistoryWindow(database=self._database, parent=self)
+            window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            try:
+                window.finished.connect(self._on_alarm_history_closed)
+            except Exception:
+                pass
+            self._alarm_history_window = window
+            window.show()
+            window.raise_()
+            window.activateWindow()
+        except RuntimeError:
+            pass
+
+    def _on_alarm_history_closed(self) -> None:
+        self._alarm_history_window = None
+
     def _mark_dirty(self) -> None:
         if self._selected_camera_id:
             self._dirty_camera_configs.add(self._selected_camera_id)
@@ -5162,6 +5491,23 @@ class ConfigurationModeWidget(QWidget):
             (_time.perf_counter_ns() - _t0) / 1e6,
         )
 
+    def _shutdown_alarm_phase9b(self) -> None:
+        """Stop Phase 9B alarm workers/windows (idempotent, bounded)."""
+        for name in ("_alarm_detail_window", "_alarm_history_window"):
+            window = getattr(self, name, None)
+            try:
+                if window is not None:
+                    window.close()
+            except RuntimeError:
+                pass
+            setattr(self, name, None)
+        store, self._alarm_store = self._alarm_store, None
+        if store is not None:
+            try:
+                store.stop(timeout_s=5.0)
+            except Exception:
+                pass
+
     def closeEvent(self, event) -> None:
         # Transition fast path: NEVER block the GUI thread waiting for
         # control workers here. Quit is requested (non-blocking) and the
@@ -5173,6 +5519,12 @@ class ConfigurationModeWidget(QWidget):
             self._stop_focus_worker(timeout_ms=0)
             self._stop_nuc_worker(timeout_ms=0)
         except RuntimeError:
+            pass
+        # Phase 9B: alarm/database workers stop bounded; alarm windows
+        # close so no stale callback can fire after destruction.
+        try:
+            self._shutdown_alarm_phase9b()
+        except Exception:
             pass
         # PTZ teardown runs inside on_mode_deactivated (async, non-blocking).
         self.on_mode_deactivated()

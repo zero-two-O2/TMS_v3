@@ -50,6 +50,8 @@ class AlarmPanel(QWidget):
 
     # Signals
     alarm_selected = pyqtSignal(str)  # rule_id
+    alarm_activated = pyqtSignal(str)  # rule_id (double-click -> detail window)
+    history_requested = pyqtSignal()  # operator asked for alarm history
     alarm_created = pyqtSignal(str, AlarmRule)
     alarm_updated = pyqtSignal(str, AlarmRule)
     alarm_deleted = pyqtSignal(str)
@@ -102,10 +104,15 @@ class AlarmPanel(QWidget):
         self._delete_alarm_btn.setEnabled(False)
         self._apply_button_style(self._delete_alarm_btn, "danger")
 
+        self._history_btn = QPushButton("Alarm History")
+        self._history_btn.clicked.connect(self.history_requested.emit)
+        self._apply_button_style(self._history_btn, "secondary")
+
         toolbar.addWidget(self._add_alarm_btn)
         toolbar.addWidget(self._edit_alarm_btn)
         toolbar.addWidget(self._delete_alarm_btn)
         toolbar.addStretch()
+        toolbar.addWidget(self._history_btn)
         list_layout.addLayout(toolbar)
 
         # Alarm Tree
@@ -118,6 +125,7 @@ class AlarmPanel(QWidget):
         self._alarm_tree.setColumnWidth(4, 80)
         self._alarm_tree.setColumnWidth(5, 60)
         self._alarm_tree.itemSelectionChanged.connect(self._on_selection_changed)
+        self._alarm_tree.itemDoubleClicked.connect(self._on_item_activated)
         self._apply_tree_style(self._alarm_tree)
         list_layout.addWidget(self._alarm_tree, 1)
 
@@ -189,6 +197,15 @@ class AlarmPanel(QWidget):
         layout.addStretch()
 
         return editor
+
+    def _on_item_activated(self, item, column: int) -> None:
+        """Double-click a rule -> open the alarm detail window."""
+        try:
+            rule_id = item.data(0, Qt.ItemDataRole.UserRole)
+        except RuntimeError:
+            return
+        if rule_id:
+            self.alarm_activated.emit(rule_id)
 
     def _on_selection_changed(self) -> None:
         items = self._alarm_tree.selectedItems()

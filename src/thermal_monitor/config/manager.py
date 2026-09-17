@@ -218,6 +218,7 @@ class ConfigurationManager:
                 "connection_timeout": 30,
                 "command_timeout": 30,
                 "trust_server_certificate": True,
+                "path": "",
             },
             "cameras": {
                 "discovery": {
@@ -480,6 +481,7 @@ class ConfigurationManager:
             connection_timeout=_parse_int(db_raw.get("connection_timeout"), 30),
             command_timeout=_parse_int(db_raw.get("command_timeout"), 30),
             trust_server_certificate=db_raw.get("trust_server_certificate", True),
+            path=str(db_raw.get("path", "") or ""),
         )
 
         # Cameras

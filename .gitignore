@@ -63,12 +63,18 @@ reports/generated/
 # ============================================================
 # Database files
 # SQL Server database itself is NOT stored in Git
+# Local SQLite dev databases are NEVER committed (Phase 9B)
 # ============================================================
 
 *.mdf
 *.ndf
 *.ldf
 *.bak
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
 
 # ============================================================
 # OS
