@@ -93,6 +93,18 @@ class PtzMapping:
 
 _SIMULATOR_NAMESPACE = "urn:tms:ptz:sim"
 
+
+def default_ptz_ids(count: int = 8) -> tuple[str, ...]:
+    """PTZ_01..PTZ_<count> unit identifiers (simulator convention).
+
+    Lives in production code (not ``tools/``) so installed applications
+    can enumerate the development simulator's units without depending on
+    the dev-tools package layout. Never a Siemens claim.
+    """
+    if count < 1:
+        raise PtzValidationError("count must be >= 1")
+    return tuple(f"PTZ_{index:02d}" for index in range(1, count + 1))
+
 # Proposed SIMULATOR nodes only -- NOT real Siemens PLC tags.
 _SIMULATOR_FIELDS: Mapping[LogicalField, tuple[str, NodeDataType, NodeAccess]] = {
     LogicalField.TARGET_PAN: ("TargetPan", NodeDataType.FLOAT, NodeAccess.WRITE),
@@ -136,7 +148,7 @@ _SIMULATOR_FIELDS: Mapping[LogicalField, tuple[str, NodeDataType, NodeAccess]] =
 
 
 @dataclass(frozen=True, slots=True)
-class SimulatorPtzMapping(PtzMapping):
+class SimulatorPtzMapping(PtzMapping):    
     """Proposed mapping for the Phase 4 development simulator.
 
     Node IDs take the deterministic form
@@ -226,4 +238,5 @@ __all__ = [
     "PtzMappingError",
     "SiemensPtzMapping",
     "SimulatorPtzMapping",
+    "default_ptz_ids",
 ]

@@ -19,6 +19,7 @@ from thermal_monitor.ptz.mapping import (
     PtzMappingError,
     SiemensPtzMapping,
     SimulatorPtzMapping,
+    default_ptz_ids,
 )
 from thermal_monitor.ptz.protocol import (
     EventCallback,
@@ -189,6 +190,7 @@ __all__ = [
     "coerce_float",
     "command_to_fields",
     "commit_import",
+    "default_ptz_ids",
     "export_positions",
     "generate_position_id",
     "mapping_for_profile",

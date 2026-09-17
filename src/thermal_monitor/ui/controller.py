@@ -28,6 +28,7 @@ from thermal_monitor.ui.windows.launcher_window import LauncherWindow
 from thermal_monitor.ui.windows.live_window import LiveWindow
 from thermal_monitor.ui.windows.configuration_window import ConfigurationWindow
 from thermal_monitor.ui.windows.offline_window import OfflineWindow
+from thermal_monitor.ui.windows.ptz_monitor_window import PtzMonitorWindow
 from thermal_monitor.services.discovery import (
     CameraDiscoveryService,
     GvcpDiscoveryService,
@@ -91,6 +92,9 @@ class AppController(QObject):
         self._live_window: LiveWindow | None = None
         self._config_window: ConfigurationWindow | None = None
         self._offline_window: OfflineWindow | None = None
+        # Standalone PLC & PTZ monitor: independent of all modes (like
+        # Offline — no mutual exclusion, closed on shutdown).
+        self._monitor_window: PtzMonitorWindow | None = None
 
         # Track which mode windows are currently open
         self._live_open = False
@@ -346,6 +350,7 @@ class AppController(QObject):
             config_manager=self._config_manager,
         )
         self._launcher_window.mode_requested.connect(self._on_mode_requested)
+        self._launcher_window.ptz_monitor_requested.connect(self._on_ptz_monitor_requested)
 
     def _create_live_window(self) -> LiveWindow:
         """Create the live window.
@@ -407,6 +412,39 @@ class AppController(QObject):
             self._offline_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             self._offline_window.destroyed.connect(self._on_offline_window_destroyed)
         return self._offline_window
+
+    def _create_monitor_window(self) -> PtzMonitorWindow:
+        """Create the standalone PLC & PTZ monitor (delete-on-close).
+
+        Independent of every mode: opening it never disturbs Live,
+        Configuration, or Offline, and closing it never stops them.
+        """
+        if self._monitor_window is None:
+            self._monitor_window = PtzMonitorWindow(
+                config_manager=self._config_manager,
+                theme_manager=self._theme_manager,
+            )
+            self._monitor_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            self._monitor_window.destroyed.connect(self._on_monitor_window_destroyed)
+        return self._monitor_window
+
+    def _on_ptz_monitor_requested(self) -> None:
+        """Open (or raise) the PLC & PTZ monitor window."""
+        if self._shutting_down:
+            return
+        try:
+            monitor_window = self._create_monitor_window()
+        except RuntimeError:
+            return  # torn down mid-create
+        try:
+            if monitor_window.isMinimized():
+                monitor_window.showNormal()
+            monitor_window.show()
+            monitor_window.raise_()
+            monitor_window.activateWindow()
+            monitor_window.start_monitoring()
+        except RuntimeError:
+            pass  # C++ object already gone
 
     @pyqtSlot(ApplicationMode)
     def _on_mode_requested(self, mode: ApplicationMode) -> None:
@@ -816,6 +854,12 @@ class AppController(QObject):
         # Offline is independent, launcher not affected
         self._transition_mark("offline_destroyed")
 
+    def _on_monitor_window_destroyed(self) -> None:
+        """Handle PLC & PTZ monitor close (independent of all modes)."""
+        if self._shutting_down:
+            return
+        self._monitor_window = None
+
     def shutdown(self) -> None:
         """Clean shutdown of all windows."""
         self._shutting_down = True
@@ -828,7 +872,7 @@ class AppController(QObject):
         # Close mode windows first (their fast closeEvents detach the
         # display path without waiting; determinism comes from the
         # runtime shutdown below, not from GUI-thread joins).
-        for window in (self._live_window, self._config_window, self._offline_window):
+        for window in (self._live_window, self._config_window, self._offline_window, self._monitor_window):
             try:
                 if window is not None:
                     window.close()
@@ -862,6 +906,10 @@ class AppController(QObject):
     @property
     def offline_window(self) -> OfflineWindow | None:
         return self._offline_window
+
+    @property
+    def monitor_window(self) -> PtzMonitorWindow | None:
+        return self._monitor_window
 
     @property
     def is_live_open(self) -> bool:

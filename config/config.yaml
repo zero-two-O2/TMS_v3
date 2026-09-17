@@ -54,6 +54,12 @@ cameras:
     target_fps: null
     ip_address: 192.168.42.11
     device_identifier: gvcp:HB25080009
+    ptz_id: ''
+    ptz_endpoint: ''
+    ptz_min_pan: null
+    ptz_max_pan: null
+    ptz_min_tilt: null
+    ptz_max_tilt: null
   - camera_id: cam_HB25100004
     serial_number: HB25100004
     enabled: true

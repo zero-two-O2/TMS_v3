@@ -329,3 +329,51 @@ class TestImportExport:
         result = commit_import(repo, parsed, policy=ConflictPolicy.REPLACE)
         assert result.committed is True
         assert result.replaced + result.created == 2
+
+
+class TestInstalledAppIsolation:
+    """Production code must never import the dev-tools simulator package.
+
+    Regression test for the live Phase 9A defect where the installed app
+    (repo root NOT on sys.path) failed with ``No module named 'tools'``.
+    """
+
+    @staticmethod
+    def _production_sources():
+        import pathlib
+
+        src = pathlib.Path(__file__).resolve().parent.parent / "src" / "thermal_monitor"
+        files = list(src.rglob("*.py"))
+        assert files, "production sources not found"
+        return files
+
+    def test_no_tools_import_in_production(self):
+        offenders = []
+        for path in self._production_sources():
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for lineno, line in enumerate(text.splitlines(), start=1):
+                stripped = line.strip()
+                if stripped.startswith("#"):
+                    continue
+                if "from tools" in stripped or "import tools" in stripped:
+                    offenders.append(f"{path.name}:{lineno}: {stripped}")
+        assert offenders == [], f"production imports dev tools package: {offenders}"
+
+    def test_default_ptz_ids_live_in_production(self):
+        from thermal_monitor.ptz.mapping import default_ptz_ids
+
+        assert default_ptz_ids() == tuple(f"PTZ_{i:02d}" for i in range(1, 9))
+        assert default_ptz_ids(2) == ("PTZ_01", "PTZ_02")
+
+    def test_simulator_config_reexports_default_ptz_ids(self):
+        from thermal_monitor.ptz.mapping import (
+            default_ptz_ids as prod_default,
+        )
+        from tools.ptz_plc_simulator.simulator_config import (
+            default_ptz_ids as sim_default,
+        )
+
+        assert sim_default() == prod_default()

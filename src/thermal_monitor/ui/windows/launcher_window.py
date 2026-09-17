@@ -44,6 +44,8 @@ class LauncherWindow(QMainWindow):
 
     # Signal emitted when user requests a mode change
     mode_requested = pyqtSignal(ApplicationMode)
+    # Signal emitted when the user opens the standalone PLC & PTZ monitor.
+    ptz_monitor_requested = pyqtSignal()
     # Carries background discovery outcomes to the GUI thread:
     # (cameras, error_message). Empty error means success.
     discovery_updated = pyqtSignal(list, str)
@@ -176,6 +178,19 @@ class LauncherWindow(QMainWindow):
         mode_layout.addStretch()
 
         layout.addWidget(mode_group)
+
+        # Standalone PLC & PTZ monitor (independent of all modes).
+        monitor_group = QGroupBox("Diagnostics")
+        monitor_layout = QHBoxLayout(monitor_group)
+        monitor_layout.addStretch()
+        self._ptz_monitor_btn = QPushButton("PLC && PTZ MONITOR")
+        self._ptz_monitor_btn.setMinimumSize(200, 44)
+        set_variant(self._ptz_monitor_btn, "secondary")
+        self._ptz_monitor_btn.clicked.connect(self.ptz_monitor_requested.emit)
+        monitor_layout.addWidget(self._ptz_monitor_btn)
+        monitor_layout.addStretch()
+
+        layout.addWidget(monitor_group)
 
         # Status
         self._status_label = QLabel("Discovering cameras...")

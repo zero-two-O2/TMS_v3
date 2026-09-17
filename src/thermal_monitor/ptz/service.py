@@ -103,6 +103,13 @@ class PtzService:
         """Release the session; monitor keeps serving degraded cache."""
         self._session.disconnect()
 
+    def notify_connection_lost(self, detail: str = "") -> None:
+        """Report transport-level loss so the session owns bounded
+        reconnect (same contract as the session hook; read-only callers
+        use this when their polls observe a dead link)."""
+        self._ensure_usable()
+        self._session.notify_connection_lost(detail)
+
     def shutdown(self, timeout_s: float = 5.0) -> None:
         """Idempotent deterministic shutdown: stop the monitor (bounded
         join, no callbacks afterwards), cancel tracked operations, and
@@ -195,6 +202,47 @@ class PtzService:
         binding = self.binding_for_camera(camera_id)
         with self._lock:
             return self._controllers[binding.ptz_id]
+
+    def status_for_ptz(self, ptz_id: str) -> PtzStatus:
+        """Read-only status snapshot for one PTZ, no camera binding needed.
+
+        Creates the per-PTZ controller on first use (same construction as
+        binding registration). Never issues commands; safe for monitors.
+        """
+        self._ensure_usable()
+        if not ptz_id or not ptz_id.strip():
+            raise PtzCommandError(
+                PtzError(
+                    code="service:status:invalid-ptz-id",
+                    message=f"Invalid PTZ ID {ptz_id!r}",
+                    category=PtzErrorCategory.COMMAND_REJECTED,
+                )
+            )
+        with self._lock:
+            controller = self._controllers.get(ptz_id)
+            if controller is None:
+                controller = PtzController(
+                    ptz_id,
+                    self._session,
+                    self._mapping,
+                    limits=self._config.limits,
+                    tolerance=self._config.tolerance,
+                    poll_interval_s=self._config.poll_interval_s,
+                    move_timeout_s=self._config.move_timeout_s,
+                    calibration_timeout_s=self._config.calibration_timeout_s,
+                )
+                self._controllers[ptz_id] = controller
+        return controller.read_status()
+
+    def read_field(self, ptz_id: str, field) -> object:
+        """Read-only single node value via the mapping (no commands).
+
+        Used by monitors for fields outside :class:`PtzStatus` (e.g. the
+        last commanded target). Raises on communication failure so the
+        caller can mark the value Unknown.
+        """
+        self._ensure_usable()
+        return self._session.read_field(self._mapping, field, ptz_id)
 
     # -- public operations (camera-addressed) ----------------------------------
 

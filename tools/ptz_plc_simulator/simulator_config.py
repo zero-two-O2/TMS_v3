@@ -13,9 +13,7 @@ SIMULATOR_DEFAULT_ENDPOINT = "opc.tcp://127.0.0.1:4840"
 SIMULATOR_TEST_ENDPOINT = "opc.tcp://127.0.0.1:4841"
 
 
-def default_ptz_ids(count: int = 8) -> tuple[str, ...]:
-    """PTZ_01..PTZ_<count> instance identifiers."""
-    return tuple(f"PTZ_{index:02d}" for index in range(1, count + 1))
+from thermal_monitor.ptz.mapping import default_ptz_ids  # noqa: F401 (re-export)
 
 
 @dataclass(frozen=True, slots=True)
