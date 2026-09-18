@@ -378,6 +378,7 @@ class ArrowGeometry:
 GEOMETRY_BY_TYPE = {
     RoiObjectType.SPOT: SpotGeometry,
     RoiObjectType.HOTTEST_SPOT: HottestSpotGeometry,
+    RoiObjectType.COLDEST_SPOT: HottestSpotGeometry,  # shared search-region shape
     RoiObjectType.HOT_COLD_SPOTS: HotColdSpotsGeometry,
     RoiObjectType.FREE_LINE: LineGeometry,
     RoiObjectType.HORIZONTAL_LINE: LineGeometry,

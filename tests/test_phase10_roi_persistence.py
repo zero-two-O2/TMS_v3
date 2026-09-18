@@ -55,7 +55,8 @@ def test_migration_upgrade_preserves_existing(tmp_path):
         "INSERT INTO ptz_positions (position_id, camera_id, ptz_id, name, pan, tilt) "
         "VALUES (?, ?, ?, ?, ?, ?)", ("pos_A", "cam_1", "ptz_1", "A", 0.0, 0.0))
     done = database.run_migrations(Path("database/migrations/sqlite"))
-    assert [p.name for p in done] == ["004_roi_position_binding.sql"]
+    assert [p.name for p in done] == ["004_roi_position_binding.sql",
+                                      "005_roi_audit_timestamps.sql"]
     row = database.fetch_one(
         "SELECT position_id FROM ptz_positions WHERE position_id = ?", ("pos_A",))
     assert row[0] == "pos_A"

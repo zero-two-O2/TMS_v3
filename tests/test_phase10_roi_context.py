@@ -1,16 +1,13 @@
-"""Phase 10B/D: binding validation + position context tests."""
-
-import threading
+"""Phase 10B/D: binding validation + position context + authoritative loader."""
 
 import pytest
 
-from thermal_monitor.ptz.errors import PtzStateError
 from thermal_monitor.roi.context import RoiActiveContext, inactive_context
 from thermal_monitor.roi.enums import RoiObjectType
 from thermal_monitor.roi.errors import RoiBindingError, RoiStaleContextError
-from thermal_monitor.roi.geometry import RectangleGeometry, SpotGeometry
+from thermal_monitor.roi.geometry import SpotGeometry
+from thermal_monitor.roi.loading import load_rois_for_position
 from thermal_monitor.roi.models import RoiDefinition
-from thermal_monitor.roi.registry import RoiContextRegistry
 from thermal_monitor.roi.validation import check_position_belongs_to_camera, check_roi_binding
 
 
@@ -89,75 +86,87 @@ def test_failed_context_never_matches_new_generation():
                            position_id="pos_A", context_generation=7)
 
 
-def test_registry_rejects_stale_session():
-    registry = RoiContextRegistry()
-    registry.publish(_context())
+def _loader_fixtures():
+    positions = {
+        "pos_A": _FakePosition(position_id="pos_A", camera_id="cam_A",
+                               ptz_id="ptz_A", name="A"),
+    }
+    rois = [_roi()]
+
+    class _Repo:
+        def list_for_position(self, camera_id, position_id):
+            assert (camera_id, position_id) == ("cam_A", "pos_A")
+            return list(rois)
+
+    return positions, _Repo()
+
+
+def test_loader_returns_immutable_session():
+    positions, repo = _loader_fixtures()
+    context, loaded = load_rois_for_position(
+        "cam_A", "pos_A", 3, 1,
+        position_provider=positions.get, roi_repository=repo,
+        current_session_generation=3, context_generation=7,
+        operation_id="roiop_1")
+    assert context.camera_id == "cam_A" and context.ptz_id == "ptz_A"
+    assert context.position_id == "pos_A"
+    assert context.session_generation == 3 and context.context_generation == 7
+    assert context.roi_ids == ("roi_1",)
+    assert [r.roi_id for r in loaded] == ["roi_1"]
+    assert context.matches(camera_id="cam_A", session_generation=3,
+                           position_id="pos_A", context_generation=7)
+
+
+def test_loader_rejects_unknown_position():
+    positions, repo = _loader_fixtures()
+    with pytest.raises(RoiBindingError):
+        load_rois_for_position("cam_A", "pos_NOPE", 3, 1,
+                               position_provider=positions.get,
+                               roi_repository=repo)
+
+
+def test_loader_rejects_foreign_camera_position():
+    positions = {"pos_X": _FakePosition(position_id="pos_X", camera_id="cam_B",
+                                        ptz_id="ptz_B", name="X")}
+    _, repo = _loader_fixtures()
+    with pytest.raises(RoiBindingError):
+        load_rois_for_position("cam_A", "pos_X", 3, 1,
+                               position_provider=positions.get,
+                               roi_repository=repo)
+
+
+def test_loader_rejects_stale_session():
+    positions, repo = _loader_fixtures()
     with pytest.raises(RoiStaleContextError):
-        registry.publish(_context(session_generation=2),
-                         current_session_generation=3)
+        load_rois_for_position("cam_A", "pos_A", 2, 1,
+                               position_provider=positions.get,
+                               roi_repository=repo,
+                               current_session_generation=3)
 
 
-def test_registry_rejects_older_operation():
-    registry = RoiContextRegistry()
-    registry.claim_operation("cam_A", "roiop_9")
-    with pytest.raises(RoiStaleContextError):
-        registry.publish(_context(operation_id="roiop_1"))
+def test_loader_rejects_foreign_roi_rows():
+    positions, repo = _loader_fixtures()
+
+    class _BadRepo:
+        def list_for_position(self, camera_id, position_id):
+            return [RoiDefinition(
+                roi_id="evil", camera_id="cam_A", ptz_id="ptz_A",
+                position_id="pos_OTHER", object_type=RoiObjectType.SPOT,
+                geometry=SpotGeometry(row=1, col=1))]
+
+    with pytest.raises(RoiBindingError):
+        load_rois_for_position("cam_A", "pos_A", 3, 1,
+                               position_provider=positions.get,
+                               roi_repository=_BadRepo())
 
 
-def test_second_retarget_supersedes_first():
-    registry = RoiContextRegistry()
-    registry.publish(_context(operation_id="roiop_1", context_generation=1))
-    registry.claim_operation("cam_A", "roiop_2")
-    registry.publish(_context(operation_id="roiop_2", context_generation=2,
-                              position_id="pos_B"))
-    stored = registry.get("cam_A")
-    assert stored.position_id == "pos_B"
-    assert stored.context_generation == 2
-
-
-def test_previous_context_preserved_after_failed_publish():
-    registry = RoiContextRegistry()
-    registry.publish(_context())
-    with pytest.raises(RoiStaleContextError):
-        registry.publish(_context(session_generation=99),
-                         current_session_generation=3)
-    assert registry.get("cam_A").session_generation == 3
-
-
-def test_camera_disconnect_invalidates_context():
-    registry = RoiContextRegistry()
-    registry.publish(_context())
-    registry.invalidate("cam_A", session_generation=4)
-    stored = registry.get("cam_A")
-    assert stored.state == "inactive"
-    assert not stored.matches(camera_id="cam_A", session_generation=3,
-                              position_id="pos_A", context_generation=7)
-
-
-def test_no_partial_publication_under_concurrency():
-    registry = RoiContextRegistry()
-    registry.publish(_context(operation_id="roiop_0", context_generation=0))
-    errors = []
-
-    def _publish(op, gen):
-        try:
-            registry.claim_operation("cam_A", op)
-            registry.publish(_context(operation_id=op, context_generation=gen))
-        except RoiStaleContextError as exc:
-            errors.append(str(exc))
-
-    threads = [threading.Thread(target=_publish, args=(f"roiop_{i}", i))
-               for i in range(1, 6)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
-    stored = registry.get("cam_A")
-    assert stored is not None and stored.state == "active"
-
-
-def test_shutdown_rejects_writes():
-    registry = RoiContextRegistry()
-    registry.shutdown()
-    with pytest.raises(PtzStateError):
-        registry.publish(_context())
+def test_loader_requires_ids():
+    positions, repo = _loader_fixtures()
+    with pytest.raises(RoiBindingError):
+        load_rois_for_position("", "pos_A", 3, 1,
+                               position_provider=positions.get,
+                               roi_repository=repo)
+    with pytest.raises(RoiBindingError):
+        load_rois_for_position("cam_A", "", 3, 1,
+                               position_provider=positions.get,
+                               roi_repository=repo)

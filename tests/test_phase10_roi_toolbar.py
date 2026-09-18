@@ -52,14 +52,25 @@ def test_tool_selection_and_active_indication(app):
 def test_tools_disabled_without_valid_position(app):
     toolbar = RoiToolbar()
     toolbar.set_context_active(False, "No position")
-    for combo in toolbar._combo_by_group.values():
-        assert not combo.isEnabled()
+    for button in toolbar._group_buttons.values():
+        assert not button.isEnabled()
 
 
 def test_all_tool_groups_present(app):
-    labels = [label for tools in TOOL_GROUPS.values() for label, _ in tools]
+    labels = [label for tools in TOOL_GROUPS.values() for label, _, _, _ in tools]
     assert "Spot" in labels and "Rectangle" in labels and "Ruler" in labels
     assert "Note" in labels and "Measure Angle" in labels and "Polyline" in labels
+    assert "Coldest Spot" in labels and "On-Image Profile" in labels
+
+
+def test_toolbar_uses_icons_not_text(app):
+    toolbar = RoiToolbar()
+    for group, button in toolbar._group_buttons.items():
+        assert button.text() == "", f"{group} button must show an icon, not text"
+        assert button.toolTip(), f"{group} button must have a tooltip"
+        assert button.accessibleName(), f"{group} needs an accessible name"
+    assert toolbar._undo_btn.text() == ""
+    assert toolbar._delete_btn.text() == ""
 
 
 def test_drawing_cancellation(app):
@@ -89,14 +100,16 @@ def test_object_selection(app):
 def test_position_switch_changes_visible_rois(app):
     region = CameraRegion()
     region.set_context(_ctx(), [_roi()])
-    assert len(region._rois) == 1
+    assert region.editor is not None
+    assert [r.roi_id for r in region.editor.rois] == ["r1"]
     ctx_b = RoiActiveContext(camera_id="cam_1", ptz_id="ptz_1", position_id="pos_B",
                              position_generation=2, session_generation=1,
                              context_generation=6, state="active", roi_ids=())
     region.set_context(ctx_b, [])
-    assert region._rois == []
+    assert region.editor is not None
+    assert region.editor.rois == []
     assert region.interaction.selected_id is None
-    assert not region.interaction.can_undo
+    assert not region.editor.can_undo
 
 
 def test_stale_overlays_removed_and_results_rejected(app):

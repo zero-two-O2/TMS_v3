@@ -29,7 +29,8 @@ def halcon_params_for(object_type: RoiObjectType, geom) -> dict:
     """Return ``{operator, params}`` for region generation + sampling."""
     if object_type == RoiObjectType.SPOT:
         return {"operator": "sample", "row": float(geom.row), "col": float(geom.col)}
-    if object_type in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.HOT_COLD_SPOTS):
+    if object_type in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.COLDEST_SPOT,
+                        RoiObjectType.HOT_COLD_SPOTS):
         return {"operator": "min_max_gray",
                 "row1": float(geom.row1), "col1": float(geom.col1),
                 "row2": float(geom.row2), "col2": float(geom.col2)}

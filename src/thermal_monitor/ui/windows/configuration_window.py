@@ -641,6 +641,14 @@ class ConfigurationModeWidget(QWidget):
     _ptz_import_confirm = pyqtSignal(str, int, object)
     # Active-position label: (camera_id, gen, position name or "").
     _ptz_active = pyqtSignal(str, int, str)
+    # Phase 10 ROI session: (camera_id, gen, payload dict with
+    # position_id/ptz_id/position_name/context_generation/operation_id/roi_dicts).
+    _roi_session_loaded = pyqtSignal(str, int, object)
+    # Phase 10 ROI counts: (camera_id, gen, {position_id: count}).
+    _roi_counts = pyqtSignal(str, int, object)
+    # Phase 11 movement lock release: (camera_id, gen). Emitted when a Go
+    # To fails or is cancelled so the previous session becomes editable.
+    _roi_session_unlock = pyqtSignal(str, int)
 
     def __init__(
         self,
@@ -915,6 +923,23 @@ class ConfigurationModeWidget(QWidget):
         self._roi_toolbar.tool_changed.connect(self._on_roi_tool_changed)
         self._roi_toolbar.delete_requested.connect(self._on_roi_toolbar_delete)
         center_layout.insertWidget(0, self._roi_toolbar)
+        # Phase 10 canvas: full drawing/selection/drag/resize lifecycle on
+        # the existing image widget (rendering and pan/zoom untouched).
+        # The session (RoiEditor) is installed after a reached position
+        # loads its ROI set; without one all tools stay disabled.
+        from thermal_monitor.ui.widgets.roi_canvas import RoiCanvasController
+
+        self._roi_canvas = RoiCanvasController(
+            self._roi_mapping, toolbar=self._roi_toolbar, editable=True)
+        self._roi_canvas.on_created = self._on_roi_canvas_created
+        self._roi_canvas.on_changed = self._on_roi_canvas_changed
+        self._roi_canvas.on_deleted = self._on_roi_canvas_deleted
+        self._roi_canvas.on_selected = self._on_roi_canvas_selected
+        self._roi_canvas.on_repaint = self._repaint_roi_session
+        self._roi_canvas.on_error = self._on_roi_canvas_error
+        self._image_widget.installEventFilter(self)
+        self._roi_session_gens: dict[str, int] = {}
+        self._roi_session_active = False
         # Clean center: camera feed only. Feed mode lives in Camera
         # Control and zoom commands live in the View menu — no workspace
         # toolbar above the image.
@@ -989,8 +1014,8 @@ class ConfigurationModeWidget(QWidget):
         )
         self._pos_panel.delete_requested.connect(self._on_ptz_delete_requested)
         self._pos_panel.rename_requested.connect(self._on_ptz_rename_requested)
-        self._pos_panel.roi_associate_requested.connect(
-            self._on_ptz_roi_associate_requested
+        self._pos_panel.edit_rois_requested.connect(
+            self._on_ptz_edit_rois_requested
         )
         self._pos_panel.refresh_requested.connect(self._on_ptz_refresh_requested)
         self._pos_panel.export_requested.connect(self._on_ptz_export_requested)
@@ -1699,13 +1724,46 @@ class ConfigurationModeWidget(QWidget):
         minimizes open unpinned panels while inside presses and pin
         clicks never arrive. Never consumes events and never uses timers
         (no flicker, no recursion: collapsing emits no clicks).
+
+        Phase 10: presses/moves/releases on the thermal image are first
+        offered to the ROI canvas; consumed gestures (drawing, selection,
+        drag, resize) return True so pan/selection never double-handles
+        them, and the auto-hide collapse is skipped for those presses.
         """
         try:
+            if event is not None and watched is getattr(self, "_image_widget", None):
+                if self._route_roi_event(event):
+                    return True
             if event is not None and event.type() == QEvent.Type.MouseButtonPress:
                 self._collapse_unpinned()
         except Exception:
             logger.debug("Shelf event-filter failed", exc_info=True)
         return super().eventFilter(watched, event)
+
+    def _route_roi_event(self, event) -> bool:
+        """Offer one image-widget event to the ROI canvas (never raises)."""
+        try:
+            canvas = getattr(self, "_roi_canvas", None)
+            if canvas is None or getattr(canvas, "editor", None) is None:
+                return False
+            etype = event.type()
+            if etype == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position()
+                return bool(canvas.press(float(pos.x()), float(pos.y())))
+            if etype == QEvent.Type.MouseMove:
+                pos = event.position()
+                return bool(canvas.move(float(pos.x()), float(pos.y())))
+            if etype == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                pos = event.position()
+                return bool(canvas.release(float(pos.x()), float(pos.y())))
+            if etype == QEvent.Type.MouseButtonDblClick:
+                pos = event.position()
+                return bool(canvas.double_click(float(pos.x()), float(pos.y())))
+            if etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+                return bool(canvas.escape())
+        except Exception:
+            logger.debug("ROI canvas routing failed", exc_info=True)
+        return False
 
     def panel_toggle_actions(self) -> list[QAction]:
         """Checkable View-menu actions bound to each panel (stable order)."""
@@ -1941,6 +1999,12 @@ class ConfigurationModeWidget(QWidget):
             self._on_ptz_import_confirm, Qt.ConnectionType.QueuedConnection
         )
         self._ptz_active.connect(self._on_ptz_active, Qt.ConnectionType.QueuedConnection)
+        self._roi_session_loaded.connect(
+            self._on_roi_session_loaded, Qt.ConnectionType.QueuedConnection)
+        self._roi_counts.connect(
+            self._on_roi_counts, Qt.ConnectionType.QueuedConnection)
+        self._roi_session_unlock.connect(
+            self._on_roi_session_unlock, Qt.ConnectionType.QueuedConnection)
 
         # Image widget range changes
         self._image_widget.range_changed.connect(self._scale_panel.update_range)
@@ -2737,6 +2801,9 @@ class ConfigurationModeWidget(QWidget):
 
         # Update panels
         self._roi_panel.set_camera(camera_id)
+        # Phase 10: a camera switch drops the position-bound session so
+        # the previous camera's objects can never display or persist here.
+        self._clear_roi_session("No position — select and reach a saved position")
         self._alarm_panel.set_camera(camera_id)
         self._stats_panel.clear()
         self._refresh_setup_dialog()
@@ -3473,21 +3540,49 @@ class ConfigurationModeWidget(QWidget):
         if camera_id is None:
             return
         generation = self._session.generation
-        repo = self._ptz_positions_repo()
-        if repo is None:
-            return
 
         def _delete() -> None:
+            # Phase 11 orphan policy: the position row and ALL of its ROI
+            # definitions are deleted in ONE database transaction, scoped
+            # by (camera_id, position_id). No orphaned ROI row may survive
+            # to be loaded for another position later.
+            database = getattr(self, "_database", None)
+            if database is None or not hasattr(database, "transaction"):
+                self._ptz_notice.emit(
+                    camera_id, generation, "Delete failed: database unavailable.")
+                return
             try:
-                result = repo.delete_position(position_id)
+                with database.transaction() as cursor:
+                    try:
+                        cursor.execute(
+                            "DELETE FROM roi_definitions "
+                            "WHERE camera_id = ? AND position_id = ?",
+                            (camera_id, position_id),
+                        )
+                        roi_removed = cursor.rowcount or 0
+                    except Exception as exc:
+                        # Pre-ROI databases have no roi_definitions table;
+                        # then there is nothing orphaned to clean up.
+                        message = str(exc).lower()
+                        if ("no such table" not in message
+                                and "invalid object name" not in message):
+                            raise
+                        roi_removed = 0
+                    cursor.execute(
+                        "DELETE FROM ptz_positions "
+                        "WHERE position_id = ? AND camera_id = ?",
+                        (position_id, camera_id),
+                    )
+                    pos_removed = cursor.rowcount
             except Exception as exc:
                 self._ptz_notice.emit(camera_id, generation, f"Delete failed: {exc}")
                 return
-            if not result.success:
-                self._ptz_notice.emit(
-                    camera_id, generation, f"Delete failed: {result.error}"
-                )
+            if not pos_removed:
+                self._ptz_notice.emit(camera_id, generation, "Position not found.")
                 return
+            if roi_removed:
+                logger.info("Position %s deleted with %d ROI definitions",
+                            position_id, roi_removed)
             self._ptz_load_positions(camera_id, generation)
 
         self._ptz_run(f"pos-del-{camera_id}", _delete)
@@ -3526,7 +3621,40 @@ class ConfigurationModeWidget(QWidget):
 
         self._ptz_run(f"pos-rename-{camera_id}", _rename)
 
+    def _on_ptz_edit_rois_requested(self, position_id: str) -> None:
+        """Phase 11 Set ROI workflow: edit ROIs for one saved position.
+
+        - Session already active for that position -> editing is enabled;
+          just confirm the context.
+        - Otherwise -> controlled Go To-and-wait through the existing
+          workflow; the session installs automatically on reached.
+        - No PTZ attached -> actionable message, never a silent edit
+          under the wrong position.
+        """
+        camera_id = self._selected_camera_id
+        if camera_id is None or self._pos_panel is None:
+            return
+        canvas = getattr(self, "_roi_canvas", None)
+        editor = getattr(canvas, "editor", None) if canvas is not None else None
+        if editor is not None and editor.context.position_id == position_id:
+            self._ptz_notice.emit(
+                camera_id, self._session.generation,
+                f"Editing ROIs for {editor.context.position_id}.")
+            return
+        if self._ptz_guarded_service(camera_id) is None:
+            self._pos_panel.show_message(
+                "PTZ not connected. Connect the PTZ, then Set ROI will "
+                "move to the position and enable editing.")
+            return
+        self._on_ptz_goto_requested(position_id)
+
     def _on_ptz_roi_associate_requested(self, position_id: str, roi_set_ref: str) -> None:
+        """Legacy manual ROI-set association (no UI path; kept for compat).
+
+        The visible Position Table no longer exposes roi_set_ref. This
+        handler is retained so older callers/signals do not break, but
+        nothing in the UI connects to it.
+        """
         camera_id = self._selected_camera_id
         if camera_id is None:
             return
@@ -3563,6 +3691,24 @@ class ConfigurationModeWidget(QWidget):
         service, binding, generation = resolved
         repo = self._ptz_positions_repo()
         ptz_cfg = self._ptz_global_config()
+        # Phase 11 movement lock: the previous ROI context stays visible
+        # but is NOT editable while the PTZ moves, so geometry can never
+        # be drawn onto a moving view under a stale context.
+        try:
+            position_name = next(
+                (p.name for p in self._pos_panel._positions
+                 if p.position_id == position_id),
+                position_id,
+            )
+            canvas = getattr(self, "_roi_canvas", None)
+            if canvas is not None:
+                canvas.set_editable(False)
+            toolbar = getattr(self, "_roi_toolbar", None)
+            if toolbar is not None:
+                toolbar.set_context_active(
+                    False, f"Moving to {position_name}… (ROI locked)")
+        except RuntimeError:
+            pass
 
         def _goto() -> None:
             position = None
@@ -3659,15 +3805,59 @@ class ConfigurationModeWidget(QWidget):
                     self._ptz_notice.emit(
                         camera_id, generation, f"Reached {position.name}."
                     )
+                # Phase 11: load the position-bound ROI set through the
+                # single authoritative loader (same worker, after reached
+                # only). Failures keep the previous session; nothing
+                # partial is ever published.
+                try:
+                    from thermal_monitor.roi.loading import load_rois_for_position
+                    from thermal_monitor.roi.serialization import roi_to_dict
+
+                    roi_repo = self._roi_repository()
+                    retained = self._ptz_registry.get(camera_id)
+                    gens = getattr(self, "_roi_session_gens", {})
+                    if roi_repo is not None:
+                        context, rois = load_rois_for_position(
+                            camera_id, position.position_id,
+                            self._session.generation,
+                            int(gens.get(camera_id, 0)) + 1,
+                            position_provider=lambda pid: position,
+                            roi_repository=roi_repo,
+                            current_session_generation=(
+                                self._session.generation),
+                            context_generation=(
+                                retained.context_generation
+                                if retained is not None else 0),
+                            operation_id=(
+                                result.operation.operation_id
+                                if result.operation is not None else ""),
+                            source="goto",
+                        )
+                        gens[camera_id] = context.position_generation
+                        self._roi_session_loaded.emit(camera_id, generation, {
+                            "context": context,
+                            "roi_dicts": [roi_to_dict(r) for r in rois],
+                        })
+                    else:
+                        self._ptz_notice.emit(
+                            camera_id, generation,
+                            "ROI persistence unavailable; live view only.")
+                except Exception as exc:
+                    logger.warning("ROI session load failed: %s", exc)
+                    self._ptz_notice.emit(
+                        camera_id, generation,
+                        f"ROI session failed: {exc}")
             elif result.state == RoiActivationState.CANCELLED:
                 self._ptz_notice.emit(
                     camera_id, generation, f"Go To {position.name} cancelled."
                 )
+                self._roi_session_unlock.emit(camera_id, generation)
             else:
                 detail = result.error.message if result.error is not None else "failed"
                 self._ptz_notice.emit(
                     camera_id, generation, f"Go To failed: {detail}"
                 )
+                self._roi_session_unlock.emit(camera_id, generation)
 
         self._ptz_run(f"goto-{camera_id}", _goto)
 
@@ -3771,6 +3961,16 @@ class ConfigurationModeWidget(QWidget):
         try:
             if self._pos_panel is not None:
                 self._pos_panel.set_positions(list(positions or []))
+                # Phase 11: a deleted position must take its session with
+                # it — never keep displaying ROIs for a vanished record.
+                canvas = getattr(self, "_roi_canvas", None)
+                editor = (getattr(canvas, "editor", None)
+                          if canvas is not None else None)
+                if editor is not None:
+                    known = {p.position_id for p in (positions or [])}
+                    if editor.context.position_id not in known:
+                        self._clear_roi_session(
+                            "Position removed — select and reach a saved position")
         except RuntimeError:
             pass
 
@@ -3825,10 +4025,266 @@ class ConfigurationModeWidget(QWidget):
     def _on_roi_toolbar_delete(self) -> None:
         """Phase 10: toolbar delete forwards to the ROI panel selection."""
         try:
+            canvas = getattr(self, "_roi_canvas", None)
+            if canvas is not None and canvas.delete_selected():
+                return
             if hasattr(self, "_roi_panel") and self._roi_panel is not None:
                 self._roi_panel._on_delete_roi()
         except RuntimeError:
             pass
+
+    # -- Phase 10: position-bound ROI session ---------------------------
+    # The canvas owns drawing/selection/drag/resize on the existing image
+    # widget. Its RoiEditor session is installed only after a reached
+    # position loads its validated ROI set (see _on_ptz_goto_requested);
+    # camera switches and failures clear it so stale objects can never
+    # display or persist under the wrong owner.
+
+    def _roi_mapping(self):
+        """Central widget<->image mapping for the configuration workspace."""
+        from thermal_monitor.roi.coordinate_system import ViewportMapping
+
+        image_widget = getattr(self, "_image_widget", None)
+        if image_widget is None:
+            return None
+        image = getattr(image_widget, "_display_image", None)
+        if image is None:
+            return None
+        try:
+            iw, ih = image.width(), image.height()
+        except Exception:
+            return None
+        temp = getattr(image_widget, "_temperature_image", None)
+        if temp is not None:
+            try:
+                ih, iw = temp.shape[:2]
+            except Exception:
+                pass
+        zoom = getattr(image_widget, "_zoom", None)
+        pan = getattr(image_widget, "_pan_offset", None)
+        try:
+            px = float(pan.x()) if pan is not None else 0.0
+            py = float(pan.y()) if pan is not None else 0.0
+        except Exception:
+            px, py = 0.0, 0.0
+        return ViewportMapping(
+            image_width=int(iw), image_height=int(ih),
+            widget_width=max(1, image_widget.width()),
+            widget_height=max(1, image_widget.height()),
+            zoom=zoom, pan_x=px, pan_y=py)
+
+    def _repaint_roi_session(self) -> None:
+        try:
+            canvas = getattr(self, "_roi_canvas", None)
+            if canvas is None:
+                return
+            self._image_widget.set_roi_overlays(canvas.build_overlays())
+        except RuntimeError:
+            pass
+
+    def _clear_roi_session(self, label: str = "No position") -> None:
+        try:
+            canvas = getattr(self, "_roi_canvas", None)
+            if canvas is not None:
+                canvas.set_editor(None)
+            toolbar = getattr(self, "_roi_toolbar", None)
+            if toolbar is not None:
+                toolbar.set_context_active(False, label)
+            panel = getattr(self, "_pos_panel", None)
+            if panel is not None:
+                try:
+                    panel.set_active_position(None)
+                except RuntimeError:
+                    pass
+            self._roi_session_active = False
+        except RuntimeError:
+            pass
+
+    def _on_roi_session_loaded(self, camera_id: str, generation: int,
+                               payload: object) -> None:
+        """Install a validated position-bound editing session (GUI thread).
+
+        The payload carries the immutable context built by
+        ``load_rois_for_position`` in the Go To worker AFTER the PTZ
+        reached the target. Installing it here atomically replaces the
+        visible set; the previous session survives every failure above.
+        """
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            data = dict(payload or {})
+            context = data.get("context")
+            if context is None:
+                raise ValueError("ROI session payload has no context")
+            from thermal_monitor.roi.editor import RoiEditor
+            from thermal_monitor.roi.serialization import roi_from_dict
+
+            rois = [roi_from_dict(item) for item in data.get("roi_dicts", [])]
+            if [r.roi_id for r in rois] != list(context.roi_ids):
+                raise ValueError("ROI session payload mismatches its context")
+            gens = getattr(self, "_roi_session_gens", {})
+            gens[camera_id] = context.position_generation
+            editor = RoiEditor(context, rois)
+            canvas = getattr(self, "_roi_canvas", None)
+            if canvas is None:
+                return
+            canvas.set_editable(True)
+            canvas.set_editor(editor)
+            self._roi_session_active = True
+            toolbar = getattr(self, "_roi_toolbar", None)
+            position_name = next(
+                (p.name for p in self._pos_panel._positions
+                 if p.position_id == context.position_id),
+                context.position_id,
+            ) if getattr(self, "_pos_panel", None) is not None else context.position_id
+            if toolbar is not None:
+                if rois:
+                    toolbar.set_context_active(
+                        True, f"Camera: {camera_id}  PTZ: {context.ptz_id}  "
+                        f"Position: {position_name}  "
+                        f"ROI: {len(rois)} object(s)")
+                else:
+                    toolbar.set_context_active(
+                        True, f"Camera: {camera_id}  PTZ: {context.ptz_id}  "
+                        f"Position: {position_name}  "
+                        f"ROI: No ROI configured for this position")
+            panel = getattr(self, "_pos_panel", None)
+            if panel is not None:
+                try:
+                    panel.set_active_position(context.position_id)
+                except RuntimeError:
+                    pass
+            self._repaint_roi_session()
+        except Exception as exc:
+            # Never publish a partial context: the previous valid session
+            # (if any) stays installed and on screen.
+            logger.warning("ROI session install failed: %s", exc)
+            self._ptz_notice.emit(camera_id, generation,
+                                  f"ROI session failed: {exc}")
+        else:
+            try:
+                self._roi_counts.emit(
+                    camera_id, generation,
+                    {str(context.position_id): len(rois)})
+            except Exception:
+                pass
+
+    def _on_roi_session_unlock(self, camera_id: str, generation: int) -> None:
+        """Re-enable the previous session after a failed/cancelled Go To."""
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            canvas = getattr(self, "_roi_canvas", None)
+            editor = getattr(canvas, "editor", None) if canvas is not None else None
+            toolbar = getattr(self, "_roi_toolbar", None)
+            if editor is not None:
+                if canvas is not None:
+                    canvas.set_editable(True)
+                if toolbar is not None:
+                    toolbar.set_context_active(
+                        True, f"Camera: {camera_id}  "
+                        f"PTZ: {editor.context.ptz_id}  "
+                        f"Position: {editor.context.position_id}  "
+                        f"Context: Active")
+            elif toolbar is not None:
+                toolbar.set_context_active(False, "No position")
+        except RuntimeError:
+            pass
+
+    def _on_roi_counts(self, camera_id: str, generation: int,
+                       counts: object) -> None:
+        """Refresh Position Table ROI counts (GUI thread, guarded)."""
+        if not self._ptz_is_current(camera_id, generation):
+            return
+        try:
+            panel = getattr(self, "_pos_panel", None)
+            if panel is not None and isinstance(counts, dict):
+                for position_id, count in counts.items():
+                    panel.set_roi_count(position_id, int(count))
+        except RuntimeError:
+            pass
+
+    def _roi_repository(self):
+        """Phase 10 repository over the active database (None if unusable)."""
+        database = getattr(self, "_database", None)
+        if database is None:
+            return None
+        if not hasattr(database, "fetch_all") or not hasattr(
+                database, "transaction"):
+            return None
+        try:
+            from thermal_monitor.roi.repository import RoiDefinitionRepository
+
+            return RoiDefinitionRepository(database)
+        except Exception:
+            return None
+
+    def _on_roi_canvas_created(self, roi) -> None:
+        self._repaint_roi_session()
+        self._persist_roi_async("create", roi)
+
+    def _on_roi_canvas_changed(self, roi) -> None:
+        self._repaint_roi_session()
+        self._persist_roi_async("update", roi)
+
+    def _on_roi_canvas_deleted(self, roi_id: str) -> None:
+        self._repaint_roi_session()
+        self._persist_roi_async("delete", roi_id)
+
+    def _on_roi_canvas_selected(self, roi_id) -> None:
+        self._repaint_roi_session()
+
+    def _on_roi_canvas_error(self, message: str) -> None:
+        try:
+            self._status_label.setText(f"ROI: {message}")
+        except RuntimeError:
+            pass
+
+    def _persist_roi_async(self, operation: str, payload) -> None:
+        """Save one ROI mutation on a worker thread (never GUI I/O)."""
+        canvas = getattr(self, "_roi_canvas", None)
+        editor = getattr(canvas, "editor", None) if canvas is not None else None
+        if editor is None:
+            return
+        context = editor.context
+        camera_id, generation = context.camera_id, self._session.generation
+
+        def _save() -> None:
+            repo = self._roi_repository()
+            if repo is None:
+                self._ptz_notice.emit(
+                    camera_id, generation,
+                    "ROI persistence unavailable; change kept for this session.")
+                return
+            try:
+                from thermal_monitor.roi.serialization import roi_to_dict
+
+                if operation == "create":
+                    repo.create(payload)
+                elif operation == "update":
+                    repo.update(payload)
+                elif operation == "delete":
+                    repo.delete(payload)
+                else:
+                    return
+            except Exception as exc:
+                logger.warning("ROI persist %s failed: %s", operation, exc)
+                self._ptz_notice.emit(
+                    camera_id, generation, f"ROI save failed: {exc}")
+                return
+            # Refresh the session label count (read-only; editor unchanged).
+            try:
+                count = len(repo.list_for_position(
+                    context.camera_id, context.position_id))
+                self._ptz_notice.emit(
+                    camera_id, generation,
+                    f"ROI {operation}d; position now holds {count} object(s).")
+                self._roi_counts.emit(
+                    camera_id, generation, {context.position_id: count})
+            except Exception:
+                pass
+
+        self._ptz_run(f"roi-{operation}-{camera_id}", _save)
 
     def _on_ptz_import_confirm(
         self, camera_id: str, generation: int, payload: object
@@ -4291,6 +4747,7 @@ class ConfigurationModeWidget(QWidget):
         self._scale_panel.update_cursor_temperature(None)
         self._set_finder_thumbnail(None)
         self._roi_panel.set_camera("")
+        self._clear_roi_session("No position")
         self._alarm_panel.set_camera("")
         self._stats_panel.clear()
         self._frame_info_panel.clear()
@@ -5184,39 +5641,16 @@ class ConfigurationModeWidget(QWidget):
 
     def _update_roi_overlays(self) -> None:
         """Update ROI overlays on the thermal image from current analysis config."""
-        if not self._selected_camera_id:
-            self._image_widget.set_roi_overlays([])
+        # Phase 11: the Configuration display has ONE overlay owner — the
+        # position-bound session. The legacy camera-global path must not
+        # paint (and must not clobber the session) in either state.
+        if getattr(self, "_roi_session_active", False):
             return
-
-        analysis = self._config_service.get_analysis_config(self._selected_camera_id)
-        if not analysis:
+        try:
             self._image_widget.set_roi_overlays([])
-            return
-
-        overlays = []
-        # Get alarm states from latest result
-        alarm_active_rois = set()
-        if self._latest_result and self._latest_result.alarm_result:
-            for alarm in self._latest_result.alarm_result.active_alarms:
-                alarm_active_rois.add(alarm.roi_id)
-
-        # Get ROIs for default position
-        rois = analysis.get_rois_for_position("default")
-        for roi in rois:
-            if not roi.enabled:
-                continue
-            geometry = roi.geometry
-            overlay = ROIOverlay(
-                roi_id=roi.roi_id,
-                shape=geometry.shape.value.lower(),
-                geometry=geometry.parameters,
-                color="#FFFF00",
-                selected=(roi.roi_id == self._roi_panel._selected_roi_id),
-                alarm_active=(roi.roi_id in alarm_active_rois),
-            )
-            overlays.append(overlay)
-
-        self._image_widget.set_roi_overlays(overlays)
+        except RuntimeError:
+            pass
+        return
 
     def _on_roi_created(self, roi_id: str, roi_config) -> None:
         self._mark_dirty()

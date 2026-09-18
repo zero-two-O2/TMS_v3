@@ -96,6 +96,10 @@ class RoiEvaluator:
             out = _m.hottest_in_region(image, g.row1, g.col1, g.row2, g.col2)
             return RoiMeasurement(kind="hottest_spot", values={**out}, valid=out["valid"],
                                   error="" if out["valid"] else "no-data", **base)
+        if t == RoiObjectType.COLDEST_SPOT:
+            out = _m.coldest_in_region(image, g.row1, g.col1, g.row2, g.col2)
+            return RoiMeasurement(kind="coldest_spot", values={**out}, valid=out["valid"],
+                                  error="" if out["valid"] else "no-data", **base)
         if t == RoiObjectType.HOT_COLD_SPOTS:
             hot = _m.hottest_in_region(image, g.row1, g.col1, g.row2, g.col2)
             cold = _m.coldest_in_region(image, g.row1, g.col1, g.row2, g.col2)

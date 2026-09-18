@@ -76,7 +76,7 @@ class TestSqliteDatabase:
     def test_init_and_versioned_migrations(self, tmp_path):
         db = make_db(tmp_path)
         assert db.is_connected
-        assert db.applied_versions == [1, 2, 3, 4]
+        assert db.applied_versions == [1, 2, 3, 4, 5]
         tables = {r[0] for r in db.fetch_all(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"alarm_events", "ptz_positions", "roi_definitions",

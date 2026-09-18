@@ -9,6 +9,8 @@ from thermal_monitor.ui.widgets.frame_info_panel import FrameInfoPanel
 from thermal_monitor.ui.widgets.image_acquisition_panel import ImageAcquisitionPanel
 from thermal_monitor.ui.widgets.ptz_control_panel import PtzControlPanel
 from thermal_monitor.ui.widgets.ptz_position_table import PtzPositionTablePanel
+from thermal_monitor.ui.widgets.roi_canvas import RoiCanvasController
+from thermal_monitor.ui.widgets.roi_icons import icon_for
 from thermal_monitor.ui.widgets.roi_interaction import EditCommand, RoiInteractionState
 from thermal_monitor.ui.widgets.roi_overlay import RoiOverlayItem, RoiOverlaySet, overlay_color
 from thermal_monitor.ui.widgets.roi_panel import ROIPanel
@@ -34,11 +36,13 @@ __all__ = [
     "PtzControlPanel",
     "PtzPositionTablePanel",
     "RoiInteractionState",
+    "RoiCanvasController",
     "RoiOverlayItem",
     "RoiOverlaySet",
     "ROIPanel",
     "RoiPropertiesPanel",
     "RoiToolbar",
+    "icon_for",
     "StatisticsPanel",
     "ThermalScalePanel",
     "WheelForwardFilter",

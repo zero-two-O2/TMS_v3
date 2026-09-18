@@ -22,13 +22,16 @@ after a position change.
    immutable in place; rebinding requires the explicit `copy_to()`
    workflow. A position from camera A can never be saved under camera B
    (`validation.check_position_belongs_to_camera`).
-2. **Active context ownership**: one `roi.RoiContextRegistry` per
-   application is authoritative for the active `RoiActiveContext`
-   snapshot (camera, PTZ, position, position/session/context
-   generations, operation id, ROI ids, image size). It coexists with the
-   Phase 7 `ActivePositionRegistry` (processing-path seam) rather than
-   replacing it; the Phase 10 `RoiActivationPublisher` reuses the
-   coordinator's observer-published generation so both stay aligned.
+2. **Active context ownership**: `ActivePositionRegistry`
+   (`ptz.roi_activation`) is the SINGLE authoritative registry,
+   committed by `ObserverRetargetCoordinator` after reached. The GUI
+   session snapshot (`roi.RoiActiveContext`) is built by the single
+   authoritative loader `roi.loading.load_rois_for_position` and held
+   in a session `RoiEditor`.
+   > Phase 11 correction: the Phase 10 `roi.RoiContextRegistry` /
+   > `RoiActivationPublisher` pair was dead in production and has been
+   > removed (see ADR-015). Nothing publishes outside the coordinator +
+   > loader path.
 3. **Context generation / stale prevention**: every measurement is
    stamped `(camera, session, position, context generations, frame
    id/timestamp)`. Results failing the match are discarded before UI or
@@ -65,7 +68,24 @@ after a position change.
 ## Consequences
 
 - ROI CRUD is position-scoped; undo/redo history is cleared on every
-  position change.
+  position change. Drag gestures commit a single logical undo command.
+- The Camera Region toolbar is icon-only (programmatic glyphs, no icon
+  dependency): Undo, Redo, Select, Spots, Lines, Regions, Measure,
+  Annotate, Delete, Hide. Tooltips/accessible names carry full names;
+  only `QToolButton` is used so the center keeps its no-button chrome.
+- The full mouse lifecycle (draw, select, drag-move, handle-resize,
+  vertex edit, delete, Escape) is owned by the reusable
+  `RoiCanvasController`, shared by `CameraRegion` and Configuration
+  Mode's existing image widget; rendering and pan/zoom are untouched.
+- 22 object types: Spot, Hottest Spot, **Coldest Spot**, Hot/Cold
+  Spots, 5 lines (+ On-Image Profile arming a profile-flagged free
+  line), 4 regions, 5 rulers/measures, 4 annotations.
+- Versioned collection import/export (`tms-roi-collection` v1,
+  `roi.io`): validate-before-commit, preview, merge skips duplicates,
+  replace commits all-or-nothing via `replace_all`, cross-owner
+  payloads rejected, REPLACE confirmation stays a UI responsibility.
+- Bounded sizes: name 120, note 500, vertices 256, 500 objects per
+  position, geometry JSON 64 KiB.
 - Ruler tools report pixel distances only; physical units are marked
   `calibration: unavailable` (no invented mm values).
 - Raw intensity is never presented as Celsius; no-data images produce

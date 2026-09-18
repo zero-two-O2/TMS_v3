@@ -111,7 +111,7 @@ class TestPtzPositionsSchema:
         db = self._db(tmp_path)
         try:
             done = db.run_migrations(self._migrations())
-            assert [p.name for p in done][-1] == "004_roi_position_binding.sql"
+            assert [p.name for p in done][-1] == "005_roi_audit_timestamps.sql"
             cols = [r[1] for r in db.fetch_all("PRAGMA table_info(ptz_positions)")]
             assert cols == ["id", "position_id", "camera_id", "ptz_id", "name",
                             "pan", "tilt", "velocity", "pan_velocity",

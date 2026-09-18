@@ -71,7 +71,7 @@ def test_binding_required():
 
 
 def test_all_twenty_types_have_category():
-    assert len(list(RoiObjectType)) == 21
+    assert len(list(RoiObjectType)) == 22
     for object_type in RoiObjectType:
         assert category_of(object_type) in RoiCategory
 

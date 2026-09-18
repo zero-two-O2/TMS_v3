@@ -208,7 +208,22 @@ class TestPositionTable:
         panel.set_positions(self._positions())
         assert panel._tree.topLevelItemCount() == 2
         assert "⚠" in panel._tree.topLevelItem(1).text(0)
-        assert "roi_set_a" in panel._tree.topLevelItem(0).text(4)
+        # No ROI Set column: operator columns only + read-only ROI count.
+        assert [panel._tree.headerItem().text(i) for i in range(6)] == [
+            "Name", "Pan", "Tilt", "Velocity", "ROIs", "Enabled"]
+        assert panel._tree.topLevelItem(0).text(4) == "—"  # unknown, not zero
+        panel.set_roi_count("pos_1", 3)
+        assert panel._tree.topLevelItem(0).text(4) == "3"
+
+    def test_active_position_marked_without_selection(self, qapp):
+        panel = PtzPositionTablePanel()
+        panel.set_station("cam_A", "PTZ_01")
+        panel.set_positions(self._positions())
+        panel.set_active_position("pos_1")
+        assert panel._tree.topLevelItem(0).text(0).startswith("● ")
+        assert panel.selected_position_id() is None  # marker != selection
+        panel.set_active_position(None)
+        assert not panel._tree.topLevelItem(0).text(0).startswith("● ")
 
     def test_goto_signal(self, qapp):
         panel = PtzPositionTablePanel()

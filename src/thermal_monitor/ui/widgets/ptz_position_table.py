@@ -37,12 +37,20 @@ class PtzPositionTablePanel(QWidget):
     save_current_requested = pyqtSignal(str)  # name
     delete_requested = pyqtSignal(str)  # position_id
     rename_requested = pyqtSignal(str, str)  # position_id, new name
-    roi_associate_requested = pyqtSignal(str, str)  # position_id, roi_set_ref
+    # Phase 11: begins the position-bound ROI editing workflow for the
+    # selected saved position (Go To + wait when not reached). The
+    # legacy manual roi-set association signal was removed with the
+    # ROI Set column: operators never manage roi_set_ref directly.
+    edit_rois_requested = pyqtSignal(str)  # position_id
     refresh_requested = pyqtSignal()
     export_requested = pyqtSignal()
     import_requested = pyqtSignal()
 
-    _COLUMNS = ("Name", "Pan", "Tilt", "Velocity", "ROI set", "Enabled")
+    # Visible columns are operator position data only. The internal
+    # roi_set_ref stays in the database/model for legacy activation
+    # compatibility but is never shown or edited here. "ROIs" is a
+    # read-only validated count ("—" = unknown, never fabricated).
+    _COLUMNS = ("Name", "Pan", "Tilt", "Velocity", "ROIs", "Enabled")
 
     def __init__(self, theme_manager: Optional[ThemeManager] = None) -> None:
         super().__init__()
@@ -50,6 +58,14 @@ class PtzPositionTablePanel(QWidget):
         self._camera_id: str | None = None
         self._ptz_id: str | None = None
         self._positions: list[PtzPosition] = []
+        # Validated ROI object counts per position_id ("ROIs" cell shows
+        # the count, "—" when unknown — never fabricated). The internal
+        # roi_set_ref stays in the database/model for legacy activation
+        # compatibility but is never shown or edited here.
+        self._roi_counts: dict[str, int] = {}
+        # Reached (active) position: marked with "●", independent of the
+        # Qt selection (row click never implies reached).
+        self._active_position_id: str | None = None
         self._setup_ui()
 
     def _setup_ui(self) -> None:
@@ -84,8 +100,11 @@ class PtzPositionTablePanel(QWidget):
         self._goto_btn.clicked.connect(self._on_goto)
         self._rename_btn = QPushButton("Rename")
         self._rename_btn.clicked.connect(self._on_rename)
-        self._roi_btn = QPushButton("Set ROI Set…")
-        self._roi_btn.clicked.connect(self._on_roi_associate)
+        self._roi_btn = QPushButton("Set ROI")
+        self._roi_btn.setToolTip(
+            "Edit ROIs for the selected position "
+            "(moves there first when not reached)")
+        self._roi_btn.clicked.connect(self._on_edit_rois)
         self._delete_btn = QPushButton("Delete")
         self._delete_btn.clicked.connect(self._on_delete)
         self._refresh_btn = QPushButton("Refresh")
@@ -171,22 +190,10 @@ class PtzPositionTablePanel(QWidget):
         if accepted and name.strip():
             self.rename_requested.emit(position_id, name.strip())
 
-    def _on_roi_associate(self) -> None:
+    def _on_edit_rois(self) -> None:
         position_id = self.selected_position_id()
-        if not position_id:
-            return
-        current = next(
-            (p.roi_set_ref for p in self._positions if p.position_id == position_id),
-            "",
-        )
-        ref, accepted = QInputDialog.getText(
-            self,
-            "Associate ROI Set",
-            "ROI-set reference (position ID key, empty to clear):",
-            text=current,
-        )
-        if accepted:
-            self.roi_associate_requested.emit(position_id, ref.strip())
+        if position_id:
+            self.edit_rois_requested.emit(position_id)
 
     # -- public API ------------------------------------------------------------
 
@@ -195,6 +202,8 @@ class PtzPositionTablePanel(QWidget):
         self._camera_id = camera_id
         self._ptz_id = ptz_id
         self._positions = []
+        self._roi_counts = {}
+        self._active_position_id = None
         self._tree.clear()
         if camera_id is None:
             self._station_label.setText("No camera selected")
@@ -222,13 +231,16 @@ class PtzPositionTablePanel(QWidget):
             mismatch = (
                 position.ptz_id != self._ptz_id if self._ptz_id is not None else False
             )
+            count = self._roi_counts.get(position.position_id)
+            roi_cell = str(count) if count is not None else "—"
+            active = position.position_id == self._active_position_id
             item = QTreeWidgetItem(
                 [
-                    position.name + (" ⚠" if mismatch else ""),
+                    ("● " if active else "") + position.name + (" ⚠" if mismatch else ""),
                     f"{position.pan:.1f}°",
                     f"{position.tilt:.1f}°",
                     velocity,
-                    position.roi_set_ref or "—",
+                    roi_cell,
                     "Yes" if position.enabled else "No",
                 ]
             )
@@ -237,6 +249,28 @@ class PtzPositionTablePanel(QWidget):
                 item.setSelected(True)
             self._tree.addTopLevelItem(item)
         self._refresh_buttons()
+
+    def set_roi_counts(self, counts: dict[str, int]) -> None:
+        """Refresh validated ROI counts (selection preserved)."""
+        self._roi_counts = dict(counts or {})
+        if self._positions:
+            self.set_positions(self._positions)
+
+    def set_roi_count(self, position_id: str, count: int) -> None:
+        """Merge one validated count without dropping the others."""
+        self._roi_counts[position_id] = int(count)
+        if self._positions:
+            self.set_positions(self._positions)
+
+    def set_active_position(self, position_id: str | None) -> None:
+        """Mark the reached position (None clears); selection untouched."""
+        self._active_position_id = position_id
+        if self._positions:
+            self.set_positions(self._positions)
+
+    @property
+    def active_position_id(self) -> str | None:
+        return self._active_position_id
 
     def show_message(self, message: str) -> None:
         QMessageBox.information(self, "Position Table", message)

@@ -115,6 +115,24 @@ class RoiDefinitionRepository:
         except Exception as exc:
             raise RoiPersistenceError(f"ROI delete failed: {exc}") from exc
 
+    def delete_for_position(self, camera_id: str, position_id: str) -> int:
+        """Delete every ROI owned by (camera_id, position_id).
+
+        Used for the transactional position-deletion policy: callers
+        deleting the position row in the same database transaction pass
+        no orphaned ROI rows behind. Returns the deleted row count.
+        """
+        try:
+            with self._db.transaction() as cursor:
+                cursor.execute(
+                    "DELETE FROM roi_definitions "
+                    "WHERE camera_id = ? AND position_id = ?",
+                    (camera_id, position_id))
+                return cursor.rowcount if cursor.rowcount is not None else 0
+        except Exception as exc:
+            raise RoiPersistenceError(
+                f"ROI position delete failed: {exc}") from exc
+
     def replace_all(self, camera_id: str, position_id: str,
                     ptz_id: str, rois: list[RoiDefinition]) -> list[RoiDefinition]:
         """Transactional bulk replacement for import workflows."""

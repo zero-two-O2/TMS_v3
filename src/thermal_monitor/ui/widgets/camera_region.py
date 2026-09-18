@@ -1,22 +1,20 @@
 """ui.widgets.camera_region -- Camera Region: image + ROI toolbar + overlays.
 
 The Camera Region is the visual unit owning the displayed image: the
-existing ``LiveThermalWidget`` renderer plus the Phase 10 ROI toolbar
-docked directly above it. Rendering, pan/zoom, IR/VL handling, and the
-latest-frame-wins path are unchanged; this widget only adds:
+existing ``LiveThermalWidget`` renderer plus the Phase 10 compact ROI
+toolbar docked directly above it. Rendering, pan/zoom, IR/VL handling,
+and the latest-frame-wins path are unchanged; this widget adds:
 
-- compact toolbar (tool selection, undo/redo, delete, overlay toggle)
+- compact icon toolbar (tool selection, undo/redo, delete, overlay toggle)
 - position-scoped overlay publication (only the active context paints)
-- mouse drawing/selection forwarded to RoiInteractionState in image
-  coordinates (widget coords converted via the shared view transform)
+- full mouse drawing/selection/drag/resize via RoiCanvasController in
+  image coordinates (widget coords converted centrally)
 
 Live/Observer tiles keep their existing behavior: overlays are
 read-only there unless a controller explicitly enables editing.
 """
 
 from __future__ import annotations
-
-from typing import Callable, Optional
 
 try:
     from PyQt6.QtCore import Qt, pyqtSignal
@@ -28,12 +26,9 @@ except ImportError:
 
 from thermal_monitor.roi.context import RoiActiveContext
 from thermal_monitor.roi.coordinate_system import ViewportMapping
-from thermal_monitor.roi.enums import RoiObjectType
+from thermal_monitor.roi.editor import RoiEditor
 from thermal_monitor.roi.models import RoiDefinition
-from thermal_monitor.ui.widgets.roi_interaction import EditCommand, RoiInteractionState
-from thermal_monitor.ui.widgets.roi_overlay import (
-    RoiOverlayItem, RoiOverlaySet, overlay_color,
-)
+from thermal_monitor.ui.widgets.roi_canvas import RoiCanvasController
 from thermal_monitor.ui.widgets.roi_toolbar import RoiToolbar
 
 
@@ -41,32 +36,28 @@ class CameraRegion(QWidget if _HAS_PYQT6 else object):
     """Image + toolbar composite for Configuration (editable) and Live (read-only)."""
 
     if _HAS_PYQT6:
-        roi_created = pyqtSignal(object)  # RoiDefinition (geometry only; caller binds+saves)
+        roi_created = pyqtSignal(object)  # RoiDefinition
+        roi_changed = pyqtSignal(object)  # RoiDefinition
+        roi_deleted = pyqtSignal(str)  # roi_id
         roi_selected = pyqtSignal(object)  # roi_id | None
         drawing_cancelled = pyqtSignal()
-        edit_command = pyqtSignal(object)  # EditCommand
 
     def __init__(self, image_widget=None, *, editable: bool = True,
                  parent=None) -> None:
         if not _HAS_PYQT6:
-            self._interaction = RoiInteractionState()
+            self._controller = RoiCanvasController(lambda: None)
             self._context = None
-            self._rois = []
             return
         super().__init__(parent)
         self._editable = editable
-        self._interaction = RoiInteractionState()
         self._context: RoiActiveContext | None = None
-        self._rois: list[RoiDefinition] = []
         self._results: dict[str, object] = {}
         self._overlays_visible = True
-        self._make_geometry: Optional[Callable] = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self._toolbar = RoiToolbar(self)
-        self._toolbar.tool_changed.connect(self._on_tool_changed)
         self._toolbar.delete_requested.connect(self._on_delete_requested)
         self._toolbar.undo_requested.connect(self._on_undo)
         self._toolbar.redo_requested.connect(self._on_redo)
@@ -83,6 +74,13 @@ class CameraRegion(QWidget if _HAS_PYQT6 else object):
                 self._image.zoom_changed.connect(self._toolbar.set_zoom_text)
             except Exception:
                 pass
+        self._controller = RoiCanvasController(
+            self._mapping, toolbar=self._toolbar, editable=editable)
+        self._controller.on_created = self._on_created
+        self._controller.on_changed = self._on_changed
+        self._controller.on_deleted = self._on_deleted
+        self._controller.on_selected = self._on_selected
+        self._controller.on_repaint = self._repaint_overlays
         self._image.installEventFilter(self)
         self.set_editable(editable)
 
@@ -96,37 +94,60 @@ class CameraRegion(QWidget if _HAS_PYQT6 else object):
         return self._toolbar
 
     @property
-    def interaction(self) -> RoiInteractionState:
-        return self._interaction
+    def interaction(self):
+        return self._controller.interaction
+
+    @property
+    def controller(self) -> RoiCanvasController:
+        return self._controller
+
+    @property
+    def editor(self) -> RoiEditor | None:
+        return self._controller.editor
 
     def set_editable(self, editable: bool) -> None:
         self._editable = editable
-        if _HAS_PYQT6 and not editable:
-            self._interaction.active_tool = None
-            self._toolbar.set_context_active(
-                self._context is not None and self._context.state == "active",
-                self._toolbar._context_label.text())
+        if _HAS_PYQT6:
+            self._controller.set_editable(editable)
 
     def set_context(self, context: RoiActiveContext | None,
                     rois: list[RoiDefinition]) -> None:
         """Atomically replace the visible set; clears selection + undo history."""
-        self._interaction.clear_session()
         self._context = context
-        self._rois = [r for r in (rois or []) if r.visible]
         self._results = {}
-        if _HAS_PYQT6:
-            if context is None or context.state != "active":
-                self._toolbar.set_context_active(
-                    False, "No position — select and reach a saved position")
-                self._image.set_roi_overlays([])
-            else:
-                self._toolbar.set_context_active(
-                    True,
-                    f"Camera: {context.camera_id}  PTZ: {context.ptz_id}  "
-                    f"Position: {context.position_id}  Context: Active")
-                self._repaint_overlays()
-            self._toolbar.set_undo_redo(False, False)
+        if not _HAS_PYQT6:
+            return
+        if context is None or context.state != "active":
+            self._controller.set_editor(None)
+            self._toolbar.set_context_active(
+                False, "No position — select and reach a saved position")
+            self._image.set_roi_overlays([])
             self.roi_selected.emit(None)
+            return
+        try:
+            editor = RoiEditor(context, rois)
+        except Exception:
+            self._controller.set_editor(None)
+            self._toolbar.set_context_active(False, "ROI: Activation failed")
+            self._image.set_roi_overlays([])
+            return
+        self._controller.set_editor(editor)
+        if not rois:
+            self._toolbar.set_context_active(
+                True, f"Camera: {context.camera_id}  PTZ: {context.ptz_id}  "
+                f"Position: {context.position_id}  "
+                f"ROI: No ROI configured for this position")
+        else:
+            self._toolbar.set_context_active(
+                True, f"Camera: {context.camera_id}  PTZ: {context.ptz_id}  "
+                f"Position: {context.position_id}  "
+                f"ROI: {len(rois)} object(s)")
+        self._repaint_overlays()
+        self.roi_selected.emit(None)
+
+    def clear_camera(self) -> None:
+        """Camera switch: drop the session so no foreign ROI can display."""
+        self.set_context(None, [])
 
     def update_results(self, results: list, context: RoiActiveContext) -> None:
         """Apply measurements only when they match the published context."""
@@ -147,7 +168,7 @@ class CameraRegion(QWidget if _HAS_PYQT6 else object):
             self._repaint_overlays()
 
     # -- internals --------------------------------------------------------
-    def _mapping(self) -> Optional[ViewportMapping]:
+    def _mapping(self) -> ViewportMapping | None:
         image = getattr(self._image, "_display_image", None)
         temp = getattr(self._image, "_temperature_image", None)
         if image is None:
@@ -177,140 +198,91 @@ class CameraRegion(QWidget if _HAS_PYQT6 else object):
         if not self._overlays_visible or self._context is None:
             self._image.set_roi_overlays([])
             return
-        from thermal_monitor.ui.modes.observer_image import ROIOverlay
-        overlays: list[ROIOverlay] = []
-        for roi in self._rois:
-            g = roi.geometry
-            overlays.append(ROIOverlay(
-                roi_id=roi.roi_id, shape=_legacy_shape(roi.object_type, g),
-                geometry=_legacy_geometry(g),
-                color=overlay_color(roi.object_type,
-                                    selected=(roi.roi_id == self._interaction.selected_id)),
-                selected=(roi.roi_id == self._interaction.selected_id)))
-        self._image.set_roi_overlays(overlays)
+        self._image.set_roi_overlays(self._controller.build_overlays())
 
     if _HAS_PYQT6:
         def eventFilter(self, watched, event) -> bool:  # noqa: N802
             from PyQt6.QtCore import QEvent
             if watched is self._image and self._editable:
-                if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                    mapping = self._mapping()
-                    if mapping is not None and self._interaction.active_tool is not None:
-                        try:
-                            pos = event.position()
-                            col, row = mapping.widget_to_image(float(pos.x()), float(pos.y()))
-                        except Exception:
-                            return super().eventFilter(watched, event)
-                        try:
-                            geometry = self._interaction.click(col, row)
-                        except Exception:
-                            return super().eventFilter(watched, event)
-                        if geometry is not None:
-                            self._finish_drawing(geometry)
-                        return True
-                    if mapping is not None and self._interaction.active_tool is None:
-                        try:
-                            pos = event.position()
-                            col, row = mapping.widget_to_image(float(pos.x()), float(pos.y()))
-                        except Exception:
-                            return super().eventFilter(watched, event)
-                        items = [_ItemProxy(r) for r in self._rois]
-                        selected = self._interaction.hit_test(col, row, items)
-                        self._repaint_overlays()
-                        self.roi_selected.emit(selected)
-                        return True
-                if event.type() == QEvent.Type.MouseButtonDblClick and self._editable:
-                    mapping = self._mapping()
-                    if mapping is not None and self._interaction.active_tool in (
-                            RoiObjectType.POLYLINE, RoiObjectType.POLYGON):
-                        try:
-                            pos = event.position()
-                            col, row = mapping.widget_to_image(float(pos.x()), float(pos.y()))
-                            geometry = self._interaction.click(col, row, finish=True)
-                        except Exception:
-                            return super().eventFilter(watched, event)
-                        if geometry is not None:
-                            self._finish_drawing(geometry)
-                        return True
-                if event.type() == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
-                    if self._interaction.cancel_drawing():
+                etype = event.type()
+                if etype == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                    try:
+                        pos = event.position()
+                        if self._controller.press(float(pos.x()), float(pos.y())):
+                            return True
+                    except Exception:
+                        pass
+                elif etype == QEvent.Type.MouseMove:
+                    try:
+                        pos = event.position()
+                        if self._controller.move(float(pos.x()), float(pos.y())):
+                            return True
+                    except Exception:
+                        pass
+                elif etype == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+                    try:
+                        pos = event.position()
+                        if self._controller.release(float(pos.x()), float(pos.y())):
+                            return True
+                    except Exception:
+                        pass
+                elif etype == QEvent.Type.MouseButtonDblClick:
+                    try:
+                        pos = event.position()
+                        if self._controller.double_click(float(pos.x()), float(pos.y())):
+                            return True
+                    except Exception:
+                        pass
+                elif etype == QEvent.Type.KeyPress and event.key() == Qt.Key.Key_Escape:
+                    if self._controller.escape():
                         self.drawing_cancelled.emit()
                         return True
             return super().eventFilter(watched, event)
 
-    def _finish_drawing(self, geometry) -> None:
-        self._toolbar.select_tool(None)
-        self.edit_command.emit(EditCommand(kind="create", roi_id="",
-                                           after={"geometry": geometry}))
+    def _on_created(self, roi: RoiDefinition) -> None:
+        self._refresh_count_label()
+        self.roi_created.emit(roi)
 
-    def _on_tool_changed(self, tool) -> None:
-        if not self._editable:
+    def _on_changed(self, roi: RoiDefinition) -> None:
+        self.roi_changed.emit(roi)
+
+    def _on_deleted(self, roi_id: str) -> None:
+        self._refresh_count_label()
+        self.roi_deleted.emit(roi_id)
+
+    def _on_selected(self, roi_id) -> None:
+        self._repaint_overlays()
+        self.roi_selected.emit(roi_id)
+
+    def _refresh_count_label(self) -> None:
+        if self._context is None:
             return
-        self._interaction.active_tool = tool
-        self._interaction.in_progress.clear()
+        editor = self._controller.editor
+        count = len(editor.rois) if editor else 0
+        if count == 0:
+            text = (f"Camera: {self._context.camera_id}  "
+                    f"PTZ: {self._context.ptz_id}  "
+                    f"Position: {self._context.position_id}  "
+                    f"ROI: No ROI configured for this position")
+        else:
+            text = (f"Camera: {self._context.camera_id}  "
+                    f"PTZ: {self._context.ptz_id}  "
+                    f"Position: {self._context.position_id}  "
+                    f"ROI: {count} object(s)")
+        self._toolbar.set_context_active(True, text)
 
     def _on_delete_requested(self) -> None:
-        if self._interaction.selected_id:
-            self.edit_command.emit(EditCommand(
-                kind="delete", roi_id=self._interaction.selected_id))
+        self._controller.delete_selected()
 
     def _on_undo(self) -> None:
-        command = self._interaction.pop_undo()
-        if command is not None:
-            self._toolbar.set_undo_redo(self._interaction.can_undo,
-                                        self._interaction.can_redo)
-            self.edit_command.emit(EditCommand(
-                kind=f"undo_{command.kind}", roi_id=command.roi_id,
-                before=command.before, after=command.after))
+        self._controller.undo()
 
     def _on_redo(self) -> None:
-        command = self._interaction.pop_redo()
-        if command is not None:
-            self._toolbar.set_undo_redo(self._interaction.can_undo,
-                                        self._interaction.can_redo)
-            self.edit_command.emit(EditCommand(
-                kind=f"redo_{command.kind}", roi_id=command.roi_id,
-                before=command.before, after=command.after))
+        self._controller.redo()
 
     def _on_overlays_toggled(self, visible: bool) -> None:
         self._overlays_visible = visible
         self._repaint_overlays()
-
-
-class _ItemProxy:
-    """Minimal adapter so hit-testing works on RoiDefinitions."""
-
-    def __init__(self, roi: RoiDefinition) -> None:
-        self.roi_id = roi.roi_id
-        self.geometry = roi.geometry
-
-
-def _legacy_shape(object_type: RoiObjectType, geometry) -> str:
-    mapping = {
-        RoiObjectType.RECTANGLE: "rectangle1",
-        RoiObjectType.ANNOTATION_RECTANGLE: "rectangle1",
-        RoiObjectType.CIRCLE: "circle",
-        RoiObjectType.ELLIPSE: "ellipse",
-        RoiObjectType.ANNOTATION_ELLIPSE: "ellipse",
-        RoiObjectType.POLYGON: "polygon",
-    }
-    return mapping.get(object_type, "rectangle1")
-
-
-def _legacy_geometry(geometry) -> dict:
-    d = geometry.to_dict()
-    # LiveThermalWidget expects HALCON row/col keys (y1/x1...).
-    out: dict = {}
-    for key, value in d.items():
-        out[key] = value
-    rename = {"row1": "y1", "col1": "x1", "row2": "y2", "col2": "x2",
-              "center_row": "center_y", "center_col": "center_x"}
-    for old, new in rename.items():
-        if old in out and new not in out:
-            out[new] = out.pop(old)
-    if "points" in out:
-        out["points"] = [(p[0], p[1]) for p in out["points"]]
-    return out
 
 
 __all__ = ["CameraRegion"]

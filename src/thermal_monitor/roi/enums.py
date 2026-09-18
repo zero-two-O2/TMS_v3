@@ -20,6 +20,7 @@ class RoiObjectType(str, Enum):
     # Spots
     SPOT = "spot"
     HOTTEST_SPOT = "hottest_spot"
+    COLDEST_SPOT = "coldest_spot"
     HOT_COLD_SPOTS = "hot_cold_spots"
     # Lines
     FREE_LINE = "free_line"
@@ -48,6 +49,7 @@ class RoiObjectType(str, Enum):
 CATEGORY_BY_TYPE: dict[RoiObjectType, RoiCategory] = {
     RoiObjectType.SPOT: RoiCategory.ANALYSIS,
     RoiObjectType.HOTTEST_SPOT: RoiCategory.ANALYSIS,
+    RoiObjectType.COLDEST_SPOT: RoiCategory.ANALYSIS,
     RoiObjectType.HOT_COLD_SPOTS: RoiCategory.ANALYSIS,
     RoiObjectType.FREE_LINE: RoiCategory.ANALYSIS,
     RoiObjectType.HORIZONTAL_LINE: RoiCategory.ANALYSIS,
