@@ -412,8 +412,34 @@ class RoiCanvasController:
                 color=overlay_color(
                     roi.object_type,
                     selected=(roi.roi_id == self._interaction.selected_id)),
-                selected=(roi.roi_id == self._interaction.selected_id)))
+                selected=(roi.roi_id == self._interaction.selected_id),
+                name=roi.name or roi.roi_id))
         return overlays
+
+    def select(self, roi_id: str | None, *, emit: bool = True) -> bool:
+        """Programmatic selection (e.g. from the ROI table).
+
+        Validates against the installed editor; unknown IDs clear the
+        selection. Returns True when the selection changed.
+        """
+        current = self._interaction.selected_id
+        if roi_id is not None and self._editor is not None:
+            try:
+                known = self._editor.get(roi_id) is not None
+            except Exception:
+                known = False
+            if not known:
+                roi_id = None
+        changed = (roi_id != current)
+        self._interaction.selected_id = roi_id
+        if emit and self.on_selected is not None:
+            try:
+                self.on_selected(roi_id)
+            except Exception:
+                pass
+        if changed:
+            self._repaint()
+        return changed
 
 
 class _Proxy:

@@ -147,7 +147,6 @@ step — no model changes required.
   never shown or edited in the table.
 
 ## 9. Phase 12 production statistics path (ADR-016/017)
-
 Live/Offline frames use `SimpleProcessingPipeline` →
 `process_rois_with_halcon` → `HalconROIAdapter.process_cached` (not
 the `HalconSnapshotRunner`/`RoiEvaluator` test-only path from §4):
@@ -169,3 +168,23 @@ the `HalconSnapshotRunner`/`RoiEvaluator` test-only path from §4):
    `valid=False` (never 0.0) so alarms cannot false-trigger; the
    pipeline discards results when a retarget lands mid-processing
    (`metadata.stale_discarded`, `frames_dropped` +1).
+
+## 10. Phase 12.4 ROI UI state (ADR-018)
+
+Single authoritative view: the session `RoiEditor`'s `RoiDefinition`
+list for the active camera+position. The ROI table
+(`ROIPanel.set_session_rois`/`clear_session`/`select_roi`) and the
+overlay (`RoiCanvasController.build_overlays`) render the same
+snapshot; selection syncs both ways (canvas `select()` <-> panel row,
+loop-free via emit flags and signal blocking). Hit testing is
+shape-aware (circle/ellipse normalized boundary, polygon
+point-in-polygon) with 6.0 image-px tolerance; ties go to the later
+(topmost) item. All mouse paths share `mapping_for_widget`
+(`roi/coordinate_system.py`); drag/resize states are
+IDLE/HOVER(via mapping)/SELECTED/DRAGGING(move|handle)/CREATING with
+commit-on-release through `RoiEditor.end_drag` and worker-thread
+persistence. Every visible ROI paints its name label (roi_id fallback),
+clamped inside the image; labels are paint-only. The legacy
+`AnalysisConfig` table remains for the no-session state only; its CRUD
+buttons disable while a session is active. Live/Observer window hosts
+no ROI UI by design (out of scope).

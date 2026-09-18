@@ -2800,10 +2800,12 @@ class ConfigurationModeWidget(QWidget):
         self._apply_ir_scaling_to_views(ir_scaling)
 
         # Update panels
-        self._roi_panel.set_camera(camera_id)
         # Phase 10: a camera switch drops the position-bound session so
         # the previous camera's objects can never display or persist here.
+        # Clear first so the session table cannot flash stale rows before
+        # the legacy camera list repopulates below.
         self._clear_roi_session("No position — select and reach a saved position")
+        self._roi_panel.set_camera(camera_id)
         self._alarm_panel.set_camera(camera_id)
         self._stats_panel.clear()
         self._refresh_setup_dialog()
@@ -4042,36 +4044,12 @@ class ConfigurationModeWidget(QWidget):
 
     def _roi_mapping(self):
         """Central widget<->image mapping for the configuration workspace."""
-        from thermal_monitor.roi.coordinate_system import ViewportMapping
+        from thermal_monitor.roi.coordinate_system import mapping_for_widget
 
         image_widget = getattr(self, "_image_widget", None)
         if image_widget is None:
             return None
-        image = getattr(image_widget, "_display_image", None)
-        if image is None:
-            return None
-        try:
-            iw, ih = image.width(), image.height()
-        except Exception:
-            return None
-        temp = getattr(image_widget, "_temperature_image", None)
-        if temp is not None:
-            try:
-                ih, iw = temp.shape[:2]
-            except Exception:
-                pass
-        zoom = getattr(image_widget, "_zoom", None)
-        pan = getattr(image_widget, "_pan_offset", None)
-        try:
-            px = float(pan.x()) if pan is not None else 0.0
-            py = float(pan.y()) if pan is not None else 0.0
-        except Exception:
-            px, py = 0.0, 0.0
-        return ViewportMapping(
-            image_width=int(iw), image_height=int(ih),
-            widget_width=max(1, image_widget.width()),
-            widget_height=max(1, image_widget.height()),
-            zoom=zoom, pan_x=px, pan_y=py)
+        return mapping_for_widget(image_widget)
 
     def _repaint_roi_session(self) -> None:
         try:
@@ -4087,6 +4065,12 @@ class ConfigurationModeWidget(QWidget):
             canvas = getattr(self, "_roi_canvas", None)
             if canvas is not None:
                 canvas.set_editor(None)
+            panel = getattr(self, "_roi_panel", None)
+            if panel is not None and hasattr(panel, "clear_session"):
+                try:
+                    panel.clear_session()
+                except RuntimeError:
+                    pass
             toolbar = getattr(self, "_roi_toolbar", None)
             if toolbar is not None:
                 toolbar.set_context_active(False, label)
@@ -4155,6 +4139,17 @@ class ConfigurationModeWidget(QWidget):
                 except RuntimeError:
                     pass
             self._repaint_roi_session()
+            # Phase 12.4: the table mirrors the same session snapshot the
+            # overlay renders (single authoritative UI view).
+            try:
+                panel = getattr(self, "_roi_panel", None)
+                if panel is not None and hasattr(panel, "set_session_rois"):
+                    panel.set_session_rois(
+                        rois, camera_id=camera_id,
+                        position_id=context.position_id,
+                        context_generation=context.context_generation)
+            except RuntimeError:
+                pass
         except Exception as exc:
             # Never publish a partial context: the previous valid session
             # (if any) stays installed and on screen.
@@ -4221,18 +4216,48 @@ class ConfigurationModeWidget(QWidget):
 
     def _on_roi_canvas_created(self, roi) -> None:
         self._repaint_roi_session()
+        self._refresh_session_table()
         self._persist_roi_async("create", roi)
 
     def _on_roi_canvas_changed(self, roi) -> None:
         self._repaint_roi_session()
+        self._refresh_session_table()
         self._persist_roi_async("update", roi)
 
     def _on_roi_canvas_deleted(self, roi_id: str) -> None:
         self._repaint_roi_session()
+        self._refresh_session_table()
         self._persist_roi_async("delete", roi_id)
 
     def _on_roi_canvas_selected(self, roi_id) -> None:
+        # Overlay -> table sync (panel selection is signal-blocked, no loop).
+        try:
+            panel = getattr(self, "_roi_panel", None)
+            if panel is not None and hasattr(panel, "select_roi"):
+                panel.select_roi(roi_id)
+        except RuntimeError:
+            pass
         self._repaint_roi_session()
+
+    def _refresh_session_table(self) -> None:
+        """Republish the editor's ROI list to the session table."""
+        try:
+            if not getattr(self, "_roi_session_active", False):
+                return
+            canvas = getattr(self, "_roi_canvas", None)
+            editor = getattr(canvas, "editor", None) if canvas is not None else None
+            panel = getattr(self, "_roi_panel", None)
+            if editor is None or panel is None:
+                return
+            if not hasattr(panel, "set_session_rois"):
+                return
+            context = editor.context
+            panel.set_session_rois(
+                list(editor.rois), camera_id=context.camera_id,
+                position_id=context.position_id,
+                context_generation=context.context_generation)
+        except RuntimeError:
+            pass
 
     def _on_roi_canvas_error(self, message: str) -> None:
         try:
@@ -5636,6 +5661,16 @@ class ConfigurationModeWidget(QWidget):
     # ROI/Alarm selection handlers
     def _on_roi_selected(self, roi_id: str) -> None:
         """Handle ROI selection - highlight on image."""
+        if getattr(self, "_roi_session_active", False):
+            # Table -> overlay sync within the active session.
+            try:
+                canvas = getattr(self, "_roi_canvas", None)
+                if canvas is not None and hasattr(canvas, "select"):
+                    canvas.select(roi_id, emit=False)
+            except RuntimeError:
+                pass
+            self._repaint_roi_session()
+            return
         self._image_widget.highlight_roi(roi_id)
         self._update_roi_overlays()
 

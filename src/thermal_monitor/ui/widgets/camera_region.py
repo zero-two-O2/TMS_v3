@@ -169,30 +169,9 @@ class CameraRegion(QWidget if _HAS_PYQT6 else object):
 
     # -- internals --------------------------------------------------------
     def _mapping(self) -> ViewportMapping | None:
-        image = getattr(self._image, "_display_image", None)
-        temp = getattr(self._image, "_temperature_image", None)
-        if image is None:
-            return None
-        try:
-            iw, ih = image.width(), image.height()
-        except Exception:
-            return None
-        if temp is not None:
-            try:
-                ih, iw = temp.shape[:2]
-            except Exception:
-                pass
-        zoom = getattr(self._image, "_zoom", None)
-        pan = getattr(self._image, "_pan_offset", None)
-        try:
-            px = float(pan.x()) if pan is not None else 0.0
-            py = float(pan.y()) if pan is not None else 0.0
-        except Exception:
-            px, py = 0.0, 0.0
-        return ViewportMapping(image_width=int(iw), image_height=int(ih),
-                               widget_width=max(1, self._image.width()),
-                               widget_height=max(1, self._image.height()),
-                               zoom=zoom, pan_x=px, pan_y=py)
+        from thermal_monitor.roi.coordinate_system import mapping_for_widget
+
+        return mapping_for_widget(self._image)
 
     def _repaint_overlays(self) -> None:
         if not self._overlays_visible or self._context is None:

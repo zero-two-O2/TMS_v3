@@ -226,9 +226,46 @@ def _distance_to_item(col: float, row: float, item) -> float | None:
         dx = min(abs(col - g.col1), abs(col - g.col2))
         dy = min(abs(row - g.row1), abs(row - g.row2))
         return math.hypot(dx, dy)
-    if t in ("CircleGeometry", "EllipseGeometry", "CrossLineGeometry"):
+    if t == "CircleGeometry":
+        dist = math.hypot(row - g.center_row, col - g.center_col)
+        if dist <= g.radius:
+            return 0.0
+        return dist - g.radius
+    if t == "EllipseGeometry":
+        # Rotate into the ellipse frame, then normalize by radii.
+        phi = float(getattr(g, "phi", 0.0) or 0.0)
+        dx = col - g.center_col
+        dy = row - g.center_row
+        cos_p, sin_p = math.cos(phi), math.sin(phi)
+        lx = (dx * cos_p + dy * sin_p) / max(g.radius2, 1e-9)
+        ly = (-dx * sin_p + dy * cos_p) / max(g.radius1, 1e-9)
+        norm = math.hypot(lx, ly)
+        if norm <= 1.0:
+            return 0.0
+        return (norm - 1.0) * min(g.radius1, g.radius2)
+    if t == "PolygonGeometry":
+        pts = [(float(r), float(c)) for r, c in g.points]
+        if _point_in_polygon(col, row, pts):
+            return 0.0
+        return min(
+            _point_segment_distance(col, row, c1, r1, c2, r2)
+            for (r1, c1), (r2, c2) in zip(pts, pts[1:] + pts[:1]))
+    if t == "CrossLineGeometry":
         return math.hypot(row - g.center_row, col - g.center_col)
     return math.hypot(row - getattr(g, "center_row", row), col - getattr(g, "center_col", col))
+
+
+def _point_in_polygon(col: float, row: float, pts: list) -> bool:
+    """Ray-casting point-in-polygon (image coords: col=x, row=y)."""
+    inside = False
+    n = len(pts)
+    for i in range(n):
+        r1, c1 = pts[i]
+        r2, c2 = pts[(i + 1) % n]
+        if ((r1 > row) != (r2 > row)) and (
+                col < (c2 - c1) * (row - r1) / (r2 - r1) + c1):
+            inside = not inside
+    return inside
 
 
 def _point_segment_distance(px, py, x1, y1, x2, y2) -> float:

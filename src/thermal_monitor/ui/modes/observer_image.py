@@ -37,6 +37,12 @@ class ROIOverlay:
     color: str = "#FFFF00"  # Default yellow
     selected: bool = False
     alarm_active: bool = False
+    name: str = ""  # Display label; falls back to roi_id when empty.
+
+    @property
+    def label(self) -> str:
+        """Text rendered on the overlay (never empty)."""
+        return self.name if self.name else self.roi_id
 
 
 class LiveThermalWidget(QWidget):
@@ -729,24 +735,51 @@ class LiveThermalWidget(QWidget):
                         qpoints.append(QPoint(int(qx), int(qy)))
                     painter.drawPolygon(QPolygon(qpoints))
 
-            # Draw ROI ID label
-            if overlay.selected or overlay.alarm_active:
-                painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-                painter.setPen(QPen(QColor("#FFFFFF"), 1))
+            # Draw ROI name label for every overlay. The label follows the
+            # ROI's anchor (top edge), clamped inside the painted image so
+            # boundary ROIs stay readable. Selected ROIs use a distinct
+            # style. Labels never participate in hit testing.
+            label = overlay.label
+            painter.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold
+                                  if overlay.selected else QFont.Weight.Normal))
+            painter.setPen(QPen(QColor("#FFFFFF"), 1))
+            if overlay.selected:
+                painter.setBrush(QBrush(QColor("#005500")))
+            elif overlay.alarm_active:
+                painter.setBrush(QBrush(QColor("#550000")))
+            else:
                 painter.setBrush(QBrush(QColor("#000000")))
-                # Find a good position for label (top-left of ROI)
-                if shape == "rectangle1":
-                    label_x = geom.get("x1", 0) * scale_x + img_x + 4
-                    label_y = geom.get("y1", 0) * scale_y + img_y + 16
-                elif shape == "circle":
-                    label_x = geom.get("center_x", img_width/2) * scale_x + img_x - 20
-                    label_y = geom.get("center_y", img_height/2) * scale_y + img_y - geom.get("radius", 50) * min(scale_x, scale_y) - 4
+            if shape == "rectangle1":
+                anchor_x = geom.get("x1", 0) * scale_x + img_x
+                anchor_y = geom.get("y1", 0) * scale_y + img_y
+            elif shape == "rectangle2":
+                anchor_x = geom.get("center_x", img_width / 2) * scale_x + img_x
+                anchor_y = (geom.get("center_y", img_height / 2)
+                            - geom.get("length1", 50) / 2.0) * scale_y + img_y
+            elif shape == "circle":
+                anchor_x = geom.get("center_x", img_width / 2) * scale_x + img_x
+                anchor_y = (geom.get("center_y", img_height / 2)
+                            - geom.get("radius", 50)) * scale_y + img_y
+            elif shape == "ellipse":
+                anchor_x = geom.get("center_x", img_width / 2) * scale_x + img_x
+                anchor_y = (geom.get("center_y", img_height / 2)
+                            - max(geom.get("radius1", 50),
+                                  geom.get("radius2", 30))) * scale_y + img_y
+            elif shape == "polygon":
+                points = geom.get("points", [])
+                if points:
+                    anchor_y = min(p[0] for p in points) * scale_y + img_y
+                    anchor_x = sum(p[1] for p in points) / len(points) * scale_x + img_x
                 else:
-                    label_x = img_x + 4
-                    label_y = img_y + 16
-                painter.drawRect(int(label_x - 2), int(label_y - 14),
-                                 painter.fontMetrics().horizontalAdvance(overlay.roi_id) + 8, 18)
-                painter.drawText(int(label_x + 2), int(label_y), overlay.roi_id)
+                    anchor_x, anchor_y = img_x + 4, img_y + 16
+            else:
+                anchor_x, anchor_y = img_x + 4, img_y + 16
+            text_w = painter.fontMetrics().horizontalAdvance(label) + 8
+            label_x = min(max(anchor_x + 4, img_x + 2),
+                          img_x + img_w - text_w - 2)
+            label_y = min(max(anchor_y + 16, img_y + 16), img_y + img_h - 2)
+            painter.drawRect(int(label_x - 2), int(label_y - 14), int(text_w), 18)
+            painter.drawText(int(label_x + 2), int(label_y), label)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         """Track mouse position for cursor temperature readout (and panning)."""

@@ -73,4 +73,43 @@ class ViewportMapping:
                 and dy <= wy < dy + self.image_height * s)
 
 
-__all__ = ["ViewportMapping"]
+def mapping_for_widget(image_widget) -> ViewportMapping | None:
+    """Build the widget<->image mapping from a live image widget's state.
+
+    Single shared construction (display size, temperature-image size
+    override, widget size, zoom, pan). Used by every ROI mouse path so
+    press/move/release and hit-testing agree with what is painted.
+    Returns None when no image is displayed yet.
+    """
+    image = getattr(image_widget, "_display_image", None)
+    if image is None:
+        return None
+    try:
+        iw, ih = image.width(), image.height()
+    except Exception:
+        return None
+    temp = getattr(image_widget, "_temperature_image", None)
+    if temp is not None:
+        try:
+            ih, iw = temp.shape[:2]
+        except Exception:
+            pass
+    zoom = getattr(image_widget, "_zoom", None)
+    pan = getattr(image_widget, "_pan_offset", None)
+    try:
+        px = float(pan.x()) if pan is not None else 0.0
+        py = float(pan.y()) if pan is not None else 0.0
+    except Exception:
+        px, py = 0.0, 0.0
+    try:
+        widget_width = max(1, image_widget.width())
+        widget_height = max(1, image_widget.height())
+    except Exception:
+        return None
+    return ViewportMapping(
+        image_width=int(iw), image_height=int(ih),
+        widget_width=widget_width, widget_height=widget_height,
+        zoom=zoom, pan_x=px, pan_y=py)
+
+
+__all__ = ["ViewportMapping", "mapping_for_widget"]

@@ -64,6 +64,10 @@ class ROIPanel(QWidget):
         self._selected_camera_id: str | None = None
         self._selected_roi_id: str | None = None
         self._dirty_camera_configs: set[str] = set()
+        # Phase 12.4 session mode: table rows mirror the authoritative
+        # position-bound session snapshot (RoiDefinition list), never the
+        # legacy camera-global AnalysisConfig. None when inactive.
+        self._session_key: tuple[str, str, int] | None = None
 
         self._setup_ui()
 
@@ -229,6 +233,13 @@ class ROIPanel(QWidget):
             item = items[0]
             roi_id = item.data(0, Qt.ItemDataRole.UserRole)
             self._selected_roi_id = roi_id
+            if self._session_key is not None:
+                # Session mode: selection syncs to the canvas overlay;
+                # the legacy AnalysisConfig editor does not apply.
+                self._edit_roi_btn.setEnabled(False)
+                self._delete_roi_btn.setEnabled(False)
+                self.roi_selected.emit(roi_id)
+                return
             self._load_roi_editor(roi_id)
             self._edit_roi_btn.setEnabled(True)
             self._delete_roi_btn.setEnabled(True)
@@ -621,6 +632,10 @@ class ROIPanel(QWidget):
 
     def refresh_roi_list(self) -> None:
         """Refresh ROI list from analysis config."""
+        if self._session_key is not None:
+            # Session mode owns the table; legacy refresh must not
+            # clobber it (stale-source protection for the table itself).
+            return
         self._roi_tree.clear()
         if not self._selected_camera_id:
             return
@@ -656,7 +671,8 @@ class ROIPanel(QWidget):
             self._roi_tree.addTopLevelItem(item)
 
     def update_live_stats(self, analysis) -> None:
-        """Update ROI tree with live temperature statistics."""
+        """Update ROI tree with live temperature statistics.
+        Works for legacy and session rows alike (matched by ROI ID)."""
         unit_symbol = "°C"
         if hasattr(analysis, "unit"):
             unit_map = {TemperatureUnit.CELSIUS: "°C", TemperatureUnit.FAHRENHEIT: "°F", TemperatureUnit.KELVIN: "K"}
@@ -674,6 +690,89 @@ class ROIPanel(QWidget):
     def has_unsaved_changes(self) -> bool:
         return bool(self._dirty_camera_configs)
 
+    # -- Phase 12.4 session mode --------------------------------------
+    @property
+    def session_key(self) -> tuple[str, str, int] | None:
+        """Active (camera_id, position_id, context_generation), if any."""
+        return self._session_key
+
+    def set_session_rois(self, rois, *, camera_id: str, position_id: str,
+                         context_generation: int) -> None:
+        """Populate the table from the authoritative session snapshot.
+
+        Same RoiDefinition list the overlay renders. Replaces all rows
+        atomically; preserves the selection only when the ROI still
+        exists in the new snapshot. GUI thread only.
+        """
+        self._session_key = (camera_id, position_id, int(context_generation))
+        self._selected_camera_id = camera_id
+        self._roi_tree.clear()
+        keep = self._selected_roi_id
+        self._selected_roi_id = None
+        for roi in rois or []:
+            shape = getattr(getattr(roi, "object_type", None), "value", "?")
+            alarm = "Yes" if getattr(roi, "alarm_rule_ref", "") else "No"
+            geometry = getattr(roi, "geometry", None)
+            item = QTreeWidgetItem([
+                roi.roi_id,
+                getattr(roi, "name", "") or roi.roi_id,
+                str(shape),
+                "Yes" if getattr(roi, "enabled", True) else "No",
+                alarm,
+                "—", "—", "—",
+            ])
+            item.setData(0, Qt.ItemDataRole.UserRole, roi.roi_id)
+            item.setData(0, Qt.ItemDataRole.UserRole + 1,
+                         _geometry_summary(geometry))
+            self._roi_tree.addTopLevelItem(item)
+        self._set_session_chrome(True)
+        if keep is not None:
+            self.select_roi(keep)
+
+    def clear_session(self) -> None:
+        """Leave session mode; fall back to the legacy camera list."""
+        self._session_key = None
+        self._selected_roi_id = None
+        self._roi_tree.clear()
+        self._set_session_chrome(False)
+        self.refresh_roi_list()
+
+    def select_roi(self, roi_id: str | None) -> bool:
+        """Programmatic row selection by ROI ID (overlay -> table sync).
+
+        Returns True when the row exists. Never emits roi_selected.
+        """
+        self._roi_tree.blockSignals(True)
+        try:
+            if roi_id is None:
+                self._roi_tree.clearSelection()
+                self._selected_roi_id = None
+                return True
+            for i in range(self._roi_tree.topLevelItemCount()):
+                item = self._roi_tree.topLevelItem(i)
+                if item.data(0, Qt.ItemDataRole.UserRole) == roi_id:
+                    item.setSelected(True)
+                    self._roi_tree.setCurrentItem(item)
+                    self._selected_roi_id = roi_id
+                    return True
+            return False
+        finally:
+            self._roi_tree.blockSignals(False)
+
+    def _set_session_chrome(self, active: bool) -> None:
+        """Session rows are edited on the canvas, not via legacy CRUD."""
+        for btn in (self._add_roi_btn, self._edit_roi_btn,
+                    self._delete_roi_btn):
+            btn.setEnabled(False if active else True)
+            if active:
+                btn.setToolTip(
+                    "Disabled while a position session is active: "
+                    "create, drag, resize and delete on the image canvas.")
+            else:
+                btn.setToolTip("")
+        if active:
+            self._roi_editor.setVisible(False)
+
     def clear_dirty(self, camera_id: str) -> None:
         self._dirty_camera_configs.discard(camera_id)
 
@@ -689,6 +788,29 @@ class ROIPanel(QWidget):
     def _apply_tree_style(self, tree: QTreeWidget) -> None:
         # Trees are styled centrally; nothing per-widget to do.
         return
+
+
+def _geometry_summary(geometry) -> str:
+    """One-line geometry summary for the session table tooltip."""
+    try:
+        if geometry is None:
+            return ""
+        kind = type(geometry).__name__
+        if kind == "RectangleGeometry":
+            return (f"rows {geometry.row1:.1f}..{geometry.row2:.1f}, "
+                    f"cols {geometry.col1:.1f}..{geometry.col2:.1f}")
+        if kind == "CircleGeometry":
+            return (f"center ({geometry.center_row:.1f}, "
+                    f"{geometry.center_col:.1f}) r={geometry.radius:.1f}")
+        if kind == "EllipseGeometry":
+            return (f"center ({geometry.center_row:.1f}, "
+                    f"{geometry.center_col:.1f}) "
+                    f"r1={geometry.radius1:.1f} r2={geometry.radius2:.1f}")
+        if kind == "PolygonGeometry":
+            return f"{len(geometry.points)} vertices"
+        return kind
+    except Exception:
+        return ""
 
 
 __all__ = ["ROIPanel"]
