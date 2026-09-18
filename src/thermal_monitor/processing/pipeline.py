@@ -323,24 +323,45 @@ class SimpleProcessingPipeline(ProcessingPipeline):
                 self._config.ambient_temperature,
             )
 
-        # Process ROIs using HALCON adapter
+        # Process ROIs using the worker-owned cached batched HALCON path.
+        # The frame's context snapshot (taken above) travels with the call
+        # so regions are built, cached, and reused per context; a retarget
+        # racing this frame cannot mix old/new regions mid-frame.
         if rois:
             stats_list = process_rois_with_halcon(
                 rois=rois,
                 temperature_image=temperature_data,
                 adapter=self._halcon_adapter,
+                camera_id=frame.descriptor.camera_id,
+                position_id=position_id,
+                context_generation=context_generation,
             )
 
             for stat in stats_list:
                 roi_results[stat.roi_id] = stat
 
-        # Compute overall statistics
+        # Post-processing generation guard: a position retarget (or ROI
+        # resolver invalidation) may have landed while HALCON was
+        # running. Publishing those stats would mix contexts, and
+        # feeding them to alarms could false-trigger, so discard the
+        # ROI results and flag the frame instead. frames_dropped is the
+        # existing discard diagnostic.
+        with self._position_lock:
+            live_position_id, live_generation = self._active_position
+        stale_discarded = (
+            live_position_id != position_id or live_generation != context_generation
+        )
+
+        # Compute overall statistics (valid measurements only: an
+        # explicitly invalid ROI must not poison frame aggregates).
         overall_min: float | None = None
         overall_max: float | None = None
         overall_sum = 0.0
         overall_count = 0
 
         for stat in roi_results.values():
+            if not stat.valid:
+                continue
             if overall_min is None or stat.min_temp < overall_min:
                 overall_min = stat.min_temp
             if overall_max is None or stat.max_temp > overall_max:
@@ -352,6 +373,20 @@ class SimpleProcessingPipeline(ProcessingPipeline):
         overall_mean = overall_sum / overall_count if overall_count > 0 else None
 
         processing_time_ms = (time.perf_counter() - start_time) * 1000
+
+        if stale_discarded:
+            logger.warning(
+                "Camera %s: discarding ROI results for superseded context "
+                "(position=%s generation=%s)",
+                frame.descriptor.camera_id, position_id, context_generation,
+            )
+            roi_results = {}
+            overall_min = overall_max = overall_mean = None
+            result_context = MappingProxyType({
+                "position_id": position_id,
+                "context_generation": context_generation,
+                "stale_discarded": True,
+            })
 
         result = AnalysisResult(
             camera_id=frame.descriptor.camera_id,
@@ -369,7 +404,7 @@ class SimpleProcessingPipeline(ProcessingPipeline):
         # Update stats
         self._stats = ProcessingStats(
             frames_processed=self._stats.frames_processed + 1,
-            frames_dropped=self._stats.frames_dropped,
+            frames_dropped=self._stats.frames_dropped + (1 if stale_discarded else 0),
             total_processing_time_ms=self._stats.total_processing_time_ms + processing_time_ms,
             average_processing_time_ms=(
                 self._stats.total_processing_time_ms + processing_time_ms

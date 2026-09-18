@@ -372,6 +372,16 @@ class ROIStatistics:
     mean_temp: float
     deviation: float  # standard deviation (proven V2 name)
     unit: TemperatureUnit = TemperatureUnit.CELSIUS
+    # Phase 12.3 additive fields (all defaulted: every existing
+    # keyword construction keeps working; no positional construction
+    # exists in src or tests). NaN temperatures + valid=False mark an
+    # explicitly invalid measurement -- never 0.0.
+    area: float | None = None
+    center_row: float | None = None
+    center_col: float | None = None
+    valid: bool = True
+    error: str = ""
+    method: str = ""
 
     @property
     def range_temp(self) -> float:

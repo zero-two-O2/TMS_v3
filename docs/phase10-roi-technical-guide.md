@@ -145,3 +145,27 @@ step — no model changes required.
   first via Go To when the camera has not reached it. The internal
   `roi_set_ref` is retained for legacy activation compatibility but is
   never shown or edited in the table.
+
+## 9. Phase 12 production statistics path (ADR-016/017)
+
+Live/Offline frames use `SimpleProcessingPipeline` →
+`process_rois_with_halcon` → `HalconROIAdapter.process_cached` (not
+the `HalconSnapshotRunner`/`RoiEvaluator` test-only path from §4):
+
+1. Transient shape groups (`processing/halcon/grouped.py`) align ROI
+   IDs with HALCON tuple order; invalid geometry is rejected before
+   any HALCON call.
+2. A worker-owned `RegionCache` reuses region tuples across frames and
+   rebuilds only dirty shape groups (key: camera, position, context
+   generation, fingerprint).
+3. One `himage_from_numpy_array` per frame (the binding deep-copies;
+   caller memory is never retained or mutated).
+4. Batched `intensity` + `min_max_gray` + `area_center` per shape group
+   (≤16 HALCON calls/frame regardless of ROI count); results map
+   positionally, never via `list.index`.
+5. `ROIStatistics` carries `area`/`center_row`/`center_col` plus
+   `valid`/`error`/`method`. Invalid measurements use NaN +
+
+   `valid=False` (never 0.0) so alarms cannot false-trigger; the
+   pipeline discards results when a retarget lands mid-processing
+   (`metadata.stale_discarded`, `frames_dropped` +1).
