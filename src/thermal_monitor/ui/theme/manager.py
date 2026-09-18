@@ -1029,12 +1029,44 @@ class ThemeManager:
         self.apply(app)
         count = refresh_all_widgets(app)
         try:
+            self._refresh_roi_toolbar_icons(app)
+        except Exception:
+            pass
+        try:
             from thermal_monitor.ui.theme.fonts import refresh_font_metrics_hooks
 
             refresh_font_metrics_hooks(app)
         except Exception:
             pass
         return count
+
+    def _refresh_roi_toolbar_icons(self, app=None) -> int:
+        """Re-resolve ROI toolbar icons for the active theme surface.
+
+        Stylesheet repolish cannot swap QIcon payloads, so toolbars opt
+        in via a duck-typed ``refresh_theme_icons(surface_hex)`` hook.
+        Returns the number of toolbars refreshed.
+        """
+        if app is None:
+            return 0
+        try:
+            surface = self.colors().panel
+        except Exception:
+            return 0
+        refreshed = 0
+        try:
+            widgets = list(app.allWidgets())
+        except RuntimeError:
+            return 0
+        for widget in widgets:
+            refresh = getattr(widget, "refresh_theme_icons", None)
+            if callable(refresh):
+                try:
+                    refresh(surface)
+                    refreshed += 1
+                except RuntimeError:
+                    continue
+        return refreshed
 
     # --- Window configuration ---
 

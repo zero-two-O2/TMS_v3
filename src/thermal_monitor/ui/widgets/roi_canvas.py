@@ -63,6 +63,12 @@ class RoiCanvasController:
         self._drag_mode: str | None = None  # None | "move" | "handle" | "create"
         self._drag_handle: str | None = None
         self._drag_moved = False
+        # Phase 12.5 transient drawing preview (never persisted, never in
+        # the editor/table/pipeline): {"tool", "press", "current", "gen"}.
+        # Vertex tools (polygon/...) additionally rubber-band from
+        # interaction.in_progress via _hover (button-up cursor).
+        self._preview: dict | None = None
+        self._hover: tuple[float, float] | None = None
         # Host callbacks (all optional).
         self.on_created: Callable | None = None
         self.on_changed: Callable | None = None
@@ -96,6 +102,8 @@ class RoiCanvasController:
         self._interaction.clear_session()
         self._press_image = None
         self._drag_mode = None
+        self._preview = None
+        self._hover = None
         self._sync_undo()
         self._repaint()
 
@@ -128,6 +136,7 @@ class RoiCanvasController:
                 return True
             if geometry is not None:
                 self._commit_created(tool, geometry)
+            self._hover = (col, row)
             self._repaint()
             return True
         # Two-point / box tools: start a drag (click-click also works via
@@ -135,14 +144,33 @@ class RoiCanvasController:
         self._press_image = (col, row)
         self._drag_mode = "create"
         self._drag_moved = False
+        self._preview = {"tool": tool, "press": (col, row),
+                         "current": (col, row),
+                         "gen": self._context_generation()}
         if tool not in _DRAG_CREATE_TOOLS:
             self._interaction.click(col, row)
+        self._repaint()
         return True
 
     def move(self, wx: float, wy: float) -> bool:
         if not self._editable or self._editor is None:
             return False
         if self._drag_mode is None:
+            # Hover rubber-band for vertex tools with confirmed points.
+            tool = self._interaction.active_tool
+            if tool in (RoiObjectType.POLYLINE, RoiObjectType.POLYGON,
+                        RoiObjectType.MEASURE_ANGLE) \
+                    and self._interaction.in_progress:
+                mapping = self._mapping_fn()
+                if mapping is None:
+                    return False
+                if not self._preview_gen_ok():
+                    self._clear_preview()
+                    return False
+                col, row = mapping.widget_to_image(wx, wy)
+                self._hover = (col, row)
+                self._repaint()
+                return True
             return False
         mapping = self._mapping_fn()
         if mapping is None:
@@ -177,6 +205,12 @@ class RoiCanvasController:
                     abs(col - self._press_image[0]) > 0.5
                     or abs(row - self._press_image[1]) > 0.5):
                 self._drag_moved = True
+            if self._preview is not None:
+                if not self._preview_gen_ok():
+                    self._clear_preview()
+                else:
+                    self._preview["current"] = (col, row)
+                    self._repaint()
             return True
         return False
 
@@ -217,6 +251,7 @@ class RoiCanvasController:
                 return True
             if geometry is not None:
                 self._commit_created(tool, geometry)
+            self._preview = None
             self._repaint()
             return True
         return False
@@ -238,6 +273,8 @@ class RoiCanvasController:
             return True
         if geometry is not None:
             self._commit_created(tool, geometry)
+        self._preview = None
+        self._hover = None
         self._repaint()
         return True
 
@@ -247,7 +284,12 @@ class RoiCanvasController:
             self._drag_mode = None
             self._repaint()
             return True
-        return self._interaction.cancel_drawing()
+        cleared = self._preview is not None or self._hover is not None
+        self._clear_preview()
+        if self._interaction.cancel_drawing() or cleared:
+            self._repaint()
+            return True
+        return False
 
     # -- commands -------------------------------------------------------------
     def delete_selected(self) -> bool:
@@ -292,6 +334,8 @@ class RoiCanvasController:
         self._interaction.in_progress.clear()
         self._press_image = None
         self._drag_mode = None
+        self._preview = None
+        self._hover = None
 
     def _press_select(self, wx, wy, col, row) -> bool:
         if self._editor is None:
@@ -392,6 +436,71 @@ class RoiCanvasController:
             except Exception:
                 pass
 
+    # -- transient drawing preview (Phase 12.5) --------------------------
+    def _context_generation(self):
+        editor = self._editor
+        context = getattr(editor, "context", None)
+        return getattr(context, "context_generation", None)
+
+    def _preview_gen_ok(self) -> bool:
+        if self._preview is None:
+            return True
+        return self._preview.get("gen") == self._context_generation()
+
+    def _clear_preview(self) -> None:
+        self._preview = None
+        self._hover = None
+
+    def _preview_points(self):
+        """Image-coordinate points defining the live preview, if any."""
+        if self._editor is None:
+            return None
+        if not self._preview_gen_ok():
+            self._clear_preview()
+            return None
+        tool = self._interaction.active_tool
+        if tool in (RoiObjectType.POLYLINE, RoiObjectType.POLYGON,
+                    RoiObjectType.MEASURE_ANGLE):
+            confirmed = list(self._interaction.in_progress)
+            if not confirmed or self._hover is None:
+                return None
+            return tool, confirmed + [self._hover]
+        if self._preview is not None and self._drag_mode == "create":
+            tool = self._preview["tool"]
+            press = self._preview["press"]
+            current = self._preview["current"]
+            return tool, [press, current]
+        return None
+
+    def _preview_overlays(self):  # noqa: ANN201
+        """Transient preview overlays (never persisted, never tabulated)."""
+        resolved = self._preview_points()
+        if resolved is None:
+            return []
+        tool, points = resolved
+        try:
+            geometry = self._interaction.preview_geometry(tool, points)
+        except RoiValidationError:
+            return []
+        try:
+            from thermal_monitor.ui.modes.observer_image import ROIOverlay
+        except ImportError:
+            return []
+        if geometry is None:
+            # Not enough points for a shape yet: rubber-band edge.
+            if len(points) < 2:
+                return []
+            return [ROIOverlay(roi_id="", shape="polyline",
+                               geometry={"points": [
+                                   (r, c) for c, r in points]},
+                               color="#00E5FF", preview=True)]
+        overlays = []
+        for shape, geom_dict in _preview_shape_geometry(tool, geometry):
+            overlays.append(ROIOverlay(
+                roi_id="", shape=shape, geometry=geom_dict,
+                color="#00E5FF", preview=True))
+        return overlays
+
     # -- overlay construction (shared by all hosts) -------------------------------
     def build_overlays(self):  # noqa: ANN201
         """ROIOverlay list for the current editor state (paint-ready)."""
@@ -414,6 +523,7 @@ class RoiCanvasController:
                     selected=(roi.roi_id == self._interaction.selected_id)),
                 selected=(roi.roi_id == self._interaction.selected_id),
                 name=roi.name or roi.roi_id))
+        overlays.extend(self._preview_overlays())
         return overlays
 
     def select(self, roi_id: str | None, *, emit: bool = True) -> bool:
@@ -446,6 +556,59 @@ class _Proxy:
     def __init__(self, roi) -> None:
         self.roi_id = roi.roi_id
         self.geometry = roi.geometry
+
+
+def _preview_shape_geometry(tool, geometry) -> list:
+    """Map preview geometry to painter-ready (shape, dict) overlays."""
+    line_tools = {
+        RoiObjectType.FREE_LINE, RoiObjectType.HORIZONTAL_LINE,
+        RoiObjectType.VERTICAL_LINE, RoiObjectType.RULER,
+        RoiObjectType.HORIZONTAL_RULER, RoiObjectType.VERTICAL_RULER,
+        RoiObjectType.MEASURE_LINE, RoiObjectType.ARROW,
+        RoiObjectType.POLYLINE,
+    }
+    if tool in (RoiObjectType.RECTANGLE, RoiObjectType.ANNOTATION_RECTANGLE):
+        return [("rectangle1", _legacy_geometry(geometry))]
+    if tool in (RoiObjectType.ELLIPSE, RoiObjectType.ANNOTATION_ELLIPSE):
+        return [("ellipse", _legacy_geometry(geometry))]
+    if tool == RoiObjectType.CIRCLE:
+        return [("circle", _legacy_geometry(geometry))]
+    if tool == RoiObjectType.POLYGON:
+        return [("polygon", _legacy_geometry(geometry))]
+    if tool in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.HOT_COLD_SPOTS,
+                RoiObjectType.COLDEST_SPOT):
+        return [("rectangle1", {"y1": geometry.row1, "x1": geometry.col1,
+                                "y2": geometry.row2, "x2": geometry.col2})]
+    if tool in line_tools:
+        g = geometry
+        if hasattr(g, "points"):  # polyline
+            pts = [(float(r), float(c)) for r, c in g.points]
+        else:
+            pts = [(float(g.row1), float(g.col1)),
+                   (float(g.row2), float(g.col2))]
+        return [("polyline", {"points": pts})]
+    if tool == RoiObjectType.MEASURE_ANGLE:
+        g = geometry
+        return [("polyline", {"points": [
+            (float(g.end1_row), float(g.end1_col)),
+            (float(g.center_row), float(g.center_col)),
+            (float(g.end2_row), float(g.end2_col))]})]
+    if tool == RoiObjectType.CROSS_LINE:
+        g = geometry
+        return [
+            ("polyline", {"points": [
+                (float(g.center_row - g.half_length_row),
+                 float(g.center_col)),
+                (float(g.center_row + g.half_length_row),
+                 float(g.center_col))]}),
+            ("polyline", {"points": [
+                (float(g.center_row),
+                 float(g.center_col - g.half_length_col)),
+                (float(g.center_row),
+                 float(g.center_col + g.half_length_col))]}),
+        ]
+    # SPOT/NOTE commit on click: no drag preview exists for them.
+    return []
 
 
 def _legacy_shape(object_type: RoiObjectType, geometry) -> str:

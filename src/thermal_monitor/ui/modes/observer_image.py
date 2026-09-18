@@ -38,6 +38,7 @@ class ROIOverlay:
     selected: bool = False
     alarm_active: bool = False
     name: str = ""  # Display label; falls back to roi_id when empty.
+    preview: bool = False  # Transient drawing preview: dashed, no label.
 
     @property
     def label(self) -> str:
@@ -666,7 +667,9 @@ class LiveThermalWidget(QWidget):
 
         for overlay in self._roi_overlays:
             # Determine color
-            if overlay.alarm_active:
+            if overlay.preview:
+                color = QColor("#00E5FF")  # Cyan for transient preview
+            elif overlay.alarm_active:
                 color = QColor("#FF0000")  # Red for alarm
             elif overlay.selected:
                 color = QColor("#00FF00")  # Green for selected
@@ -675,6 +678,10 @@ class LiveThermalWidget(QWidget):
 
             pen_width = 3 if overlay.selected or overlay.alarm_active else 2
             pen = QPen(color, pen_width)
+            if overlay.preview:
+                # Dashed preview: visually distinct from committed ROIs,
+                # stable width at any zoom (painted in widget pixels).
+                pen.setStyle(Qt.PenStyle.DashLine)
             painter.setPen(pen)
             painter.setBrush(Qt.BrushStyle.NoBrush)
 
@@ -734,6 +741,24 @@ class LiveThermalWidget(QWidget):
                         qy = py * scale_y + img_y
                         qpoints.append(QPoint(int(qx), int(qy)))
                     painter.drawPolygon(QPolygon(qpoints))
+
+            elif shape == "polyline":
+                # Open path: line tools, angle segments, polygon rubber
+                # band, cross arms. Needs >= 2 points; never closed.
+                points = geom.get("points", [])
+                if len(points) >= 2:
+                    from PyQt6.QtGui import QPolygon
+                    from PyQt6.QtCore import QPoint
+                    qpoints = []
+                    for py, px in points:
+                        qx = px * scale_x + img_x
+                        qy = py * scale_y + img_y
+                        qpoints.append(QPoint(int(qx), int(qy)))
+                    painter.drawPolyline(QPolygon(qpoints))
+
+            # Name labels for committed ROIs only; previews stay clean.
+            if overlay.preview:
+                continue
 
             # Draw ROI name label for every overlay. The label follows the
             # ROI's anchor (top edge), clamped inside the painted image so

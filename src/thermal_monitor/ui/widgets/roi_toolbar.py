@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Optional
 
 try:
-    from PyQt6.QtCore import pyqtSignal
+    from PyQt6.QtCore import QSize, pyqtSignal
     from PyQt6.QtWidgets import (
         QHBoxLayout, QLabel, QMenu, QToolButton, QWidget,
     )
@@ -26,7 +26,63 @@ except ImportError:  # headless/test import
     QWidget = object  # type: ignore
 
 from thermal_monitor.roi.enums import RoiObjectType
-from thermal_monitor.ui.widgets.roi_icons import icon_for
+from thermal_monitor.ui.widgets.roi_icons import dropdown_icon_for, icon_for
+
+#: Uniform icon/button geometry for the industrial toolbar. SVG assets
+#: render crisply at any size.
+TOOL_ICON_SIZE = 35
+TOOL_BUTTON_SIZE = 35
+#: Dropdown buttons reserve a dedicated arrow zone beside the icon so
+#: the style-drawn menu indicator never overlaps the artwork. Height
+#: and spacing are unchanged; only menu buttons grow horizontally.
+MENU_BUTTON_WIDTH = 50
+MENU_ARROW_ZONE = 10
+
+
+def ink_for_surface(surface_hex: str) -> str:
+    """Icon ink for a toolbar surface color (luminance rule).
+
+    Dark surfaces (all dark themes) take light ink; light surfaces take
+    dark ink. Unknown input falls back to light ink (dark default theme).
+    """
+    text = str(surface_hex or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(c * 2 for c in text)
+    try:
+        red, green, blue = (int(text[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    except (ValueError, IndexError):
+        return "light"
+
+    def linear(value: float) -> float:
+        return value / 12.92 if value <= 0.03928 else ((value + 0.055) / 1.055) ** 2.4
+
+    luminance = (0.2126 * linear(red) + 0.7152 * linear(green)
+                 + 0.0722 * linear(blue))
+    return "dark" if luminance > 0.4 else "light"
+
+
+def default_toolbar_ink() -> str:
+    """Ink matching the live application stylesheet, if any.
+
+    Reads the QWidget background-color from the QApplication
+    stylesheet (written by ThemeManager.apply). Falls back to light
+    ink (dark default theme) when no stylesheet is installed, e.g. in
+    headless unit tests.
+    """
+    import re
+
+    try:
+        from PyQt6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        sheet = app.styleSheet() if app is not None else ""
+    except Exception:
+        return "light"
+    match = re.search(
+        r"QWidget\s*\{[^}]*background-color:\s*(#[0-9A-Fa-f]{3,6})", sheet)
+    if not match:
+        return "light"
+    return ink_for_surface(match.group(1))
 
 # Group -> [(menu label, object type or None, icon key, profile flag)].
 # None object type = Select (no drawing). "profile" entries arm a free
@@ -122,16 +178,22 @@ class RoiToolbar(QWidget if _HAS_PYQT6 else object):
         delete_requested = pyqtSignal()
         overlays_toggled = pyqtSignal(bool)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, *, ink: str = "auto") -> None:
+        resolved = (default_toolbar_ink() if ink == "auto" else ink)
         if not _HAS_PYQT6:
             self._active_tool = None
             self._profile_armed = False
             self._enabled = False
+            self._ink = resolved
             return
         super().__init__(parent)
+        # "auto" follows the live application stylesheet; explicit
+        # "light"/"dark" pins the ink for fixed surfaces.
+        self._ink = resolved if resolved in ("light", "dark") else "light"
         self._active_tool: RoiObjectType | None = None
         self._profile_armed = False
         self._group_buttons: dict[str, QToolButton] = {}
+        self._menu_actions: dict[str, list] = {}
         self._last_entry: dict[str, tuple] = {}
         self._build()
 
@@ -157,7 +219,10 @@ class RoiToolbar(QWidget if _HAS_PYQT6 else object):
             "Delete", "delete", self.delete_requested.emit)
         layout.addWidget(self._delete_btn)
         self._overlay_btn = QToolButton(self)
-        self._overlay_btn.setIcon(icon_for("hide"))
+        self._overlay_btn.setIcon(icon_for("hide", ink=self._ink))
+        self._overlay_btn.setIconSize(QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+        self._overlay_btn.setFixedSize(
+            QSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE))
         self._overlay_btn.setToolTip(TOOLTIPS["Hide"])
         self._overlay_btn.setAccessibleName("Hide overlays")
         self._overlay_btn.setCheckable(True)
@@ -174,7 +239,9 @@ class RoiToolbar(QWidget if _HAS_PYQT6 else object):
 
     def _action_button(self, name: str, icon_key: str, slot) -> "QToolButton":
         button = QToolButton(self)
-        button.setIcon(icon_for(icon_key))
+        button.setIcon(icon_for(icon_key, ink=self._ink))
+        button.setIconSize(QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+        button.setFixedSize(QSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE))
         button.setToolTip(TOOLTIPS[name])
         button.setAccessibleName(name)
         button.clicked.connect(slot)
@@ -184,24 +251,40 @@ class RoiToolbar(QWidget if _HAS_PYQT6 else object):
         label, object_type, icon_key, _ = TOOL_GROUPS[group][0]
         button = QToolButton(self)
         button.setCheckable(True)
-        button.setIcon(icon_for(icon_key))
+        button.setIconSize(QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
         button.setToolTip(group if group != "Select" else TOOLTIPS["Select"])
         button.setAccessibleName(group)
         if group == "Select":
+            button.setIcon(icon_for(icon_key, ink=self._ink))
+            button.setIconSize(QSize(TOOL_ICON_SIZE, TOOL_ICON_SIZE))
+            button.setFixedSize(QSize(TOOL_BUTTON_SIZE, TOOL_BUTTON_SIZE))
             button.clicked.connect(lambda: self.set_active_tool(None))
             return button
         menu = QMenu(button)
+        entries = []
         for entry_label, entry_type, entry_icon, profile in TOOL_GROUPS[group]:
-            action = menu.addAction(icon_for(entry_icon), entry_label)
+            action = menu.addAction(
+                icon_for(entry_icon, ink=self._ink), entry_label)
             action.setToolTip(TOOLTIPS.get(entry_label, ""))
             # NOTE: QAction carries its accessible name via its text in Qt6
             # (no setAccessibleName API); the toolbar button itself has one.
             action.triggered.connect(
                 lambda _c, g=group, t=entry_type, p=profile:
                 self._choose(g, t, profile))
+            entries.append((action, entry_icon))
+        self._menu_actions[group] = entries
         button.setMenu(menu)
         from PyQt6.QtWidgets import QToolButton as _QTB
         button.setPopupMode(_QTB.ToolButtonPopupMode.MenuButtonPopup)
+        # Dedicated arrow zone composed into the pixmap itself (Qt
+        # centers the icon in the full button rect, verified
+        # empirically): 40px artwork left-aligned, transparent strip on
+        # the right where the style draws the indicator. Width grows;
+        # height and spacing are unchanged.
+        button.setIcon(dropdown_icon_for(
+            icon_key, ink=self._ink, arrow_zone=MENU_ARROW_ZONE))
+        button.setIconSize(QSize(MENU_BUTTON_WIDTH, TOOL_BUTTON_SIZE))
+        button.setFixedSize(QSize(MENU_BUTTON_WIDTH, TOOL_BUTTON_SIZE))
         button.clicked.connect(lambda: self._rearm(group))
         return button
 
@@ -213,7 +296,8 @@ class RoiToolbar(QWidget if _HAS_PYQT6 else object):
                 self._last_entry[group] = entry
                 break
         self._group_buttons[group].setIcon(
-            icon_for(self._last_entry[group][2]))
+            dropdown_icon_for(self._last_entry[group][2], ink=self._ink,
+                              arrow_zone=MENU_ARROW_ZONE))
         self.set_active_tool(tool, profile=profile)
 
     def _rearm(self, group: str) -> None:
@@ -270,5 +354,42 @@ class RoiToolbar(QWidget if _HAS_PYQT6 else object):
             self._undo_btn.setEnabled(can_undo and active)
             self._redo_btn.setEnabled(can_redo and active)
 
+    # -- theme ------------------------------------------------------------
+    @property
+    def ink(self) -> str:
+        """Current icon ink ('light' for dark surfaces, else 'dark')."""
+        return getattr(self, "_ink", "light")
 
-__all__ = ["RoiToolbar", "TOOL_GROUPS", "TOOLTIPS"]
+    def refresh_theme_icons(self, surface_hex: str) -> str:
+        """Re-resolve every icon for a toolbar surface color.
+
+        Called by the theme switch funnel (and tests). Returns the ink
+        in use. Safe while a popup menu is open: only QIcon payloads
+        are replaced, no widget is recreated.
+        """
+        self._ink = ink_for_surface(surface_hex)
+        if not _HAS_PYQT6:
+            return self._ink
+        for name, icon_key in (("_undo_btn", "undo"), ("_redo_btn", "redo"),
+                               ("_delete_btn", "delete"),
+                               ("_overlay_btn", "hide")):
+            getattr(self, name).setIcon(icon_for(icon_key, ink=self._ink))
+        for group, button in self._group_buttons.items():
+            entry = self._last_entry.get(group)
+            if entry is not None:
+                if group == "Select":
+                    button.setIcon(icon_for(entry[2], ink=self._ink))
+                else:
+                    button.setIcon(dropdown_icon_for(
+                        entry[2], ink=self._ink, arrow_zone=MENU_ARROW_ZONE))
+            for action, icon_key in self._menu_actions.get(group, []):
+                try:
+                    action.setIcon(icon_for(icon_key, ink=self._ink))
+                except RuntimeError:
+                    pass
+        return self._ink
+
+
+__all__ = ["RoiToolbar", "TOOL_GROUPS", "TOOLTIPS",
+           "TOOL_ICON_SIZE", "TOOL_BUTTON_SIZE",
+           "MENU_BUTTON_WIDTH", "MENU_ARROW_ZONE", "ink_for_surface"]

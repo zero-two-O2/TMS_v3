@@ -115,7 +115,8 @@ class RoiInteractionState:
                 self.in_progress.clear()
                 return self._finish_multi(tool, pts)
             return None
-        if tool in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.HOT_COLD_SPOTS,
+        if tool in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.COLDEST_SPOT,
+                    RoiObjectType.HOT_COLD_SPOTS,
                     RoiObjectType.RECTANGLE, RoiObjectType.ANNOTATION_RECTANGLE):
             self.in_progress.append((col, row))
             if len(self.in_progress) >= 2:
@@ -174,7 +175,7 @@ class RoiInteractionState:
         (c1, r1), (c2, r2) = pts
         r_lo, r_hi = (r1, r2) if r1 <= r2 else (r2, r1)
         c_lo, c_hi = (c1, c2) if c1 <= c2 else (c2, c1)
-        if tool in (RoiObjectType.HOTTEST_SPOT,):
+        if tool in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.COLDEST_SPOT):
             return HottestSpotGeometry(row1=r_lo, col1=c_lo, row2=r_hi, col2=c_hi)
         if tool == RoiObjectType.HOT_COLD_SPOTS:
             return HotColdSpotsGeometry(row1=r_lo, col1=c_lo, row2=r_hi, col2=c_hi)
@@ -192,6 +193,57 @@ class RoiInteractionState:
         return EllipseGeometry(center_row=r1, center_col=c1,
                                radius1=max(1.0, abs(r2 - r1)),
                                radius2=max(1.0, abs(c2 - c1)))
+
+    # -- transient preview ------------------------------------------------
+    def preview_geometry(self, tool, points):
+        """Pure preview construction from image-coordinate points.
+
+        Same finishers as click(), but stateless: never touches
+        ``in_progress``. Returns a geometry or None when the points do
+        not define one yet. May raise RoiValidationError for degenerate
+        input (callers hide the preview until the input is valid).
+        ``points`` are (col, row) tuples.
+        """
+        if tool is None or not points:
+            return None
+        if tool in (RoiObjectType.SPOT, RoiObjectType.NOTE):
+            return self._finish_single(tool, *points[0])
+        if tool in (RoiObjectType.FREE_LINE, RoiObjectType.HORIZONTAL_LINE,
+                    RoiObjectType.VERTICAL_LINE, RoiObjectType.RULER,
+                    RoiObjectType.HORIZONTAL_RULER, RoiObjectType.VERTICAL_RULER,
+                    RoiObjectType.MEASURE_LINE, RoiObjectType.ARROW):
+            if len(points) < 2:
+                return None
+            return self._finish_two_point(tool, points[:2])
+        if tool in (RoiObjectType.POLYLINE, RoiObjectType.POLYGON):
+            if len(points) < 2:
+                return None
+            if tool == RoiObjectType.POLYLINE:
+                return self._finish_multi(tool, points)
+            if len(points) < 3:
+                # Rubber-band edge only; completion needs 3+ vertices.
+                return None
+            return self._finish_multi(tool, points)
+        if tool in (RoiObjectType.HOTTEST_SPOT, RoiObjectType.COLDEST_SPOT,
+                    RoiObjectType.HOT_COLD_SPOTS,
+                    RoiObjectType.RECTANGLE, RoiObjectType.ANNOTATION_RECTANGLE):
+            if len(points) < 2:
+                return None
+            return self._finish_box(tool, points[:2])
+        if tool in (RoiObjectType.ELLIPSE, RoiObjectType.CIRCLE,
+                    RoiObjectType.ANNOTATION_ELLIPSE, RoiObjectType.CROSS_LINE):
+            if len(points) < 2:
+                return None
+            return self._finish_center_span(tool, points[:2])
+        if tool == RoiObjectType.MEASURE_ANGLE:
+            if len(points) < 3:
+                return None
+            from thermal_monitor.roi.geometry import AngleGeometry
+            pts = points[:3]
+            return AngleGeometry(center_row=pts[1][1], center_col=pts[1][0],
+                                 end1_row=pts[0][1], end1_col=pts[0][0],
+                                 end2_row=pts[2][1], end2_col=pts[2][0])
+        return None
 
     # -- selection ------------------------------------------------------
     def hit_test(self, col: float, row: float, items: list) -> str | None:

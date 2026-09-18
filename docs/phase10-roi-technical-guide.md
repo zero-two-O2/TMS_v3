@@ -188,3 +188,31 @@ clamped inside the image; labels are paint-only. The legacy
 `AnalysisConfig` table remains for the no-session state only; its CRUD
 buttons disable while a session is active. Live/Observer window hosts
 no ROI UI by design (out of scope).
+
+## 11. Phase 12.5 toolbar and drawing preview (ADR-019)
+
+Toolbar (`ui/widgets/roi_toolbar.py`): one action registry
+(`TOOL_GROUPS` + tooltips), original 24x24 SVG assets
+(`ui/resources/icons/`), QtSvg rendering at uniform 20px on 28px
+buttons, QPainter fallback only when an asset is missing. Offered tools
+match implemented creation paths; Coldest Spot creation was repaired
+(box branch); no rotated-rectangle drawing tool exists (no faked
+rotation).
+
+Preview lifecycle: press stores the start point, moves update transient
+press/current (drag tools) or the hover cursor (polygon/polyline/angle
+rubber band), `build_overlays` appends dashed `preview=True` overlays
+through the existing painter (new open-`polyline` branch, no labels).
+Commit on release via the unchanged click/end-drag path; Escape, tool
+switch, and camera/position change discard the transient state.
+Preview geometry and commit geometry share the same finishers, so they
+cannot diverge. No persistence, table, pipeline, alarm, or HALCON
+involvement during drawing; repaint via Qt `update` only.
+
+Phase 12.5.3: dropdown buttons are 52px wide (40px art + composed
+12px arrow zone; height/spacing unchanged) so the style indicator
+never covers artwork. Icons are theme-aware (`light`/`dark` ink,
+checked-state On pixmaps for the blue selected background, Qt-auto
+disabled) and refresh on every theme switch through
+`ThemeManager.apply_and_refresh` (duck-typed hook, plus stylesheet
+parsed default for late-created toolbars).
