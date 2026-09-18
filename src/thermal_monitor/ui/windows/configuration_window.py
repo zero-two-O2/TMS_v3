@@ -905,6 +905,16 @@ class ConfigurationModeWidget(QWidget):
         ir_vl_splitter.setStretchFactor(1, 2)
         center_layout.addWidget(ir_vl_splitter, 1)
         self._ir_vl_splitter = ir_vl_splitter
+        # Phase 10: ROI/analysis toolbar INSIDE the Camera Region (above
+        # the image, not the application top bar). Rendering, pan/zoom,
+        # IR/VL layout, and the latest-frame-wins path are untouched.
+        from thermal_monitor.ui.widgets.roi_toolbar import RoiToolbar
+
+        self._roi_toolbar = RoiToolbar()
+        self._roi_toolbar.setObjectName("cfg_roi_toolbar")
+        self._roi_toolbar.tool_changed.connect(self._on_roi_tool_changed)
+        self._roi_toolbar.delete_requested.connect(self._on_roi_toolbar_delete)
+        center_layout.insertWidget(0, self._roi_toolbar)
         # Clean center: camera feed only. Feed mode lives in Camera
         # Control and zoom commands live in the View menu — no workspace
         # toolbar above the image.
@@ -3792,6 +3802,31 @@ class ConfigurationModeWidget(QWidget):
         try:
             if self._ptz_panel is not None:
                 self._ptz_panel.set_active_position(name)
+        except RuntimeError:
+            pass
+        # Phase 10: the toolbar shows the reached position context; stale
+        # overlays/results from the previous position were already dropped
+        # by the retarget publish, so only refresh the label here.
+        try:
+            toolbar = getattr(self, "_roi_toolbar", None)
+            if toolbar is not None and camera_id == self._selected_camera_id:
+                toolbar.set_context_active(True, f"Camera: {camera_id}  Position: {name}  Context: Active")
+        except RuntimeError:
+            pass
+
+    def _on_roi_tool_changed(self, tool) -> None:
+        """Phase 10: toolbar tool selection (drawing is interaction-driven)."""
+        try:
+            self._status_label.setText(
+                f"ROI tool: {tool.value if tool is not None else 'select'}")
+        except RuntimeError:
+            pass
+
+    def _on_roi_toolbar_delete(self) -> None:
+        """Phase 10: toolbar delete forwards to the ROI panel selection."""
+        try:
+            if hasattr(self, "_roi_panel") and self._roi_panel is not None:
+                self._roi_panel._on_delete_roi()
         except RuntimeError:
             pass
 

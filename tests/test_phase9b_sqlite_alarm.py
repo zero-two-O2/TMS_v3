@@ -76,10 +76,11 @@ class TestSqliteDatabase:
     def test_init_and_versioned_migrations(self, tmp_path):
         db = make_db(tmp_path)
         assert db.is_connected
-        assert db.applied_versions == [1, 2, 3]
+        assert db.applied_versions == [1, 2, 3, 4]
         tables = {r[0] for r in db.fetch_all(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        assert {"alarm_events", "ptz_positions", "schema_version"} <= tables
+        assert {"alarm_events", "ptz_positions", "roi_definitions",
+                "schema_version"} <= tables
 
     def test_migrations_idempotent_no_fresh_db_per_launch(self, tmp_path):
         db = make_db(tmp_path)
