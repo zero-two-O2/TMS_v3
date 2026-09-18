@@ -28,21 +28,21 @@ class SimulatorConfig:
     default_pan: float = 0.0
     default_tilt: float = 0.0
     # Accepted command envelope (degrees). SIMULATOR DEFAULT.
-    min_pan: float = -170.0
-    max_pan: float = 170.0
-    min_tilt: float = -90.0
+    min_pan: float = -360.0
+    max_pan: float = 360.0
+    min_tilt: float = -40.0
     max_tilt: float = 90.0
     # Velocity envelope (deg/s). SIMULATOR DEFAULT.
     default_velocity: float = 10.0
     min_velocity: float = 0.5
-    max_velocity: float = 60.0
+    max_velocity: float = 100.0
     # Position-reached tolerance (degrees, per axis). SIMULATOR DEFAULT.
     tolerance_pan: float = 0.1
     tolerance_tilt: float = 0.1
     # Simulation tick rate (Hz). SIMULATOR DEFAULT, not a hardware rate.
     update_hz: float = 20.0
     # Simulated calibration duration (s). SIMULATOR DEFAULT.
-    calibration_duration_s: float = 2.0
+    calibration_duration_s: float = 60.0
     # Position applied when simulated calibration completes.
     # SIMULATOR BEHAVIOUR ONLY -- the real sequence is unknown.
     calibration_home_pan: float = 0.0

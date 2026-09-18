@@ -38,6 +38,18 @@ def _to_float(value: object) -> float | None:
     return float(value)
 
 
+def _is_sqlite_backend(database: object) -> bool:
+    """True when ``database`` is the local SQLite backend (no import cycle).
+
+    Detected structurally: only ``SqliteDatabase`` manages its schema
+    through ``applied_versions``/``run_migrations``. The SQL Server
+    ``Database`` never takes this branch, so its behavior is unchanged.
+    """
+    return hasattr(database, "applied_versions") and hasattr(
+        database, "run_migrations"
+    )
+
+
 class PtzPositionRepository(BaseRepository[PtzPosition]):
     """Repository for persistent PTZ positions.
 
@@ -86,6 +98,35 @@ class PtzPositionRepository(BaseRepository[PtzPosition]):
             entity.roi_set_ref,
             1 if entity.enabled else 0,
         )
+
+    def insert(self, entity: PtzPosition) -> RepositoryResult[PtzPosition]:
+        """Insert a position, tolerating the SQLite backend.
+
+        ``BaseRepository.insert`` probes ``SELECT SCOPE_IDENTITY()``
+        (T-SQL) after the INSERT; that function does not exist in
+        SQLite, so every SQLite insert falsely reported failure even
+        though the row was written (same trap documented in
+        ``sqlite_alarm.SqliteAlarmEventRepository``). On SQLite issue
+        the same explicit-column INSERT without the probe; the SQL
+        Server path is unchanged.
+        """
+        if _is_sqlite_backend(self._db):
+            columns = self._get_columns()
+            placeholders = ",".join(["?"] * len(columns))
+            sql = (
+                f"INSERT INTO {self._table_name} "
+                f"({','.join(columns)}) VALUES ({placeholders})"
+            )
+            try:
+                with self._db.transaction() as cursor:
+                    cursor.execute(sql, self._to_params(entity))
+                    rows = cursor.rowcount
+                return RepositoryResult(
+                    success=True, data=entity, rows_affected=rows
+                )
+            except Exception as exc:
+                return RepositoryResult(success=False, error=str(exc))
+        return super().insert(entity)
 
     def create_position(self, position: PtzPosition) -> RepositoryResult[PtzPosition]:
         """Insert a validated position. Fails on duplicate position_id."""

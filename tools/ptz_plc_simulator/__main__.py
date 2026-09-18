@@ -42,11 +42,23 @@ async def _amain(args: argparse.Namespace) -> int:
     return 0
 
 
+def _quiet_asyncua_poll_logging() -> None:
+    """Drop asyncua per-Read INFO spam (Phase 9D).
+
+    asyncua logs EVERY OPC UA Read at INFO
+    ("Read request (User(role=...))" ~7/s per client). That is normal
+    poll traffic, not an error signal — quiet exactly that logger to
+    WARNING so real errors and simulator lifecycle stay visible.
+    """
+    logging.getLogger("asyncua.server.uaprocessor").setLevel(logging.WARNING)
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.INFO,
         format="[%(asctime)s] [%(levelname)s] %(message)s",
     )
+    _quiet_asyncua_poll_logging()
     args = build_parser().parse_args(argv)
     try:
         return asyncio.run(_amain(args))

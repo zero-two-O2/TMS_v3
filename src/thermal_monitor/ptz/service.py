@@ -396,12 +396,19 @@ class PtzService:
             entry = self._cached.get(binding.ptz_id)
         return entry[1] if entry is not None else None
 
+    #: Upper bound for the outage poll backoff (seconds). Keeps
+    #: re-detection snappy after a simulator/PLC restart while cutting
+    #: log + CPU churn during a dead-link outage.
+    _OUTAGE_BACKOFF_MAX_S = 2.0
+
     def _monitor_loop(self) -> None:
         with self._lock:
             generation = self._generation
+        outage_cycles = 0
         while not self._monitor_stop.is_set():
             with self._lock:
                 controllers = list(self._controllers.values())
+            fresh_any = False
             for controller in controllers:
                 if self._monitor_stop.is_set():
                     return
@@ -445,7 +452,26 @@ class PtzService:
                         logger.exception(
                             "[PTZ-SVC] status listener failed"
                         )
-            self._monitor_stop.wait(self._config.monitor_interval_s)
+                if fresh:
+                    fresh_any = True
+            # Phase 9D: bounded outage backoff. While every read in a
+            # cycle is stale/failed, slow the poll exponentially
+            # (monitor_interval -> 2x -> 4x, capped at 2 s) so a dead
+            # link does not spam per-read transport warnings at full
+            # rate. Degraded statuses are still delivered every cycle
+            # and recovery re-detection stays within ~2 s. Any fresh
+            # read resets to the configured interval immediately.
+            if fresh_any:
+                outage_cycles = 0
+                self._monitor_stop.wait(self._config.monitor_interval_s)
+            else:
+                outage_cycles += 1
+                backoff = min(
+                    self._OUTAGE_BACKOFF_MAX_S,
+                    self._config.monitor_interval_s
+                    * (2 ** min(outage_cycles, 4)),
+                )
+                self._monitor_stop.wait(backoff)
 
 
 __all__ = ["PtzService", "PtzServiceConfig", "StatusListener"]

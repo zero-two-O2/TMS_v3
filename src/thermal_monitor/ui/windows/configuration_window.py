@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
 )
-from PyQt6.QtGui import QColor, QAction
+from PyQt6.QtGui import QColor, QAction, QFont
 
 import numpy as np
 
@@ -2926,6 +2926,18 @@ class ConfigurationModeWidget(QWidget):
                 pass
         else:
             self._set_ptz_top_state("Not configured")
+            # Phase 9C: make the unconfigured state explicit on the
+            # panel as well (attach-from-start path does not run
+            # _load_camera_config first). Never invents a binding.
+            try:
+                if self._ptz_panel is not None:
+                    self._ptz_panel.set_binding(camera_id, None, False)
+                    self._ptz_panel.show_message(
+                        f"No PTZ configured for {camera_id}. "
+                        "Add ptz_id to cameras.mapping for this camera."
+                    )
+            except RuntimeError:
+                pass
 
         def _attach() -> None:
             from thermal_monitor.ptz.station import (
@@ -3070,14 +3082,25 @@ class ConfigurationModeWidget(QWidget):
 
         def _move() -> None:
             try:
-                if mode == "per_axis":
+                # Phase 9C: the panel emits plain strings ("single" /
+                # "per_axis") but PtzCommand requires a VelocityMode
+                # (isinstance check). Coerce here so absolute moves are
+                # not rejected as COMMAND_REJECTED before reaching OPC UA.
+                from thermal_monitor.ptz.models import VelocityMode
+
+                try:
+                    _mode = VelocityMode(str(mode or "single").strip().lower())
+                except ValueError:
+                    _mode = VelocityMode.SINGLE
+                if _mode == VelocityMode.PER_AXIS:
                     op = service.move_absolute(
-                        camera_id, pan, tilt, velocity_mode="per_axis",
+                        camera_id, pan, tilt, velocity_mode=_mode,
                         pan_velocity=velocity, tilt_velocity=velocity,
                     )
                 else:
                     op = service.move_absolute(
-                        camera_id, pan, tilt, velocity=velocity
+                        camera_id, pan, tilt, velocity=velocity,
+                        velocity_mode=_mode,
                     )
                 self._ptz_operation.emit(camera_id, generation, op)
                 try:
@@ -3687,6 +3710,17 @@ class ConfigurationModeWidget(QWidget):
     ) -> None:
         if not self._ptz_is_current(camera_id, generation):
             return
+        # Phase 9C: one shared PtzService fans monitor callbacks out per
+        # PTZ controller. Without this guard the last unrelated PTZ in
+        # the loop overwrote the selected camera's panel (cross-routing).
+        # Only the binding's own ptz_id may drive this camera's panel.
+        try:
+            _entry = self._ptz_mapping_entry(camera_id)
+            _bound = (getattr(_entry, "ptz_id", "") or "").strip() if _entry else ""
+            if _bound and ptz_id != _bound:
+                return
+        except Exception:
+            pass
         try:
             if self._ptz_panel is not None:
                 self._ptz_panel.set_status(status)
@@ -4611,15 +4645,57 @@ class ConfigurationModeWidget(QWidget):
         )
         self._config_service.set_camera_config(updated_config)
         if self._config_manager is not None:
+            # Phase 9C: discovery persistence must never clobber the
+            # camera-to-PTZ station association. A connect previously
+            # overwrote ptz_id with "" (verified: HEAD PTZ_08 -> "" in
+            # the working tree), which made resolve_binding() return
+            # None and froze the panel at "No PTZ configured" even
+            # though acquisition was streaming. Preserve every ptz_*
+            # field from the existing mapping entry.
+            _existing_ptz = self._ptz_mapping_entry(camera_id)
             self._config_manager.save_camera_mapping(
                 CameraMappingConfig(
                     camera_id=camera_id,
                     serial_number=discovered_camera.serial_number,
                     enabled=updated_config.enabled,
                     name=updated_config.name or camera_id,
-                    target_fps=None,
+                    target_fps=(
+                        getattr(_existing_ptz, "target_fps", None)
+                        if _existing_ptz is not None
+                        else None
+                    ),
                     ip_address=discovered_camera.ip_address or "",
                     device_identifier=discovered_camera.device_identifier or "",
+                    ptz_id=(
+                        getattr(_existing_ptz, "ptz_id", "") or ""
+                    )
+                    if _existing_ptz is not None
+                    else "",
+                    ptz_endpoint=(
+                        getattr(_existing_ptz, "ptz_endpoint", "") or ""
+                    )
+                    if _existing_ptz is not None
+                    else "",
+                    ptz_min_pan=(
+                        getattr(_existing_ptz, "ptz_min_pan", None)
+                        if _existing_ptz is not None
+                        else None
+                    ),
+                    ptz_max_pan=(
+                        getattr(_existing_ptz, "ptz_max_pan", None)
+                        if _existing_ptz is not None
+                        else None
+                    ),
+                    ptz_min_tilt=(
+                        getattr(_existing_ptz, "ptz_min_tilt", None)
+                        if _existing_ptz is not None
+                        else None
+                    ),
+                    ptz_max_tilt=(
+                        getattr(_existing_ptz, "ptz_max_tilt", None)
+                        if _existing_ptz is not None
+                        else None
+                    ),
                 )
             )
 
@@ -4897,6 +4973,16 @@ class ConfigurationModeWidget(QWidget):
         self._display_rate.reset()
         self._set_lifecycle(CameraConnectionState.ACQUIRING)
         self._status_label.setText("Acquisition started")
+        # Phase 9C: acquisition is the operator-visible "connected"
+        # state from the issue report. Re-attach the camera's PTZ here
+        # (idempotent: shared service reused, identical binding
+        # registration is a no-op, monitor starts exactly once). This
+        # covers connects that predated a config fix and any attach
+        # dropped by a generation race, without ever auto-moving.
+        try:
+            self._ptz_attach_async(camera_id, self._session.generation)
+        except Exception:
+            logger.debug("PTZ attach after acquisition start failed", exc_info=True)
 
     def _refuse_start_if_not_ready(self, camera_id: str) -> str | None:
         """Refuse Start when the child transport is not usable.
